@@ -3,6 +3,7 @@ name = "forge-gnome"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+repository = "https://github.com/martial-plains/forge"
 description = "Forge for GNOME: GTK 4 draws the editor's grid (text, pictures and canvases) and the system file picker"
 
 # Not part of the main workspace: building it needs GTK 4's development

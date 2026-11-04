@@ -37,6 +37,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Allister Isaiah Harvey"]
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/martial-plains/forge"
 
 # Lints shared by every crate; members opt in with `[lints] workspace = true`.
 # `too_many_arguments` and `type_complexity` are allowed: the editor passes
