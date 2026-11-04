@@ -1,0 +1,54 @@
+[package]
+name = "forge-terminal"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "forge_terminal"
+path = "src/lib.rs"
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[[bin]]
+name = "forgeclient"
+path = "src/client.rs"
+
+# harness = false: the bench times things itself and prints, so it needs no
+# nightly #[bench] and no statistics crate.
+[[bench]]
+name = "redisplay"
+harness = false
+
+[dependencies]
+forge-core = { path = "../core" }
+forge-editor = { path = "../editor" }
+# ratatui re-exports a matching crossterm, so we don't depend on crossterm
+# directly (avoids two incompatible crossterm versions in the build).
+ratatui = "0.29"
+anyhow = "1.0"
+serde_json = "1"
+unicode-width = "0.2"
+# OSC52 clipboard writes (copies reach the system clipboard; pbcopy
+# covers terminals like Terminal.app that ignore the sequence).
+base64 = "0.22"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+forge-docs = { path = "../docs" }
+wat = "1"
+wit-component = "0.259"
+wit-parser = "0.259"
+
+[features]
+# Draw canvases on the GPU (wgpu), falling back to the CPU.
+gpu = ["forge-editor/gpu"]
+
+[lints]
+workspace = true

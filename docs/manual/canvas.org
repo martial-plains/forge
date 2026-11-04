@@ -1,0 +1,91 @@
+# The Canvas chapter: drawings plugins make, and boards, Bases and graphs.
+# It links only commands that exist in the registry, so the manual and the
+# command docs stay in step (see Part 2 of the documentation design).
+
+** Canvas
+   :PROPERTIES:
+   :ID:       Canvas
+   :CUSTOM_ID: Canvas
+   :SUMMARY:  A drawing a plugin describes and Forge shows, hit-tests and exports
+   :COMMANDS: canvas-demo canvas-list canvas-export canvas-refresh
+              canvas-zoom-in canvas-zoom-out canvas-reset-view
+              canvas-pan-left canvas-pan-right canvas-pan-up canvas-pan-down
+   :END:
+
+canvas is an image whose pixels a program writes. Forge's canvas
+is the drawing itself: a /scene/ of rectangles, ellipses, lines, paths,
+wrapped text, pictures and groups (each with a transform, a clip and an
+opacity), where any shape can carry an id. A plugin sends the scene as
+JSON (or builds it with the =forge-canvas= crate) and Forge draws it in a
+=canvas-mode= buffer, so the plugin never has to push pixels.
+
+Because Forge has the shapes, it can answer what pixels can't. Clicking,
+dragging or turning the wheel over a canvas tells the plugin which shape
+was under the pointer, where in the drawing, and which buttons and keys
+were down. The scene can be saved as a picture (PNG) or as a vector file
+(SVG), and any frontend can draw the same scene: the terminal and the
+macOS app show the rendered picture the way they show an image file.
+
+=M-x canvas-demo= draws a sample. In a canvas:
+
+- The wheel (~mouse-4~ and ~mouse-5~) zooms about the pointer
+  (~canvas-zoom-in~, ~canvas-zoom-out~ on ~+~ and ~-~), a middle-button
+  drag pans, and the arrow keys pan (~canvas-pan-left~, ~canvas-pan-right~,
+  ~canvas-pan-up~, ~canvas-pan-down~). ~0~ (~canvas-reset-view~) shows the
+  whole drawing again. A plugin that wants the wheel for itself can say so.
+- ~w~ (~canvas-export~) saves the drawing: a name ending in =.svg= writes
+  vector shapes, anything else a PNG.
+- ~g~ (~canvas-refresh~) draws it again, and =M-x canvas-list= lists the
+  canvases that exist and who made them.
+
+Pictures are drawn by the CPU by default. Build with the =gpu= feature
+(=cargo build --features gpu=, which the GNOME and Windows
+frontends do) and Forge draws them with wgpu on Vulkan, Metal or Direct3D
+12 instead, falling back to the CPU when there is no graphics adapter.
+=M-x canvas-renderer= says which is in use; =FORGE_RENDERER=cpu= forces the
+CPU. Both give the same picture up to anti-aliasing.
+
+The terminal sizes the picture to the window, assuming a cell is half as
+wide as it is tall, so a click lands within a cell of where it was aimed.
+The macOS app can give exact positions.
+
+*** Boards Bases and Graphs
+   :PROPERTIES:
+   :SUMMARY:  The canvas, bases and graph plugins
+   :END:
+
+Three plugins use the canvas, in the spirit of Obsidian's:
+
+- *canvas* opens =.canvas= files (the open JSON Canvas format). Cards of
+  text, notes, pictures and links sit on an endless board with groups and
+  arrows. Click selects, drag moves (a group takes what it holds), the
+  square at a selected card's corner resizes, double-click empty space
+  adds a note. Keys: ~n~ note, ~f~ file, ~u~ link, ~G~ group, ~c~ connect,
+  ~C~ colour, ~e~ edit, ~d~ delete, ~0~ fit, ~TAB~ the JSON, ~C-x C-s~ save.
+- *bases* opens =.base= files: filters, formulas and views over your
+  notes' properties, tags, links and dates, shown as a table, a list,
+  cards, a kanban board or a map. =RET= visits a note; ~v~ changes view,
+  ~f~ filters, ~s~ sorts. A =kanban= view makes a column for each value
+  of its =groupBy= property (=columns: [todo, doing, done]= sets their
+  order); drag a card to another column and its note's property changes
+  to match. A =map= view puts a pin on each note that has coordinates
+  (=coordinates: location= for a =[lat, lng]= list, =lat, lng= text or
+  ={lat, lng}=, or =latitude= and =longitude= properties; =defaultZoom=,
+  =center= and =markerColor= are optional). Drag pans, the wheel zooms,
+  ~+~ ~-~ ~0~ zoom and fit. Give =tiles: maps/{z}/{x}/{y}.png= (a folder
+  of tile pictures in the vault or an absolute path) for a real map
+  underneath; without it the pins sit on a latitude and longitude grid.
+  The expression language has =file.hasTag("x")=, =status != "done"=,
+  =(now() - file.mtime).days=, =if(a, b, c)= and the usual operators.
+- *graph* draws how notes link: =M-x graph-local= for the note you are
+  in and its neighbours, =M-x graph-global= for the whole vault. Click lights
+  a dot and its neighbours, drag moves it, double-click opens the note.
+
+They are separate plugins (=forge-plugin-canvas=, =forge-plugin-bases=, =forge-plugin-graph=). Bases
+and graph read your notes, so give them the folder:
+
+#+begin_example
+forge.plugin.config("bases", #{ vault: "~/Notes" });
+forge.plugin.grant("bases", #{ directories: ["~/Notes"] });
+forge.plugin.grant("graph", #{ directories: ["~/Notes"] });
+#+end_example

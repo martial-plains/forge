@@ -1,0 +1,126 @@
+#+title: Tips
+
+** Tips
+:PROPERTIES:
+:SUMMARY: Short reminders Forge can show you one a day
+:END:
+
+A tip is a small, self-contained habit worth picking up. The tip-of-the-day
+plugin can show one when Forge starts, drawn from this list, one per day.
+Install the =forge-plugin-tip-of-the-day= plugin, or turn off
+the startup tip with
+
+#+begin_src rhai
+forge.plugin.config("tip-of-the-day", #{ startup: false });
+#+end_src
+
+In the tip buffer, ~n~ shows another and ~q~ leaves; =M-x tip-of-the-day=
+shows one at any time.
+
+*** Undo a whole run of typing :TIP:
+:PROPERTIES:
+:SUMMARY: One undo brings back a paragraph
+:END:
+
+~C-/~ (=undo=) undoes the last change, but typing counts as one change:
+if you just typed a paragraph, one ~C-/~ brings the whole paragraph back.
+Edits that are not typing (a kill, a replacement) undo one step at a time.
+Redo with ~M-_~ if you go too far.
+
+*** Kill and yank instead of delete :TIP:
+:PROPERTIES:
+:SUMMARY: Killed text can be brought back later
+:END:
+
+~C-k~ (=kill-line=) and ~C-w~ (=kill-region=) do not throw text away:
+they put it on the kill ring, and ~C-y~ (=yank=) puts it back, with
+~M-y~ (=yank-pop=) to cycle through earlier kills. A region you delete
+with Delete is gone; a region you kill is not.
+
+*** C-g is always the way out :TIP:
+:PROPERTIES:
+:SUMMARY: Press C-g when a command is half way through
+:END:
+
+If a search is running, a minibuffer prompt is open, or a command went
+somewhere you did not mean, ~C-g~ (=keyboard-quit=) cancels it and puts
+you back. It is safe to press when nothing is happening, too.
+
+*** Type a name after M-x :TIP:
+:PROPERTIES:
+:SUMMARY: Every key has a command name you can type
+:END:
+
+Every keybinding is just a shortcut for a named command. Type ~M-x~
+(=execute-extended-command=) and the command's name and you can run it
+without remembering the key. If you only remember part of the name, ~C-h a~
+(=apropos-command=) searches them.
+
+*** Find out what a key does :TIP:
+:PROPERTIES:
+:SUMMARY: C-h k tells you, then a key
+:END:
+
+Press ~C-h k~ (=describe-key=) and then any key to see the command it
+runs and that command's full documentation, including where it is bound.
+The keys in help buffers are links, so you can wander the documentation.
+
+*** The manual is in the editor :TIP:
+:PROPERTIES:
+:SUMMARY: C-h i opens the whole manual
+:END:
+
+You do not need a browser to read the manual: ~C-h i~ (=info=) opens it
+in a buffer. ~n~ and ~p~ walk nodes, ~u~ goes up, ~RET~ follows a link
+and ~l~ goes back. ~C-h r~ opens the same thing under the name =manual=.
+
+*** Mark and act :TIP:
+:PROPERTIES:
+:SUMMARY: Select text with the mark, then run a command
+:END:
+
+~C-SPC~ (=set-mark-command=) marks one end of a region; move and the
+text between is selected. Almost every command that acts on text acts on
+the region when one is active, so "mark, then do" is a habit worth
+forming. ~C-g~ clears the mark.
+
+*** Walk back through the mark ring :TIP:
+:PROPERTIES:
+:SUMMARY: C-u C-SPC jumps to the mark and pops the one before it
+:END:
+
+Every place you set the mark goes on the mark ring, newest first.
+~C-u C-SPC~ jumps to the mark and takes the next entry off the ring into
+the mark, so you can walk back through where you have been. Turn on
+~forge.opt["set"]-mark-command-repeat-pop~ and a plain ~C-SPC~ right after
+pops again; ~forge.opt["mark"]-ring-max~ says how many marks the ring keeps.
+
+*** Split the window and keep the context :TIP:
+:PROPERTIES:
+:SUMMARY: Two windows show two buffers at once
+:END:
+
+~C-x 2~ (=split-window-below=) splits the screen; ~C-x o~
+(=other-window=) moves to the other window, where you can open another
+buffer with ~C-x b~ (=switch-to-buffer=). You can also show a file in the
+other window straight from Dired, keeping what you were doing on screen.
+
+*** Save without leaving the buffer :TIP:
+:PROPERTIES:
+:SUMMARY: C-x C-s saves and keeps you where you are
+:END:
+
+~C-x C-s~ (=save-buffer=) writes the file and stays in the buffer, so
+there is no reason to work for an hour without saving. If the file
+changed on disk since you opened it, Forge tells you instead of
+overwriting it.
+
+*** Ask the minibuffer for what it can do :TIP:
+:PROPERTIES:
+:SUMMARY: Tab completes, and shows what your choices are
+:END:
+
+At any minibuffer prompt, ~TAB~ completes as far as it can and lists the
+choices; a second ~TAB~ shows them all. Names with a common prefix, like
+buffer names, complete a level at a time. ~M-p~/~M-n~ walk the history of
+what you typed before.

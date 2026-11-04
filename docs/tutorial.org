@@ -1,0 +1,193 @@
+#+title: Forge tutorial
+#+author: The Forge contributors
+
+* Forge tutorial
+:PROPERTIES:
+:SUMMARY: A hands-on tour of Forge, one exercise at a time
+:END:
+
+This is a tutorial: a sequence of exercises to do, not just read.  Read a
+little, then try the keys in a scratch buffer; the tutorial remembers how
+far you have got and marks each exercise off when you do the thing it
+asks.
+
+Move between exercises with ~n~ (=tutorial-next-exercise=) and ~p~
+(=tutorial-prev=), and leave with ~q~ (=tutorial-exit=).  Come back any
+time with ~C-h t~ (=help-with-tutorial=) and you will start where you
+left off.
+
+* Keys and commands
+:PROPERTIES:
+:SUMMARY: How Forge writes a key, and what a command is
+:END:
+
+Forge is a keyboard editor.  A *key sequence* like ~C-n~ means: hold
+Control and press n.  ~M-x~ means hold the Meta key (usually Alt, or Esc
+then x) and press x.  A run of keys is written in order: ~C-x C-s~ is
+Control-x, then Control-s.
+
+Every key runs a *command*, and every command has a name you can type at
+~M-x~.  So ~C-n~ and =next-line= are the same thing.  When this tutorial
+says "run =next-line=", you may press ~C-n~ or type ~M-x next-line~ and
+press Return.
+
+Two keys are worth knowing before anything else:
+
+- ~C-g~ (=keyboard-quit=) stops whatever is going on: a half-typed
+  command, a search, a minibuffer prompt.  When you are stuck, press it.
+- ~M-x~ prompts for a command by name, with completion.
+
+* Exercise 1: moving around :exercise:
+:PROPERTIES:
+:COMMAND: next-line
+:END:
+
+The simplest thing in Forge is moving point (the cursor).  Press ~C-n~
+(=next-line=) a few times to move down, then ~C-p~ (=previous-line=) to
+come back up.  ~C-f~ (=forward-char=) and ~C-b~ (=backward-char=) move
+by one character.
+
+* Exercise 2: moving by words and lines :exercise:
+:PROPERTIES:
+:COMMAND: forward-word
+:END:
+
+Words move faster than characters.  Press ~M-f~ (=forward-word=) to move
+to the end of the next word, and ~M-b~ (=backward-word=) to go back.
+~M-<~ (=beginning-of-buffer=) and ~M->~ (=end-of-buffer=) jump to the
+ends of the buffer.
+
+* Exercise 3: opening lines :exercise:
+:PROPERTIES:
+:COMMAND: open-line
+:END:
+
+To start a new line without moving what is after point, press ~C-o~
+(=open-line=).  This is how you make room for a new line of text.
+
+* Exercise 4: killing text :exercise:
+:PROPERTIES:
+:COMMAND: kill-line
+:END:
+
+~C-k~ (=kill-line=) removes everything from point to the end of the
+line.  The removed text is not lost: Forge keeps it, so the next exercise
+can put it back.  (This is the difference between *killing* and deleting:
+killed text goes on a stack.)
+
+* Exercise 5: yanking it back :exercise:
+:PROPERTIES:
+:COMMAND: yank
+:END:
+
+~C-y~ (=yank=) puts the most recently killed text back at point.  Kill a
+line with ~C-k~, move somewhere else, and press ~C-y~ to put it there.
+Press ~M-y~ (=yank-pop=) to replace it with an earlier kill.
+
+* Exercise 6: marking a region :exercise:
+:PROPERTIES:
+:COMMAND: kill-region
+:END:
+
+To work on a stretch of text, mark one end with ~C-SPC~
+(=set-mark-command=), move to the other end, and the text between is the
+*region*.  ~C-w~ (=kill-region=) kills it.  Exactly one thing is marked
+at a time; pressing ~C-g~ clears the mark.
+
+* Exercise 7: undo :exercise:
+:PROPERTIES:
+:COMMAND: undo
+:END:
+
+Everybody makes mistakes.  ~C-/~ (=undo=) undoes the last change; press
+it again to undo the one before.  Repeated edits undo in runs, so a
+paragraph you just typed comes back all at once.
+
+* Exercise 8: searching :exercise:
+:PROPERTIES:
+:COMMAND: isearch-forward
+:END:
+
+~C-s~ (=isearch-forward=) starts an incremental search: type what you
+are looking for and Forge moves as you type, before you press Return.
+~C-r~ (=isearch-backward=) searches the other way.  ~C-g~ abandons a
+search and returns you to where it started.
+
+* Exercise 9: visiting a file :exercise:
+:PROPERTIES:
+:COMMAND: find-file
+:END:
+
+~C-x C-f~ (=find-file=) prompts for a file name and opens it in a new
+buffer, with completion on the directory names.  Type a few characters
+and press Tab to complete.
+
+* Exercise 10: saving :exercise:
+:PROPERTIES:
+:COMMAND: save-buffer
+:END:
+
+~C-x C-s~ (=save-buffer=) writes the buffer back to its file.  If you
+opened a file you do not own, or one that changed underneath you, Forge
+tells you rather than overwriting it silently.
+
+* Exercise 11: switching buffers :exercise:
+:PROPERTIES:
+:COMMAND: switch-to-buffer
+:END:
+
+A *buffer* is what Forge is editing; a file is just one kind.  ~C-x b~
+(=switch-to-buffer=) prompts for a buffer by name.  ~C-x k~
+(=kill-buffer=) throws a buffer away (asking first if it has unsaved
+changes).
+
+* Exercise 12: windows :exercise:
+:PROPERTIES:
+:COMMAND: split-window-below
+:END:
+
+A *window* is a view onto a buffer.  ~C-x 2~ (=split-window-below=)
+splits the screen into two windows; ~C-x o~ (=other-window=) moves
+between them; ~C-x 1~ (=delete-other-windows=) makes this one fill the
+screen again.  The same buffer can appear in two windows and scroll
+independently.
+
+* Exercise 13: the minibuffer :exercise:
+:PROPERTIES:
+:COMMAND: execute-extended-command
+:END:
+
+The line at the bottom is the *minibuffer*, where Forge asks questions.
+~M-x~ (=execute-extended-command=) prompts for a command name there.
+While a prompt is open, ~C-g~ cancels it and Tab completes.
+
+* Exercise 14: help :exercise:
+:PROPERTIES:
+:COMMAND: describe-key
+:END:
+
+Every key and command is documented in the same registry this tutorial is
+built from.  ~C-h k~ (=describe-key=) then a key shows what it runs;
+~C-h f~ (=describe-function=) describes a command by name; ~C-h i~
+(=info=) opens the manual.  The links in this buffer go to the same
+pages.
+
+* Exercise 15: asking Forge :exercise:
+:PROPERTIES:
+:COMMAND: apropos-command
+:END:
+
+When you half-remember a name, ~C-h a~ (=apropos-command=) searches
+command names for a word or regexp; ~C-h d~ (=apropos-documentation=)
+searches their documentation too.  It answers over the whole registry,
+plugins included.
+
+* Exercise 16: leaving :exercise:
+:PROPERTIES:
+:COMMAND: delete-other-windows
+:END:
+
+You have finished the tour.  Use ~C-x 1~ (=delete-other-windows=) to go
+back to one window, and ~C-h n~ (=view-news=) to read what changed in
+the latest release.  The manual, ~C-h i~, has the long version of
+everything you just did.

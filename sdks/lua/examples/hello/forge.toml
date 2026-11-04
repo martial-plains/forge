@@ -1,0 +1,8 @@
+[package]
+name = "hello-lua"
+version = "0.1.0"
+description = "Example plugin in Lua: greets you, counts words, and shows that errors are caught"
+
+[permissions]
+# hello-lua-wc runs wc (to show processes; see plugin.lua).
+processes = ["wc"]

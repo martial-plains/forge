@@ -1,0 +1,6 @@
+# Panicking only in tests: modules on the critical paths (buffer, files,
+# plugin host) deny `clippy::unwrap_used`/`expect_used`, but a test that
+# unwraps its setup is fine.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

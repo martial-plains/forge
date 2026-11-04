@@ -1,0 +1,79 @@
+# The second chapter: running Forge and opening a first file. It links only
+# commands that exist in the registry, so the manual and the command docs
+# stay in step (see Part 2 of the documentation design).
+
+** Getting started
+   :PROPERTIES:
+  :ID:       Getting started
+  :CUSTOM_ID: Getting started
+  :SUMMARY:  Open a file, change and save it, and leave Forge
+  :COMMANDS: find-file find-file-other-window save-buffer write-file
+             execute-extended-command keyboard-quit
+             save-buffers-kill-terminal self-insert-command
+             revert-buffer universal-argument negative-argument
+             digit-argument quit-window delete-window
+  :END:
+
+This chapter gets you from a running Forge to real work: opening a file,
+changing it, saving it, and leaving. Everything here you can also reach from
+the menu bar or by name, but the keys are what make it quick. If you have
+not read [[*Top][Top]] yet, it explains what a command is.
+
+*** Opening a file
+   :PROPERTIES:
+   :SUMMARY:  Visit a file with C-x C-f, with completion
+   :END:
+
+~C-x C-f~ (~find-file~) asks for a path with completion and visits the file
+in this window. If the file does not exist yet, the buffer is empty and the
+file is created when you first save. ~C-x C-f~ visits one file; ~C-x 4 f~
+(~find-file-other-window~) splits the window and visits it beside what you
+already had open.
+
+The name between the slashes completes as you type: ~TAB~ extends it as far
+as it can, and ~RET~ accepts the highlighted candidate. You can also just
+type the whole path and press ~RET~.
+
+*** Changing and saving
+   :PROPERTIES:
+   :SUMMARY:  Edit a buffer, save it, and revert it from disk
+   :END:
+
+Type as you would in any editor; ordinary keys insert themselves
+(~self-insert-command~). When you are done, ~C-x C-s~ (~save-buffer~)
+writes the buffer back to the file it came from. The first save of a file
+makes a backup; later saves do not.
+
+~C-x C-w~ (~write-file~) is "save as": it asks for a new name and writes the
+buffer there, and it is the buffer's file from then on. When the file on
+disk has changed under you, ~revert-buffer~ reads it in again.
+
+*** Running a command by name
+   :PROPERTIES:
+   :SUMMARY:  Reach any command with M-x and give it an argument
+   :END:
+
+Not every command has a key. ~M-x~ (~execute-extended-command~) asks for a
+command by name, with completion, and runs it. This is how you reach
+anything in Forge, and how you find a command's name before you bind it to a
+key of your own (see [[*Keys and commands][Keys and commands]]).
+
+An argument you give before a command can change what it does: ~C-u~
+(~universal-argument~) starts one, ~M--~ (~negative-argument~) makes it
+negative, and ~M-3~ or ~C-3~ (~digit-argument~) sets a count. Most commands
+ignore it; the ones that use it say so in their documentation.
+
+*** Stopping and leaving
+   :PROPERTIES:
+   :SUMMARY:  Cancel with C-g, close a window, or quit Forge
+   :END:
+
+~C-g~ (~keyboard-quit~) cancels whatever is in progress: a half-typed key
+sequence, a minibuffer prompt, a long search. When something feels stuck,
+press it. If a command is running and will not stop, that is a bug worth
+reporting, not a key you are missing.
+
+To close just this window, use ~q~ (~quit-window~) in a buffer a command
+filled in, or ~C-x 0~ (~delete-window~) anywhere. To leave Forge, ~C-x C-c~
+(~save-buffers-kill-terminal~) offers to save the buffers you have changed
+and then exits.

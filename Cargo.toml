@@ -1,0 +1,109 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/docs",
+    "crates/editor",
+    "crates/terminal",
+    "crates/plugin-sdk",
+    "crates/plugin-sdk-macros",
+    "crates/ffi",
+    "crates/xtask",
+    "crates/canvas",
+    "crates/notes",
+    "crates/canvas-gpu",
+    "crates/capi",
+]
+# A bare `cargo build` / `cargo test` covers the terminal editor and what it
+# needs. The GUI cores (ffi, capi) and the wgpu renderer (canvas-gpu) are
+# built when asked for: `-p forge-ffi`, `-p forge-capi`, `--workspace`, or
+# `--features gpu` on forge-terminal.
+default-members = [
+    "crates/core",
+    "crates/docs",
+    "crates/editor",
+    "crates/terminal",
+    "crates/plugin-sdk",
+    "crates/plugin-sdk-macros",
+    "crates/xtask",
+    "crates/canvas",
+    "crates/notes",
+]
+# Plugins compile to WebAssembly separately (see README), so they're kept out of the native build.
+exclude = ["plugins/hello"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Allister Isaiah Harvey"]
+license = "MIT OR Apache-2.0"
+
+# Lints shared by every crate; members opt in with `[lints] workspace = true`.
+# `too_many_arguments` and `type_complexity` are allowed: the editor passes
+# several pieces of state to its renderers on purpose, and the tuples in the
+# export/Org code document a fixed shape better than a one-use struct would.
+[workspace.lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# Optimized but quick to build: for trying plugins (a 10 MB JavaScript or
+# Python component compiles in seconds, not minutes) and the SDK tests.
+# cargo build --profile fast
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = false
+
+# The parser's C code is slow unoptimized, even in debug builds.
+[profile.dev.package.tree-sitter]
+opt-level = 2
+[profile.dev.package.tree-sitter-rust]
+opt-level = 2
+[profile.dev.package.tree-sitter-python]
+opt-level = 2
+[profile.dev.package.tree-sitter-javascript]
+opt-level = 2
+[profile.dev.package.tree-sitter-c]
+opt-level = 2
+[profile.dev.package.tree-sitter-go]
+opt-level = 2
+[profile.dev.package.tree-sitter-json]
+opt-level = 2
+[profile.dev.package.tree-sitter-toml-ng]
+opt-level = 2
+[profile.dev.package.tree-sitter-bash]
+opt-level = 2
+[profile.dev.package.tree-sitter-lua]
+opt-level = 2
+
+# Drawing a canvas (a Kanban board, the graph) is pixel work: rasterising,
+# laying out text, compressing the PNG. Unoptimised it is 20-50x slower, so
+# these stay optimised even in a debug build, where the rest of Forge is not.
+[profile.dev.package.tiny-skia]
+opt-level = 3
+[profile.dev.package.tiny-skia-path]
+opt-level = 3
+[profile.dev.package.fontdue]
+opt-level = 3
+[profile.dev.package.ttf-parser]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.forge-canvas]
+opt-level = 3
+[profile.dev.package.forge-notes]
+opt-level = 2

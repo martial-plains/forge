@@ -1,0 +1,278 @@
+/// The editor API that Forge plugins are written against.
+///
+/// Compatibility (see docs/plugin-api.md): within 0.1.x, functions and
+/// interfaces may be added but nothing existing changes or goes away. A
+/// plugin built against any 0.1.x loads as long as every function it
+/// actually uses exists in the running Forge; using a newer function makes
+/// loading fail with an error that names it. 0.2 would be a breaking change.
+///
+/// How calls work: Forge calls a plugin (init, a command, an event, an
+/// answer) and waits for it to return; the plugin never runs on its own
+/// and never waits for the user. Anything that needs the user or the rest
+/// of the editor - prompts, echo-area messages, running another command -
+/// happens after the plugin's call returns. Buffer and keymap changes
+/// happen immediately.
+package forge:editor@0.1.1;
+
+interface types {
+    /// A place in a buffer: 0-based line and column. Columns count Unicode
+    /// scalar values (Rust `char`s), not bytes or screen cells.
+    record position {
+        line: u32,
+        column: u32,
+    }
+
+    /// Text from `start` (included) to `end` (not included).
+    record span {
+        start: position,
+        end: position,
+    }
+}
+
+/// Messages for the user. Forge keeps them in the *Messages* buffer and
+/// shows warnings and errors in the echo area.
+interface log {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    log: func(level: level, message: string);
+}
+
+interface buffers {
+    use types.{position, span};
+
+    /// A buffer: text, point, mark, maybe a file. A handle stays valid
+    /// after the buffer is killed, but using a killed buffer traps, so
+    /// check `alive` if it may have gone. Positions past the end of a line
+    /// or the buffer are clamped.
+    resource buffer {
+        /// The buffer in the selected window.
+        current: static func() -> buffer;
+        /// Every buffer, oldest first.
+        all: static func() -> list<buffer>;
+        find: static func(name: string) -> option<buffer>;
+        from-id: static func(id: u32) -> option<buffer>;
+        /// A new, empty buffer. The name gets <2>, <3>, ... if it's taken.
+        /// It isn't shown until `show` is called.
+        create: static func(name: string) -> buffer;
+
+        /// Stable for the buffer's life; events refer to buffers by id.
+        id: func() -> u32;
+        alive: func() -> bool;
+        name: func() -> string;
+        /// The file the buffer visits, if any.
+        path: func() -> option<string>;
+        /// Unsaved changes?
+        modified: func() -> bool;
+        /// Grows by at least one with every change to the text.
+        version: func() -> u64;
+
+        text: func() -> string;
+        text-in: func(span: span) -> string;
+        line-count: func() -> u32;
+        /// One line without its newline ("" past the end).
+        line: func(line: u32) -> string;
+
+        point: func() -> position;
+        set-point: func(position: position);
+        mark: func() -> option<position>;
+        /// Set (and highlight) or clear the mark.
+        set-mark: func(position: option<position>);
+        /// The highlighted region, if the mark is active.
+        region: func() -> option<span>;
+
+        /// Insert at point; point ends up after the text.
+        insert: func(text: string);
+        replace: func(span: span, text: string);
+        /// Delete a span and return what was there.
+        delete: func(span: span) -> string;
+
+        /// Literal search, case-insensitive unless `query` has capitals
+        /// (like C-s). Forward finds the first match at or after `start`;
+        /// backward the last one ending at or before it.
+        search-forward: func(query: string, start: position) -> option<span>;
+        search-backward: func(query: string, start: position) -> option<span>;
+        /// First match of a regular expression (Rust regex syntax) at or
+        /// after `start`. Err if the pattern is invalid.
+        search-regexp: func(pattern: string, start: position) -> result<option<span>, string>;
+
+        major-mode: func() -> string;
+        set-major-mode: func(mode: string) -> result<_, string>;
+        /// Enabled minor modes, highest keymap priority first.
+        minor-modes: func() -> list<string>;
+        enable-minor-mode: func(mode: string) -> result<_, string>;
+        disable-minor-mode: func(mode: string);
+
+        /// Show this buffer in the selected window.
+        show: func();
+        /// Kill the buffer, discarding unsaved changes.
+        kill: func();
+
+        // ---- 0.1.1
+
+        /// Set a buffer option. An empty
+        /// value goes back to the default. Options: "line-numbers" (off,
+        /// absolute, relative), "indent-width" (1-16), "indent-tabs"
+        /// (true, false), "fill-column".
+        set-option: func(name: string, value: string) -> result<_, string>;
+        /// An option's value; none if it's unknown or unset.
+        get-option: func(name: string) -> option<string>;
+        /// Re-indent a line by the major mode's rules (what TAB does).
+        /// False if the mode has none.
+        indent-line: func(line: u32) -> bool;
+    }
+}
+
+/// Faces on buffer text that aren't part of the text: a misspelled word,
+/// a compiler error. Since 0.1.1.
+interface decorations {
+    use types.{span};
+    use buffers.{buffer};
+
+    /// `face` is one of "error", "warning", "info", "spell-error",
+    /// "highlight", or a syntax face: "keyword", "string", "escape",
+    /// "comment", "function", "type", "constant", "builtin", "property",
+    /// "attribute". The frontend picks the colors.
+    record decoration {
+        span: span,
+        face: string,
+        /// Shown in the echo area while point is on the text.
+        message: option<string>,
+    }
+
+    /// Replace this plugin's decorations in a buffer. They move with
+    /// edits, and go away with the text they're on or when the plugin is
+    /// unloaded. Fails (setting nothing) on an unknown face.
+    set: func(buffer: borrow<buffer>, decorations: list<decoration>) -> result<_, string>;
+    /// Remove this plugin's decorations from a buffer.
+    clear: func(buffer: borrow<buffer>);
+    /// The syntax highlighting of a span, as decorations with a syntax
+    /// face (no message), merged into runs. Empty if the buffer's major
+    /// mode has no grammar. A spell checker uses this to look only at
+    /// comments and strings.
+    syntax: func(buffer: borrow<buffer>, span: span) -> list<decoration>;
+}
+
+interface commands {
+    /// Offer a command. M-x NAME runs it and keys can be bound to it;
+    /// Forge calls `handler.run-command` with the name. Fails if a
+    /// built-in or another plugin already has the name.
+    register: func(name: string, doc: string) -> result<_, string>;
+    /// Run any command, built-in or from a plugin, once the current call
+    /// returns. Fails if no command has that name.
+    run: func(name: string) -> result<_, string>;
+    exists: func(name: string) -> bool;
+}
+
+interface keymap {
+    /// Which keymap a binding goes in. Buffer-local maps beat minor modes,
+    /// which beat the major mode, which beats global.
+    variant scope {
+        global,
+        /// A major or minor mode's keymap, by mode name.
+        mode(string),
+        /// One buffer's local keymap, by buffer id.
+        buffer(u32),
+    }
+
+    /// Keys use key notation: "C-c C-t", "M-g g", "<f5>". Plugins can't
+    /// bind C-c followed by a letter: those keys belong to the user.
+    bind: func(scope: scope, keys: string, command: string) -> result<_, string>;
+    /// Returns whether there was a binding to remove.
+    unbind: func(scope: scope, keys: string) -> result<bool, string>;
+    /// Keys that would run `command` run `replacement` instead.
+    remap: func(scope: scope, command: string, replacement: string);
+    /// The command `keys` runs in the current buffer, if any.
+    lookup: func(keys: string) -> option<string>;
+}
+
+/// Things that happen, for plugins that asked. Events arrive through
+/// `handler.on-event` after the command that caused them finishes;
+/// buffer-changed is held back until the editor has been idle briefly and
+/// then sent once per buffer, so plugins never run on every keystroke.
+interface events {
+    enum kind {
+        buffer-opened,
+        buffer-killed,
+        buffer-changed,
+        buffer-saved,
+        mode-changed,
+    }
+
+    /// Each carries the buffer id.
+    variant event {
+        buffer-opened(u32),
+        buffer-killed(u32),
+        buffer-changed(u32),
+        buffer-saved(u32),
+        /// The major mode or the set of minor modes changed.
+        mode-changed(u32),
+    }
+
+    subscribe: func(kind: kind);
+    unsubscribe: func(kind: kind);
+}
+
+/// Asking the user. The question appears after the current call returns;
+/// the answer arrives later through `handler.on-answer` with the request
+/// id returned here (none if the user cancelled with C-g).
+interface minibuffer {
+    type request = u32;
+
+    read-string: func(prompt: string, initial: string) -> request;
+    /// TAB completes from `candidates`. With `require-match`, only a
+    /// candidate is accepted.
+    completing-read: func(prompt: string, candidates: list<string>, require-match: bool) -> request;
+    /// Answer is "y" or "n".
+    y-or-n: func(prompt: string) -> request;
+    /// Show a message in the echo area.
+    message: func(text: string);
+}
+
+interface modes {
+    /// Define a major mode (the name must end in "-mode"). The parent's
+    /// keymap applies under this mode's. Files whose names end in
+    /// ".EXT" for one of `extensions` open in this mode.
+    define-major-mode: func(name: string, parent: option<string>, extensions: list<string>) -> result<_, string>;
+    define-minor-mode: func(name: string) -> result<_, string>;
+    /// Known major and minor mode names.
+    major-modes: func() -> list<string>;
+    minor-modes: func() -> list<string>;
+}
+
+/// What a plugin exports for Forge to call.
+interface handler {
+    use events.{event};
+    use minibuffer.{request};
+
+    /// One of the plugin's registered commands was run. `prefix-arg` is
+    /// the numeric value of C-u / M-5 etc. (plain C-u is 4), if given.
+    run-command: func(name: string, prefix-arg: option<s64>) -> result<_, string>;
+    on-event: func(event: event);
+    on-answer: func(request: request, answer: option<string>);
+}
+
+/// A plugin: a component Forge loads and initializes.
+///
+/// No function here is `async`, so components built with WASI 0.2
+/// toolchains (most non-Rust languages today) can target this world.
+world plugin {
+    import log;
+    import buffers;
+    import commands;
+    import keymap;
+    import events;
+    import minibuffer;
+    import modes;
+    import decorations;
+
+    export handler;
+
+    /// Runs once, right after loading: register commands, define modes,
+    /// bind keys, subscribe to events. An error unloads the plugin.
+    export init: func() -> result<_, string>;
+}

@@ -1,0 +1,23 @@
+[package]
+name = "forge-plugin-sdk"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Write Forge plugins in Rust (WebAssembly components)"
+
+[dependencies]
+wit-bindgen = "0.62"
+forge-plugin-sdk-macros = { path = "../plugin-sdk-macros", version = "0.1.0" }
+# WASI 0.3 APIs (clocks, random, files, sockets) for plugins that need
+# them. Using them still needs the capability granted (Phase 5).
+wasip3 = { version = "0.9", optional = true }
+
+[features]
+wasi = ["dep:wasip3"]
+# Type-check the component exports in a native `cargo check` (without the
+# wasm32-wasip2 target): `cargo check --features forge-plugin-sdk/check-exports`.
+check-exports = []
+
+[lints]
+workspace = true

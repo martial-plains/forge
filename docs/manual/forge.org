@@ -1,0 +1,38 @@
+#+title: The Forge Manual
+#+author: The Forge contributors
+#+toc: 3
+
+# The manual is one Org document split by chapter. The root node is Top; each
+# chapter is an included file, in reading order, nested under it. Every node
+# (heading) carries an :ID: and follows the conventions top.org settles. See
+# Part 2 of the documentation design.
+#
+# Chapter files hold only their headings and prose; the title, author and
+# table of contents live here so an included chapter cannot set them twice.
+
+* Top
+  :PROPERTIES:
+  :ID:       Top
+  :CUSTOM_ID: Top
+  :SUMMARY:  What Forge is, and how to read this manual
+  :END:
+
+Forge is an editor in a classic keyboard-driven tradition: a small core of buffers,
+windows and keymaps, configured with Rhai and extended by packages written
+in Lua and WebAssembly.
+Everything you can do at the keyboard is a named *command*, so commands can
+be bound to keys, run by name, documented, and remapped without touching the
+code that implements them.
+
+This manual is the long-form documentation. It explains concepts and shows
+complete workflows; the built-in help answers narrower questions, and every
+command also carries its own documentation page.
+
+#+INCLUDE: "top.org"
+#+INCLUDE: "getting-started.org"
+#+INCLUDE: "keys-and-commands.org"
+#+INCLUDE: "text.org"
+#+INCLUDE: "images.org"
+#+INCLUDE: "canvas.org"
+#+INCLUDE: "frontends.org"
+#+INCLUDE: "display.org"

@@ -1,0 +1,21 @@
+[package]
+name = "forge-canvas-gpu"
+description = "Draws Forge canvas scenes on the GPU with wgpu (Vulkan, Metal, Direct3D 12, OpenGL)"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-canvas = { path = "../canvas" }
+wgpu = "30"
+lyon_tessellation = "1"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+
+[dev-dependencies]
+naga = { version = "*", features = ["wgsl-in"] }
+
+[lints]
+workspace = true

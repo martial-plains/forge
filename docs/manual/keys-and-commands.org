@@ -1,0 +1,80 @@
+# The third chapter: how keys reach commands, and how to run commands by
+# name. It links only commands that exist in the registry (see Part 2 of
+# the documentation design), and uses the key notation top.org settles.
+
+** Keys and commands
+   :PROPERTIES:
+  :ID:       Keys and commands
+  :CUSTOM_ID: Keys and commands
+  :SUMMARY:  How keys reach commands, and how to run commands by name
+  :COMMANDS: execute-extended-command keyboard-quit universal-argument
+             negative-argument digit-argument describe-key
+             describe-bindings where-is describe-function
+  :END:
+
+Everything you can do at the keyboard is a named *command*. A key does not
+do something by itself: it is *bound* to a command, and pressing it runs
+that command. This is why the same command can have several keys, why you
+can give it another, and why you can always run it by name.
+
+*** Keys are sequences
+   :PROPERTIES:
+   :SUMMARY:  Read the key notation and use prefix keys
+   :END:
+
+A key is one press; a *key sequence* is the presses, in order, that reach
+one command. ~C-x C-f~ means press and hold Control, tap ~x~, release,
+then do the same with ~f~. ~M-x~ is the ~x~ key with Meta — the ~Alt~ key,
+or ~ESC~ pressed first.
+
+Keys are written the way the rest of Forge writes them:
+
+- ~C-~ is Control, ~M-~ is Meta, ~S-~ is Shift, and ~RET~, ~TAB~, ~SPC~,
+  ~ESC~ and ~DEL~ name the keys that have no letter.
+- ~<f10>~ and ~<mouse-1>~ name function keys and mouse buttons.
+
+A prefix key begins a sequence rather than running a command: ~C-x~, ~C-c~
+and ~M-g~ are prefixes. Press a prefix and pause and, after a moment,
+Forge lists the keys that can follow it. Press a prefix and ~C-h~ for the
+same list at once.
+
+*** Naming a command
+   :PROPERTIES:
+   :SUMMARY:  Run any command by name with M-x
+   :END:
+
+~M-x~ (~execute-extended-command~) asks for a command by name and runs the
+one you pick. This works for every command, bound or not, so it is how you
+reach a command you have read about but have no key for. It is also the
+fastest way to check a command's name before you bind it.
+
+Give a command an *argument* by typing it first. ~C-u~
+(~universal-argument~) is "four" by itself, or whatever digits follow;
+~M--~ (~negative-argument~) negates the next argument; ~M-7~
+(~digit-argument~) is seven. A command that uses its argument says so in
+its documentation.
+
+*** Asking what a key or a command does
+   :PROPERTIES:
+   :SUMMARY:  Use C-h k, C-h b, C-h w and C-h f to ask
+   :END:
+
+When you have forgotten a key, ~C-h k~ (~describe-key~) reads the next key
+sequence and shows the command it runs, its documentation, and where the
+binding comes from. ~C-h b~ (~describe-bindings~) lists every key that is
+active in the current buffer, highest-priority keymap first.
+
+Going the other way, ~C-h w~ (~where-is~) asks for a command and shows the
+keys that run it, and ~C-h f~ (~describe-function~) shows a command's
+documentation with its keys and menu entry. From these pages you can follow
+a link to a related command and read on.
+
+*** Cancelling
+   :PROPERTIES:
+   :SUMMARY:  Abandon what you started, or cancel a running search
+   :END:
+
+~C-g~ (~keyboard-quit~) abandons whatever you started: a half-typed
+sequence, a prompt, a search already running. Press it whenever a key did
+something you did not mean; nothing before it is undone, but nothing after
+it happens either.

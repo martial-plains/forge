@@ -1,0 +1,4 @@
+[package]
+name = "corfu"
+version = "0.1.0"
+description = "Completion popup at point, opening by itself as you type, with language keywords as a source"

@@ -1,0 +1,81 @@
+# The Display chapter: the `display` text property, which inserts
+# images into text and controls other aspects of how text displays. It
+# links only commands that exist in the registry (see Part 2 of
+# the documentation design).
+
+** Display
+   :PROPERTIES:
+   :ID:       Display
+   :CUSTOM_ID: Display
+   :SUMMARY:  Insert images and control display with the display property
+   :END:
+
+The `display` text property (or overlay property) inserts images into
+text and controls other aspects of how text displays. Its value is a
+display specification, or a list of them, applied in parallel to the text
+they cover.
+
+*** The display Property
+   :PROPERTIES:
+   :SUMMARY:  Add, get and remove display specifications
+   :END:
+
+From init.rhai, a buffer has three methods for the property. Positions are
+a one-based line and a zero-based column, like Forge's other buffer
+methods.
+
+`b:get_display_property(line, column, name)` returns the specification
+named `name` at a position, or `nil`. The specification is a table: its
+first element is the name, the rest are its arguments. So an `image`
+specification comes back as `{ "image", "file", "x.png" }`.
+
+`b:add_display_text_property(start_line, start_col, end_line, end_col,
+spec)` adds `spec` to a range, keeping any other specifications already
+there. A specification is a table: its first element (or its `name` key)
+is the name, and named keys become `:key value` arguments. For example,
+`{ "height", 2.0 }` or `{ name = "image", file = "x.png" }`.
+
+`b:remove_display_text_property(start_line, start_col, end_line, end_col,
+name)` removes the specification named `name` from a range, keeping the
+others.
+
+The `image` specification inserts a picture over the text it covers. It
+is an image descriptor: `:type` names the type, `:file` names the picture
+file (and `:data` gives the raw bytes), and the rest are display
+properties. Forge uses `:file`, `:data`, `:width`, `:height`, `:max-width`,
+`:max-height`, `:scale`, `:rotation`, `:flip`, `:margin`, `:ascent` and
+`:relief`; a frontend that draws pictures applies them (the terminal
+scales, rotates, flips and slices with the `image` crate, and the macOS
+app does the same with `NSImage`). The `slice` specification, `(slice X Y
+W H)`, crops the picture to those pixels.
+
+Dimensions may be given as a number of pixels, or as a `(value . em)` or
+`(value . ch)` pair; Forge treats a bare number as pixels. `:width` and
+`:height` scale the picture (keeping the aspect ratio when only one is
+given), `:max-width` and `:max-height` cap the result, and `:scale`
+multiplies it. `:rotation` is in degrees clockwise (multiples of 90),
+`:flip` mirrors it horizontally, `:margin` adds pixels around it, and
+`:ascent` (a percentage, or the symbol `center`) sets how much of the
+height is above the baseline.
+
+Other specifications (such as `height`, `raise` or `line-height`) are
+stored and retrievable; a fixed-cell terminal cannot scale text or move
+it vertically, so they do not change the display.
+
+Specifications merge per character: adding `height` to 4..8 and then
+`raise` to 2..12 leaves 2..4 with `raise` only, 4..8 with both, and 8..12
+with `raise` only.
+
+A specification may be wrapped as `{ "disable-eval", spec }` to stop any
+Lisp forms inside it being evaluated; Forge never evaluates them anyway.
+
+*** Overlays
+   :PROPERTIES:
+   :SUMMARY:  An overlay's display property wins over the text property
+   :END:
+
+An overlay is a range with its own properties, which take precedence over
+the buffer's text property at the same position. `b:add_overlay(l1, c1,
+l2, c2, spec)` returns the overlay's id, and `b:remove_overlay(id)`
+removes it. After removing it, the buffer's text property shows through
+again.

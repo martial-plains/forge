@@ -1,0 +1,7 @@
+[project]
+name = "hello-py"
+version = "0.1.0"
+description = "Example plugin in Python: greets you and counts words"
+
+[tool.forge]
+name = "hello-py"

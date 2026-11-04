@@ -1,0 +1,46 @@
+/target
+plugins/*/target
+sdks/js/node_modules/
+__pycache__/
+*.egg-info/
+.DS_Store
+xcuserdata/
+DerivedData/
+sdks/lua/.cache/
+
+# Forge auto-save and backup files.
+\#*#
+*~
+
+# Build output anywhere (Rust crates, the GNOME frontend, plugins).
+target/
+
+# Editors and operating systems.
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+
+# Secrets and signing keys must never be committed.
+.env
+.env.*
+*.pem
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+*.p8
+keystore.properties
+
+# Test and coverage output.
+*.profraw
+lcov.info
+coverage/
+
+# Node (the JavaScript SDK and any tooling).
+node_modules/
+
+# Python (the SDK).
+.venv/
+*.pyc

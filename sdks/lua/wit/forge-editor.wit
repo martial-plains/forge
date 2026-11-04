@@ -1,0 +1,1037 @@
+/// The editor API that Forge plugins are written against.
+///
+/// Compatibility (see docs/plugin-api.md): within 0.1.x, functions and
+/// interfaces may be added but nothing existing changes or goes away. A
+/// plugin built against any 0.1.x loads as long as every function it
+/// actually uses exists in the running Forge; using a newer function makes
+/// loading fail with an error that names it. 0.2 would be a breaking change.
+///
+/// How calls work: Forge calls a plugin (init, a command, an event, an
+/// answer) and waits for it to return; the plugin never runs on its own
+/// and never waits for the user. Anything that needs the user or the rest
+/// of the editor - prompts, echo-area messages, running another command -
+/// happens after the plugin's call returns. Buffer and keymap changes
+/// happen immediately.
+package forge:editor@0.1.19;
+
+interface types {
+    /// A place in a buffer: 0-based line and column. Columns count Unicode
+    /// scalar values (Rust `char`s), not bytes or screen cells.
+    record position {
+        line: u32,
+        column: u32,
+    }
+
+    /// Text from `start` (included) to `end` (not included).
+    record span {
+        start: position,
+        end: position,
+    }
+}
+
+/// Messages for the user. Forge keeps them in the *Messages* buffer and
+/// shows warnings and errors in the echo area.
+interface log {
+    enum level {
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    log: func(level: level, message: string);
+}
+
+interface buffers {
+    use types.{position, span};
+
+    /// A buffer: text, point, mark, maybe a file. A handle stays valid
+    /// after the buffer is killed, but using a killed buffer traps, so
+    /// check `alive` if it may have gone. Positions past the end of a line
+    /// or the buffer are clamped.
+    resource buffer {
+        /// The buffer in the selected window.
+        current: static func() -> buffer;
+        /// Every buffer, oldest first.
+        all: static func() -> list<buffer>;
+        find: static func(name: string) -> option<buffer>;
+        from-id: static func(id: u32) -> option<buffer>;
+        /// A new, empty buffer. The name gets <2>, <3>, ... if it's taken.
+        /// It isn't shown until `show` is called.
+        create: static func(name: string) -> buffer;
+
+        /// Stable for the buffer's life; events refer to buffers by id.
+        id: func() -> u32;
+        alive: func() -> bool;
+        name: func() -> string;
+        /// The file the buffer visits, if any.
+        path: func() -> option<string>;
+        /// Unsaved changes?
+        modified: func() -> bool;
+        /// Grows by at least one with every change to the text.
+        version: func() -> u64;
+
+        text: func() -> string;
+        text-in: func(span: span) -> string;
+        line-count: func() -> u32;
+        /// One line without its newline ("" past the end).
+        line: func(line: u32) -> string;
+
+        point: func() -> position;
+        set-point: func(position: position);
+        mark: func() -> option<position>;
+        /// Set (and highlight) or clear the mark.
+        set-mark: func(position: option<position>);
+        /// The highlighted region, if the mark is active.
+        region: func() -> option<span>;
+
+        /// Insert at point; point ends up after the text.
+        insert: func(text: string);
+        replace: func(span: span, text: string);
+        /// Delete a span and return what was there.
+        delete: func(span: span) -> string;
+
+        /// Literal search, case-insensitive unless `query` has capitals
+        /// (like C-s). Forward finds the first match at or after `start`;
+        /// backward the last one ending at or before it.
+        search-forward: func(query: string, start: position) -> option<span>;
+        search-backward: func(query: string, start: position) -> option<span>;
+        /// First match of a regular expression (Rust regex syntax) at or
+        /// after `start`. Err if the pattern is invalid.
+        search-regexp: func(pattern: string, start: position) -> result<option<span>, string>;
+
+        major-mode: func() -> string;
+        set-major-mode: func(mode: string) -> result<_, string>;
+        /// Enabled minor modes, highest keymap priority first. Set a mode's
+        /// priority with `keymap.set-priority` to change where it sits.
+        minor-modes: func() -> list<string>;
+        enable-minor-mode: func(mode: string) -> result<_, string>;
+        disable-minor-mode: func(mode: string);
+
+        /// Show this buffer in the selected window.
+        show: func();
+        /// Kill the buffer, discarding unsaved changes.
+        kill: func();
+
+        // ---- 0.1.1
+
+        /// Set a buffer option. An empty
+        /// value goes back to the default. Options: "line-numbers" (off,
+        /// absolute, relative), "indent-width" (1-16), "indent-tabs"
+        /// (true, false), "fill-column", and since 0.1.9 "read-only"
+        /// (true, false): commands may not change the text (typing says
+        /// "Buffer is read-only"), but this API still can, so a plugin
+        /// keeps rewriting a listing it owns.
+        set-option: func(name: string, value: string) -> result<_, string>;
+        /// An option's value; none if it's unknown or unset.
+        get-option: func(name: string) -> option<string>;
+        /// Re-indent a line by the major mode's rules (what TAB does).
+        /// False if the mode has none.
+        indent-line: func(line: u32) -> bool;
+
+        // ---- 0.1.2
+
+        /// Open a file in a buffer (or find the buffer already visiting
+        /// it), without showing it. Needs a directory grant covering the
+        /// file, or the processes permission (which trusts the plugin
+        /// with more than that anyway).
+        visit: static func(path: string) -> result<buffer, string>;
+
+        // ---- 0.1.10
+
+        /// Text this plugin shows in the buffer's mode line, after the
+        /// version-control part: a language
+        /// server's name and its diagnostics, say. None removes it.
+        set-mode-line-info: func(text: option<string>);
+        /// What this plugin set with `set-mode-line-info`.
+        mode-line-info: func() -> option<string>;
+    }
+}
+
+/// Faces on buffer text that aren't part of the text: a misspelled word,
+/// a compiler error. Since 0.1.1.
+interface decorations {
+    use types.{span};
+    use buffers.{buffer};
+
+    /// `face` is one of "error", "warning", "info", "spell-error",
+    /// "highlight", or a syntax face: "keyword", "string", "escape",
+    /// "comment", "function", "type", "constant", "builtin", "property",
+    /// "attribute", or (since 0.1.9) a bracket-depth face for
+    /// rainbow-delimiters: "rainbow-depth-1" to "rainbow-depth-9",
+    /// "rainbow-unmatched", "rainbow-mismatched", or (since 0.1.11) one of
+    /// org-modern's: "org-modern-todo", "org-modern-done", "org-modern-tag",
+    /// "org-modern-priority", "org-modern-label", "org-modern-date-active",
+    /// "org-modern-time-active", "org-modern-date-inactive",
+    /// "org-modern-time-inactive", "org-modern-progress-complete",
+    /// "org-modern-progress-incomplete", "org-modern-block-name",
+    /// "org-modern-symbol", "org-modern-horizontal-rule",
+    /// "org-modern-target". The frontend picks the colors.
+    record decoration {
+        span: span,
+        face: string,
+        /// Shown in the echo area while point is on the text.
+        message: option<string>,
+    }
+
+    /// A stretch of text and the region map that goes with it, so a key
+    /// bound in that map (`keymap.bind-region`) applies while point is
+    /// inside the stretch. Since 0.1.7.
+    record region {
+        span: span,
+        /// The region map's name.
+        keymap: string,
+    }
+
+    /// Replace this plugin's decorations in a buffer. They move with
+    /// edits, and go away with the text they're on or when the plugin is
+    /// unloaded. Fails (setting nothing) on an unknown face.
+    set: func(buffer: borrow<buffer>, decorations: list<decoration>) -> result<_, string>;
+    /// Remove this plugin's decorations from a buffer.
+    clear: func(buffer: borrow<buffer>);
+    /// The syntax highlighting of a span, as decorations with a syntax
+    /// face (no message), merged into runs. Empty if the buffer's major
+    /// mode has no grammar. A spell checker uses this to look only at
+    /// comments and strings.
+    syntax: func(buffer: borrow<buffer>, span: span) -> list<decoration>;
+
+    /// Attach region maps to stretches of text, replacing the ones this
+    /// plugin set before. They move with edits, and go away with the text
+    /// they're on or when the plugin is unloaded. A region map only
+    /// applies while point is inside its stretch, which is what makes a
+    /// name in a listing clickable in its own way from the line around it.
+    ///
+    /// Separate from `set` because a keymap is not a face: the same text
+    /// can be coloured by one call and made clickable by another.
+    set-regions: func(buffer: borrow<buffer>, regions: list<region>) -> result<_, string>;
+
+    // ---- 0.1.11
+
+    /// A stretch of text to show as something else, or not at all: Org's
+    /// `#+` hidden, a TODO keyword drawn as a label, a bullet for a dash.
+    /// The text in the buffer doesn't change.
+    record replacement {
+        span: span,
+        /// What to show instead; none hides the span.
+        text: option<string>,
+        /// The face of what is shown, as for `decoration` (none: the
+        /// text's own).
+        face: option<string>,
+    }
+
+    /// Show stretches of text as something else, replacing the
+    /// replacements this plugin set before (its faces and region maps
+    /// stay). They move with edits and go away with the text or the
+    /// plugin. The line point is on is always shown as it is, so you edit
+    /// the real text. Spans that overlap are not combined: the first one
+    /// wins. Fails (setting nothing) on an unknown face. Since 0.1.11.
+    set-display: func(buffer: borrow<buffer>, replacements: list<replacement>) -> result<_, string>;
+}
+
+/// The menu bar and its menus, so a plugin can add its own commands to
+/// it. Since 0.1.5.
+///
+/// Forge ships with menus (File, Edit, Buffers, Go, View, Tools,
+/// Packages, Help). A plugin either adds a menu of its own, or adds items
+/// to one of those. Both frontends show the same list: the terminal draws
+/// it as a row across the top of the frame (menu-bar-mode), and the macOS
+/// app as its native menu bar. Unloading the plugin takes its items away
+/// again.
+///
+/// Every function here needs the plugin to hold something in a menu, so
+/// they are foreground calls like the rest of `commands`.
+interface menus {
+    /// One entry: what it says and what it runs. An empty `command` is a
+    /// separator (a rule between groups).
+    record item {
+        label: string,
+        /// A command name; empty for a separator.
+        command: string,
+    }
+
+    /// The item under the cursor in the open menu, if any. Since 0.1.5.
+    record item-selection {
+        /// The menu it is in.
+        menu: string,
+        label: string,
+        command: string,
+        /// 1-based, and how many the menu has.
+        index: u32,
+        total: u32,
+        /// False when the command isn't defined (a plugin unloaded).
+        available: bool,
+    }
+
+    /// Add a menu, after the built-in ones. Fails if this plugin already
+    /// has one, or if the title is taken.
+    define: func(title: string, items: list<item>) -> result<_, string>;
+
+    /// Add items to a menu someone else defined — a built-in one, or
+    /// another plugin's — after the ones already there.
+    extend: func(title: string, items: list<item>) -> result<_, string>;
+
+    /// Add items to the submenu called `label` in the menu called
+    /// `title`, after the ones already there. A missing label becomes a
+    /// submenu header; a label on a plain item fails, since opening it
+    /// would hide the command it runs. Since 0.1.8.
+    extend-submenu: func(menu: string, label: string, items: list<item>) -> result<_, string>;
+
+    /// Take back what this plugin added to `title`: the whole menu if it
+    /// defined it, otherwise just its items.
+    remove: func(title: string) -> result<_, string>;
+
+    /// Turn the bar on or off in the current buffer. A plugin that wants a
+    /// menu can turn it on as it loads. With `menu-bar-mode` on, F10 and
+    /// clicking work; off, neither does and nothing is drawn.
+    set-enabled: func(enabled: bool);
+    /// Whether the bar is on in the current buffer.
+    enabled: func() -> bool;
+
+    /// Open a menu by title, or close the open one when `title` is empty.
+    open: func(title: string);
+    /// Close whatever is open.
+    close: func();
+    /// The open menu's title, or none.
+    open-title: func() -> option<string>;
+
+    /// Run the item under the cursor in the open menu. False when no menu
+    /// is open or the cursor is on a separator.
+    choose: func() -> bool;
+    /// The item under the cursor, for showing what it does.
+    selection: func() -> option<item-selection>;
+}
+
+interface commands {
+    /// Offer a command. M-x NAME runs it and keys can be bound to it;
+    /// Forge calls `handler.run-command` with the name. Fails if a
+    /// built-in or another plugin already has the name.
+    register: func(name: string, doc: string) -> result<_, string>;
+    /// Run any command, built-in or from a plugin, once the current call
+    /// returns. Fails if no command has that name.
+    run: func(name: string) -> result<_, string>;
+    exists: func(name: string) -> bool;
+
+    // ---- 0.1.2
+
+    /// Like `register`, but the command runs in the background: Forge
+    /// calls the plugin on another thread with a snapshot of the editor
+    /// and doesn't wait. Its buffer edits are merged in when it returns
+    /// (dropped with a message if the same text changed meanwhile), and
+    /// so are its decorations, messages and questions. Calls to the plugin
+    /// meanwhile wait their turn. In a background call a plugin can't
+    /// register, bind, define modes, subscribe, or create, show or kill
+    /// buffers (those fail or trap), and point and mark moves aren't kept.
+    /// Background calls may run for 60 seconds.
+    register-background: func(name: string, doc: string) -> result<_, string>;
+
+    // ---- 0.1.3
+
+    /// A command's documentation (the first line is the summary).
+    doc: func(name: string) -> option<string>;
+
+    // ---- 0.1.10
+
+    /// Run this plugin's command `name` once each time the editor has been
+    /// idle for `seconds` after a key or click: for things
+    /// like showing documentation for what's at point. 0 (or less) stops
+    /// it. Fails if the plugin doesn't own the command.
+    run-when-idle: func(name: string, seconds: f64) -> result<_, string>;
+}
+
+interface keymap {
+    /// Which keymap a binding goes in. Buffer-local maps beat minor modes,
+    /// which beat the major mode, which beats global.
+    /// Not a `scope` case: a transient map can't go here, because adding a
+    /// case to `scope` would change its type and stop older plugins (0.1.0
+    /// to 0.1.6) from loading. Bind into one with `bind-transient`.
+    variant scope {
+        global,
+        /// A major or minor mode's keymap, by mode name.
+        mode(string),
+        /// One buffer's local keymap, by buffer id.
+        buffer(u32),
+    }
+
+    /// Keys use key notation: "C-c C-t", "M-g g", "S-a", "<f5>".
+    /// Plugins can't bind C-c followed by a letter: those keys belong to
+    /// the user.
+    bind: func(scope: scope, keys: string, command: string) -> result<_, string>;
+    /// Returns whether there was a binding to remove.
+    unbind: func(scope: scope, keys: string) -> result<bool, string>;
+    /// Keys that would run `command` run `replacement` instead.
+    remap: func(scope: scope, command: string, replacement: string);
+    /// The command `keys` runs in the current buffer, if any.
+    lookup: func(keys: string) -> option<string>;
+
+    // ---- 0.1.3
+
+    /// Is `keys` the start of a longer binding in the current buffer
+    /// ("C-x" is)? For reading key sequences one key at a time.
+    is-prefix: func(keys: string) -> bool;
+    /// Handle `keys` as if typed, once the current call returns (after
+    /// commands.run and questions). For modal editing and keypads.
+    execute-keys: func(keys: string) -> result<_, string>;
+
+    // ---- 0.1.7
+
+    /// Bind `keys` to `command` in the region map `name`, the keymap a
+    /// stretch of text brings with it: it is searched while point is
+    /// inside a decoration that names it (`decorations.set-regions`, or
+    /// a buffer's own regions), at `keymap.set-priority`'s default for it.
+    ///
+    /// A click is a key like any other, so `<mouse-1>` and `<mouse-2>`
+    /// are keys this takes. This is where a clickable name, a magit
+    /// section or a column header gets its behaviour.
+    ///
+    /// Not a `scope` case, for the reason `bind-transient` isn't: use
+    /// this rather than `bind(scope.region(name), ...)`.
+    bind-region: func(name: string, keys: string, command: string) -> result<_, string>;
+    /// Drop the region map `name` and its bindings. Err if there was
+    /// none.
+    remove-region: func(name: string) -> result<bool, string>;
+
+    /// Bind `keys` to `command` in a project's own keymap, applying to
+    /// every file under `root` (the longest such root that is above the
+    /// file wins). This is how `.dir-locals.el` bindings are built in: a
+    /// checkout can have keys of its own without the user rebinding them
+    /// buffer by buffer.
+    ///
+    /// Not a `scope` case, for the reason `bind-transient` isn't: use
+    /// this rather than `bind(scope.project(root), ...)`.
+    bind-project: func(root: string, keys: string, command: string) -> result<_, string>;
+    /// Drop the project map for `root` and its bindings. Err if there
+    /// was none. A project's own `init.rhai` is a separate thing: this
+    /// forgets only the bindings.
+    remove-project: func(root: string) -> result<bool, string>;
+    /// The keys that run `command` in the current buffer ("C-x C-f"),
+    /// most direct first.
+    where-is: func(command: string) -> list<string>;
+
+    // ---- 0.1.6
+
+    /// Put a layer's bindings at `priority`, above or below the layers they
+    /// would otherwise be searched among. Higher wins. Meow uses this to sit
+    /// its modal maps above the major mode without rebinding the keys it
+    /// wants. Returns the priority the scope had before, which is the default
+    /// for that scope when nothing has overridden it.
+    set-priority: func(scope: scope, priority: s32) -> s32;
+    /// Drop the override, going back to the default for that scope. Returns
+    /// whether there was one.
+    reset-priority: func(scope: scope) -> bool;
+
+    /// A map installed on top of every other layer for as long as it is
+    /// live, the way transient maps work. Bind into it with
+    /// `bind(keymap.scope.transient(name), ...)` first.
+    variant transient-opts {
+        /// Ends after the first key it resolves.
+        one-shot,
+        /// What a key that the map doesn't bind should do.
+        on-unbound(on-unbound),
+        /// Seconds; absent (or 0) means it stays until popped.
+        timeout(f64),
+    }
+
+    /// What a key that doesn't reach a live transient map does.
+    enum on-unbound {
+        /// Pass it to the layers below; the map stays up.
+        stay,
+        /// Drop it; the map stays up. For a keypad that owns the keyboard
+        /// while it is open. Since 0.1.9 Forge lists such a map's keys
+        /// (with their commands' docs) while it is up.
+        swallow,
+        /// Take the map down, then let the key resolve again in what's left.
+        exit,
+    }
+
+    /// Bind `keys` to `command` in the transient map `name`. The map is
+    /// remembered but only searched while it is up (`push-transient`).
+    bind-transient: func(name: string, keys: string, command: string) -> result<_, string>;
+
+    /// Bind `keys` to `command` in the prompt map `name`, which is named by
+    /// what is asking: "find-file", "dired", "m-x", "completion-popup". A
+    /// prompt with no map of its own uses the default one, so binding into
+    /// a named prompt only shadows the keys named here. A key the map
+    /// doesn't bind is typed, or drops to the buffer as usual.
+    ///
+    /// Not a `scope` case, for the reason `bind-transient` isn't: use this
+    /// rather than `bind(scope.prompt(name), ...)`.
+    bind-prompt: func(name: string, keys: string, command: string) -> result<_, string>;
+
+/// Bind `keys` to `command` in the conditional layer `name`, and set the
+    /// condition that layer applies while, written the way Forge writes a
+    /// condition (the same text it prints for one):
+    ///
+    ///   region-active, read-only, in-comment, in-string, in-git-repo
+    ///   major-derives-from(MODE), minor-mode-on(MODE)
+    ///   not(CONDITION), all(CONDITION ...), any(CONDITION ...)
+    ///
+    /// Only built-in conditions, since each is answered from a snapshot
+    /// Forge takes once per keypress; a predicate a plugin supplied would
+    /// run on every key instead.
+    ///
+    /// A layer replaces its condition but keeps the bindings already in it,
+    /// so one can be narrowed. Like `bind-transient` and `bind-prompt`,
+    /// this is a function rather than a `scope` case.
+    bind-layer: func(name: string, when: string, keys: string, command: string) -> result<_, string>;
+    /// Drop the layer `name` and its bindings. Returns whether it was there.
+    remove-layer: func(name: string) -> result<bool, string>;
+
+    /// Put a transient map on top of every other layer. Pushing the same
+    /// name again makes it the outermost one. The map stays up until it is
+    /// popped, until a one-shot key resolves in it, until its timeout
+    /// passes, or until its `on-unbound` policy fires.
+    push-transient: func(name: string, opts: list<transient-opts>) -> result<_, string>;
+    /// Take a transient map down. Err if it wasn't up.
+    pop-transient: func(name: string) -> result<_, string>;
+    /// The transient maps that are up, outermost first.
+    transients: func() -> list<string>;
+}
+
+/// Things that happen, for plugins that asked. Events arrive through
+/// `handler.on-event` after the command that caused them finishes;
+/// buffer-changed is held back until the editor has been idle briefly and
+/// then sent once per buffer, so plugins never run on every keystroke.
+interface events {
+    enum kind {
+        buffer-opened,
+        buffer-killed,
+        buffer-changed,
+        buffer-saved,
+        mode-changed,
+    }
+
+    /// Each carries the buffer id.
+    variant event {
+        buffer-opened(u32),
+        buffer-killed(u32),
+        buffer-changed(u32),
+        buffer-saved(u32),
+        /// The major mode or the set of minor modes changed.
+        mode-changed(u32),
+    }
+
+    subscribe: func(kind: kind);
+    unsubscribe: func(kind: kind);
+
+    // ---- 0.1.2
+
+    /// Like `subscribe`, but the handler runs in the background (see
+    /// `commands.register-background`).
+    subscribe-background: func(kind: kind);
+}
+
+/// Asking the user. The question appears after the current call returns;
+/// the answer arrives later through `handler.on-answer` with the request
+/// id returned here (none if the user cancelled with C-g).
+interface minibuffer {
+    type request = u32;
+
+    read-string: func(prompt: string, initial: string) -> request;
+    /// TAB completes from `candidates`. With `require-match`, only a
+    /// candidate is accepted.
+    completing-read: func(prompt: string, candidates: list<string>, require-match: bool) -> request;
+    /// Answer is "y" or "n".
+    y-or-n: func(prompt: string) -> request;
+    /// Show a message in the echo area.
+    message: func(text: string);
+
+    // ---- 0.1.3
+
+    /// Read one key; the answer is its description ("a", "C-x", "RET"),
+    /// none for C-g. `prompt` shows in the echo area meanwhile.
+    read-key: func(prompt: string) -> request;
+
+    // ---- 0.1.10
+
+    /// What the echo area shows right now, if anything: so documentation shown when idle doesn't cover
+    /// "Wrote file" and the like.
+    current-message: func() -> option<string>;
+}
+
+interface modes {
+    /// Define a major mode (the name must end in "-mode"). The parent's
+    /// keymap applies under this mode's. Files whose names end in
+    /// ".EXT" for one of `extensions` open in this mode.
+    define-major-mode: func(name: string, parent: option<string>, extensions: list<string>) -> result<_, string>;
+    define-minor-mode: func(name: string) -> result<_, string>;
+    /// Known major and minor mode names.
+    major-modes: func() -> list<string>;
+    minor-modes: func() -> list<string>;
+
+    // ---- 0.1.3
+
+    /// What the mode line shows for one of this plugin's minor modes
+    /// (default: its name without "-mode"; "" hides it).
+    set-lighter: func(mode: string, lighter: string) -> result<_, string>;
+}
+
+/// Programs a plugin runs: a language server, a formatter, a linter.
+/// Since 0.1.2. Needs the `processes` permission naming the program
+/// (see docs/plugin-api.md); starting anything else fails.
+///
+/// Processes run in the background. Their output arrives through
+/// `process-handler.on-output` when the editor is idle, never during
+/// another call; stderr goes to the plugin's log (and,
+/// since 0.1.9, to `error-output`). Processes are killed
+/// when the plugin is unloaded.
+interface processes {
+    type process = u32;
+
+    /// Start `program` (a name looked up in PATH, or a path) with
+    /// `args`, in `dir` (default: the project of the current buffer).
+    spawn: func(program: string, args: list<string>, dir: option<string>) -> result<process, string>;
+    /// Send bytes to its stdin.
+    write: func(process: process, data: list<u8>) -> result<_, string>;
+    /// Close its stdin.
+    close-input: func(process: process);
+    kill: func(process: process);
+    /// The project a file is in: the nearest directory above it with
+    /// .git (.hg, .jj, .project), else with a build file (Cargo.toml,
+    /// package.json, go.mod, pyproject.toml, Makefile, ...).
+    project-root: func(path: string) -> option<string>;
+
+    // ---- 0.1.9
+
+    /// Like `spawn`, with `env` set on top of the environment Forge gives
+    /// every process (GIT_EDITOR, LC_ALL, ...).
+    spawn-with: func(program: string, args: list<string>, dir: option<string>, env: list<tuple<string, string>>) -> result<process, string>;
+    /// What the process has written to stderr so far (the first 64 KiB).
+    /// Still there during its `on-exit`, gone once that returns: read it
+    /// there to tell the user why a command failed. Stderr also goes to
+    /// the plugin's log, as before.
+    error-output: func(process: process) -> list<u8>;
+}
+
+/// Files on disk, for the operations a language server asks for in a
+/// workspace edit (create, rename and delete a file). Since 0.1.10.
+///
+/// Allowed where `buffer.visit` is: inside a directory the plugin was
+/// granted with write access, or anywhere for a plugin with the processes
+/// permission (which trusts it with more than this anyway). Buffers
+/// visiting a renamed file follow it; a deleted file's buffer stays, with
+/// its text, as a buffer visiting a file that is gone.
+interface files {
+    exists: func(path: string) -> bool;
+    /// A text file's contents (`~` is the home directory): a plugin's
+    /// configuration, say. Allowed in granted directories (read or write)
+    /// and, with the processes permission, anywhere.
+    read: func(path: string) -> result<string, string>;
+    /// Make an empty file (and its directory). With `overwrite`, an
+    /// existing file is emptied; without, it is left alone.
+    create: func(path: string, overwrite: bool) -> result<_, string>;
+    /// Move a file or directory. Fails if `target` exists, unless `overwrite`.
+    rename: func(source: string, target: string, overwrite: bool) -> result<_, string>;
+    /// Remove a file, or a directory (with `recursive`, and its contents).
+    delete: func(path: string, recursive: bool) -> result<_, string>;
+}
+
+/// The settings the user gave this plugin in init.rhai with
+/// `forge.plugin.config(name, #{ ... })`. Since 0.1.12.
+interface config {
+    /// The plugin's settings as a JSON object (`{}` if the user gave none).
+    /// Lists are arrays, tables are objects, and Rhai's text, numbers and
+    /// booleans are their JSON kinds. Read when the plugin loads: a change
+    /// in init.rhai applies the next time the plugin loads. A plugin should
+    /// refuse a key it doesn't know, naming it, so a typo isn't silent.
+    get: func() -> string;
+}
+
+/// The process environment and where Forge is running. Since 0.1.13.
+///
+/// The environment is the one Forge itself runs with: what `get` and `variables` see is what a
+/// process started with `processes.spawn` inherits. Variables often hold
+/// secrets (tokens, credentials), so reading them needs the `environment`
+/// permission; a plugin without it gets an error naming that. Setting a
+/// variable from a plugin is not allowed: change the environment Forge
+/// runs in, or set variables per process with `processes.spawn-with`.
+///
+/// The system facts below are the platform a plugin needs to adapt to,
+/// not user data, and need no permission. They are the same values as the
+/// `forge.system` namespace in init.rhai, and the same as Forge's
+/// `system-type`, `system-configuration`, `system-name`, `process-id` and
+/// `null-device`.
+interface environment {
+    /// The value of an environment variable, or none when it is unset.
+    /// Needs the `environment` permission.
+    get: func(name: string) -> result<option<string>, string>;
+    /// Every variable as a (name, value) pair, in order. Needs the
+    /// `environment` permission.
+    variables: func() -> result<list<tuple<string, string>>, string>;
+
+    /// The kind of system Forge was built for: "gnu/linux", "darwin",
+    /// "windows-nt", "gnu", or the target's OS as a fallback.
+    system-type: func() -> string;
+    /// The canonical name Forge was built for, e.g.
+    /// "x86_64-unknown-linux-gnu".
+    system-configuration: func() -> string;
+    /// This machine's hostname.
+    system-name: func() -> string;
+    /// This process's id.
+    pid: func() -> u32;
+    /// Where output is discarded: "/dev/null", or "NUL" on Windows.
+    null-device: func() -> string;
+    /// The separator between directories in a path list: ":" or ";".
+    path-separator: func() -> string;
+    /// The name Forge was invoked as, without its directory.
+    invocation-name: func() -> string;
+    /// Split a path list on `path-separator` into its directories. An
+    /// empty component, meaning the current directory, comes back as a
+    /// path of "".
+    parse-path: func(path: string) -> list<string>;
+}
+
+/// What a plugin that runs processes exports (world plugin-with-processes).
+interface process-handler {
+    use processes.{process};
+
+    /// Output from a process's stdout, in order.
+    on-output: func(process: process, data: list<u8>);
+    /// The process ended: its exit code (none if killed by a signal).
+    /// Comes after all its output.
+    on-exit: func(process: process, code: option<s32>);
+}
+
+/// Completion, in the minibuffer and at point (since 0.1.3).
+///
+/// Forge does the per-keystroke work itself (filtering, drawing, keys):
+/// a plugin chooses how completion looks and matches, and provides
+/// candidates and annotations, each asked for once per list, never on
+/// every key. The last plugin to set an option wins; its settings go
+/// away with it.
+interface completion {
+    use types.{position, span};
+
+    /// A candidate for completion at point.
+    record candidate {
+        text: string,
+        /// Shown next to it ("fn", "keyword", a signature).
+        annotation: option<string>,
+    }
+
+    /// A candidate with display decoration. Since 0.1.15. A plugin that
+    /// shows an icon or a kind before a candidate, or marks some as
+    /// deprecated, delivers these instead of `candidate`s.
+    record decorated-candidate {
+        text: string,
+        /// Shown next to it ("fn", "keyword", a signature).
+        annotation: option<string>,
+        /// Shown before it: an icon or a short kind ("fn", "var", "mod").
+        margin: option<string>,
+        /// The candidate is deprecated: drawn dimmed / struck through.
+        deprecated: bool,
+    }
+
+    /// Where a candidate is defined: the file, when it is not the buffer
+    /// the list is in, and a place in it. Since 0.1.17. Matches the
+    /// `(buffer-or-file . position)` company's `location` command
+    /// returns (corfu-info-location).
+    record location {
+        /// The file it is defined in. None: the current buffer.
+        path: option<string>,
+        /// 0-based line and column in that file (see `position`).
+        line: u32,
+        column: u32,
+    }
+
+    /// A candidate with everything a completion-at-point source can give:
+    /// display decoration, documentation and a source location. Since
+    /// 0.1.16. Supersedes `decorated-candidate` (which has no
+    /// documentation or location).
+    record detailed-candidate {
+        text: string,
+        /// Shown next to it ("fn", "keyword", a signature).
+        annotation: option<string>,
+        /// Shown before it: an icon or a short kind ("fn", "var", "mod").
+        margin: option<string>,
+        /// The candidate is deprecated: drawn dimmed / struck through.
+        deprecated: bool,
+        /// Longer text shown for the selection (corfu's M-h).
+        documentation: option<string>,
+        /// Where the candidate is defined (corfu's M-g).
+        location: option<location>,
+    }
+
+    /// The candidate under the cursor in an open list, and where it is.
+    /// Since 0.1.4. A plugin uses it to show documentation about the
+    /// selection (corfu's M-h) without owning the list.
+    record selection {
+        /// The candidate's text, as it would be inserted.
+        text: string,
+        /// Its annotation, if it has one.
+        annotation: option<string>,
+        /// The category it came from ("command", "buffer", ...).
+        category: string,
+        /// 1-based position in the list, and how many match.
+        index: u32,
+        total: u32,
+        /// The selection's documentation, if the source gave one. Since
+        /// 0.1.16.
+        documentation: option<string>,
+        /// Where the selection is defined, if the source said. Since
+        /// 0.1.17 (was a bare position in 0.1.16).
+        location: option<location>,
+    }
+
+    /// The popup's session at point, for a plugin driving it. Since 0.1.14.
+    record session-info {
+        /// A completion session is open.
+        open: bool,
+        /// It is drawn in a popup (not the echo area).
+        popup: bool,
+        /// 0-based position of the selected candidate among the matches.
+        index: u32,
+        total: u32,
+        /// Nothing is selected (preselect 'prompt, or after a reset).
+        deselected: bool,
+        /// How many rows the popup shows.
+        lines: u32,
+        /// The input typed into the popup.
+        input: string,
+    }
+
+    /// The popup's policy: what a completion plugin (corfu) chooses. Since
+    /// 0.1.14.
+    record options {
+        /// C-n on the last candidate wraps to the first.
+        cycle: bool,
+        /// Nothing is selected until you move.
+        preselect-prompt: bool,
+        /// The component separator (corfu-separator).
+        separator: char,
+        /// "never", "always" or "separator".
+        quit-at-boundary: string,
+        /// "never", "always" or "separator".
+        quit-no-match: string,
+        /// Names (or `name*` prefixes) that keep completion open at the
+        /// boundary.
+        continue-commands: list<string>,
+        /// Number the popup's rows.
+        indexed: bool,
+        /// Quickselect keys: the first labels the first candidates, the
+        /// second groups the rest.
+        quick1: string,
+        quick2: string,
+        /// Show the selected candidate's annotation after a pause.
+        echo: bool,
+        echo-delay-ms: u32,
+        /// Click a row to take it.
+        mouse: bool,
+        /// Rank candidates you took before first.
+        history: bool,
+    }
+
+    /// Minibuffer completion: `vertical` lists up to `lines` candidates
+    /// under the prompt, updated as you type (C-n / C-p to move, RET
+    /// picks, TAB inserts). Otherwise TAB completes in the prompt.
+    set-minibuffer-ui: func(vertical: bool, lines: u32);
+    /// Whether C-n at the last candidate wraps around to the first (and
+    /// C-p at the first to the last) in the minibuffer list, and similarly
+    /// for page moves. Off by default (vertico-cycle). Since 0.1.19.
+    set-minibuffer-cycle: func(cycle: bool);
+    /// How typed text matches candidates, tried in order: "orderless"
+    /// (space-separated parts, in any order), "prefix", "substring",
+    /// "flex" (the letters in order). Default: prefix.
+    set-matching: func(styles: list<string>) -> result<_, string>;
+    /// Annotate candidates of `category` ("command", "buffer", "file",
+    /// "symbol", "package", "plugin" or a plugin question's): Forge calls
+    /// completion-handler.annotate once per list.
+    annotate-category: func(category: string);
+
+    /// Completion at point: `popup` shows candidates in a list at point
+    /// (else the echo area). `auto` opens it by itself once typing pauses
+    /// `delay-ms` after at least `min-prefix` word characters.
+    set-at-point-ui: func(popup: bool, auto: bool, delay-ms: u32, min-prefix: u32, lines: u32);
+    /// Provide candidates at point in buffers whose major mode is or
+    /// derives from one of `modes` (none: every buffer). Forge calls
+    /// completion-handler.complete when completion starts.
+    register-source: func(name: string, modes: list<string>) -> result<_, string>;
+    // ---- 0.1.4
+
+    /// How candidates are ordered once they match. Tried in order; the
+    /// first one applies (unknown names are ignored, so an older Forge
+    /// still runs a plugin that asks for more).
+    ///   "length"       shortest first, then alphabetical
+    ///   "alpha"        alphabetical
+    ///   "history"      most recently used first, then length
+    ///   "history-length" most recently used first, then length
+    ///   "position"     the order the source produced (no reordering)
+    /// Since 0.1.4. Without it, matches come back with exact hits first,
+    /// then prefix hits, then the rest.
+    set-sorting: func(styles: list<string>);
+    /// The candidate the cursor is on in the minibuffer's vertical list,
+    /// or in a popup at point. None when no list is open. Since 0.1.4.
+    selected: func() -> option<selection>;
+    /// Ask the source that gave the selected candidate to say where it is
+    /// defined (corfu-info-location, M-g): the source answers with
+    /// completion-handler.resolve-location, and reports the place itself
+    /// (a definition can need a round trip to a language server). True
+    /// when a source was asked (a popup is open); false when there is no
+    /// selection, so the caller can fall back. Since 0.1.17.
+    locate: func() -> bool;
+    /// Widen the popup at point to fit its candidates, between
+    /// `min-width` and `max-width` columns (0 for either leaves that end
+    /// to Forge). Since 0.1.4. A terminal has no borders to draw, so
+    /// `border` is accepted and ignored.
+    set-popup-frame: func(min-width: u32, max-width: u32, border: u32);
+    /// Answer a completion-handler.complete request: the text to replace
+    /// and what could replace it. During that call or later (a language
+    /// server answers later); a late answer for a finished completion is
+    /// ignored.
+    deliver: func(request: u32, span: span, candidates: list<candidate>);
+    /// Answer a completion-handler.complete request with decorated
+    /// candidates (a margin and a deprecation flag). Since 0.1.15. Same as
+    /// `deliver`, but each candidate may carry a margin (shown before it)
+    /// and say that it is deprecated. A plugin that doesn't decorate keeps
+    /// using `deliver`.
+    deliver-decorated: func(request: u32, span: span, candidates: list<decorated-candidate>);
+    /// Answer a completion-handler.complete request with detailed
+    /// candidates (decoration plus documentation and a location). Since
+    /// 0.1.16. Supersedes `deliver-decorated`; the extra fields reach the
+    /// selection a plugin reads back with `selected` (corfu's M-h / M-g).
+    deliver-detailed: func(request: u32, span: span, candidates: list<detailed-candidate>);
+
+    // ---- 0.1.14: driving the popup (a completion plugin like corfu owns
+    // the commands and policy; the popup itself is the editor's).
+
+    /// The popup's session at point, or none. Since 0.1.14.
+    current: func() -> option<session-info>;
+    /// Set the popup's policy (see `options`). Replaces the whole set.
+    /// Since 0.1.14.
+    set-options: func(options: options);
+    /// Move the selection `n` candidates (negative: back). Since 0.1.14.
+    next: func(n: s32);
+    previous: func(n: s32);
+    /// Select the first or last candidate. Since 0.1.14.
+    first: func();
+    last: func();
+    /// Move a page down (or up). Since 0.1.14.
+    scroll: func(down: bool);
+    /// Take the selected candidate and finish (corfu-complete). Since
+    /// 0.1.14.
+    accept: func();
+    /// Grow the input to what every candidate shares (corfu-expand). Since
+    /// 0.1.14.
+    expand: func();
+    /// Close the popup, keeping what was typed (corfu-quit). Since 0.1.14.
+    quit: func();
+    /// Deselect the candidate; again, quit (corfu-reset). Since 0.1.14.
+    reset: func();
+    /// Take the candidate on popup row `row` (corfu-indexed's C-u N TAB).
+    /// Since 0.1.14.
+    accept-row: func(row: u32);
+    /// Wait for the next key to name a candidate: "insert", "complete" or
+    /// "jump" (corfu-quick-*). Since 0.1.14.
+    arm-quick: func(action: string);
+    /// Insert the component separator and keep completing
+    /// (corfu-insert-separator). Since 0.1.14.
+    insert-separator: func();
+
+    // ---- 0.1.18: an auxiliary popup beside the completion popup
+    // (corfu-popupinfo). The plugin asks for it and drives it; Forge draws
+    // it from the selection's documentation and location.
+
+    /// Ask for an auxiliary popup beside the completion popup showing the
+    /// selected candidate's documentation and/or location
+    /// (corfu-popupinfo). `show-documentation` and `show-location` pick the
+    /// parts; `delay-ms` waits after the selection settles before showing
+    /// (0: at once); `max-width` and `max-height` cap it (0: Forge's
+    /// default). Nothing shows when the selection has neither, when no
+    /// popup is open, or while popup-info is toggled off. Since 0.1.18.
+    set-popup-info: func(show-documentation: bool, show-location: bool, delay-ms: u32, max-width: u32, max-height: u32);
+    /// Turn the auxiliary popup off, or back on, for the popup that is
+    /// open (corfu-popupinfo-toggle). Since 0.1.18.
+    toggle-popup-info: func();
+    /// Scroll the auxiliary popup a page down (or up)
+    /// (corfu-popupinfo-scroll-down / -scroll-up). Since 0.1.18.
+    scroll-popup-info: func(down: bool);
+    /// Scroll the auxiliary popup to its first line
+    /// (corfu-popupinfo-beginning). Since 0.1.18.
+    popup-info-beginning: func();
+    /// Scroll the auxiliary popup to its last line (corfu-popupinfo-end).
+    /// Since 0.1.18.
+    popup-info-end: func();
+}
+
+/// What a plugin that provides completion exports (world
+/// plugin-with-completion or plugin-full).
+interface completion-handler {
+    use types.{position};
+    use completion.{selection};
+
+    /// Annotations for `candidates`, one per candidate ("" for none).
+    annotate: func(category: string, candidates: list<string>) -> list<string>;
+    /// Start completing at `point` in buffer `buffer` for source
+    /// `source`; answer with completion.deliver(request, ...).
+    complete: func(request: u32, source: string, buffer: u32, point: position);
+    /// A candidate was committed (inserted). `status` is "finished" (the
+    /// user chose it), "exact" (it was the only exact match), "sole" (the
+    /// only candidate) or "continued" (taken while completing went on).
+    /// Since 0.1.16. Corfu's `:exit-function` contract; a source that
+    /// doesn't need it leaves it a no-op.
+    commit: func(candidate: string, status: string);
+    /// Where the selected candidate is defined, asked for when a plugin
+    /// calls completion.locate (corfu-info-location). Since 0.1.17. The
+    /// source answers in its own time (it may ask a language server) by
+    /// saying where it is, e.g. with message. A source that can't say
+    /// leaves it a no-op. The `selection` is the one completion.selected
+    /// returns.
+    resolve-location: func(selection: selection);
+}
+
+/// What a plugin exports for Forge to call.
+interface handler {
+    use events.{event};
+    use minibuffer.{request};
+
+    /// One of the plugin's registered commands was run. `prefix-arg` is
+    /// the numeric value of C-u / M-5 etc. (plain C-u is 4), if given.
+    run-command: func(name: string, prefix-arg: option<s64>) -> result<_, string>;
+    on-event: func(event: event);
+    on-answer: func(request: request, answer: option<string>);
+}
+
+/// A plugin: a component Forge loads and initializes.
+///
+/// No function here is `async`, so components built with WASI 0.2
+/// toolchains (most non-Rust languages today) can target this world.
+world plugin {
+    import log;
+    import buffers;
+    import commands;
+    import menus;
+    import keymap;
+    import events;
+    import minibuffer;
+    import modes;
+    import decorations;
+    import processes;
+    import completion;
+    import files;
+    import config;
+    import environment;
+
+    export handler;
+
+    /// Runs once, right after loading: register commands, define modes,
+    /// bind keys, subscribe to events. An error unloads the plugin.
+    export init: func() -> result<_, string>;
+}
+
+/// A plugin that runs processes and wants their output (since 0.1.2).
+world plugin-with-processes {
+    include plugin;
+    export process-handler;
+}
+
+/// A plugin that provides completion (since 0.1.3).
+world plugin-with-completion {
+    include plugin;
+    export completion-handler;
+}
+
+/// Everything a plugin can export (the Lua SDK's world).
+world plugin-full {
+    include plugin;
+    export process-handler;
+    export completion-handler;
+}

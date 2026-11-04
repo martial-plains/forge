@@ -1,0 +1,24 @@
+[package]
+name = "forge-hello"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Example plugin: greets you"
+
+# The plugin's manifest, built into the .wasm by the SDK. Permissions go
+# under [package.metadata.forge.permissions]; this one needs none.
+[package.metadata.forge]
+name = "hello"
+
+# Standalone: not part of the main workspace build.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+forge-plugin-sdk = { path = "../../crates/plugin-sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true

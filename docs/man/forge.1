@@ -1,0 +1,47 @@
+.TH FORGE 1 "2026" "forge 0.1.0" "Forge Manual"
+.SH NAME
+forge \- a terminal text editor in the classic keyboard-driven tradition
+.SH SYNOPSIS
+.B forge
+[\fIOPTIONS\fR] [\fIFILE\fR...]
+.SH DESCRIPTION
+Forge is a modal-capable terminal editor: keys run named commands, help is built from the same structured documentation that this page is, and the manual can be read in the editor with \fIC\-h i\fR. Files named on the command line are visited in order; \fB+LINE[:COLUMN]\fR may precede a file name to move point into it.
+.SH OPTIONS
+.TP
+.B \-q, \-\-no-config
+don't run ~/.config/forge/init.rhai
+.TP
+.B \-\-chdir \fIDIR\fR
+change to DIR before opening files
+.TP
+.B \-\-file \fIFILE\fR
+visit FILE (same as a positional file name)
+.TP
+.B \-\-find-file \fIFILE\fR
+visit FILE (same as a positional file name)
+.TP
+.B \-\-visit \fIFILE\fR
+visit FILE (same as a positional file name)
+.TP
+.B +LINE[:COLUMN]
+go to LINE (and optional zero-based COLUMN) in the next file
+.TP
+.B \-\-plugin \fIFILE\fR
+load a plugin (a .wasm component); may be repeated
+.TP
+.B \-\-check-plugin \fIFILE\fR
+load a plugin without the editor, show what it set up, run its commands (answering questions with \-\-answer), open files, wait for events and its processes' output
+.TP
+.B \-\-headless
+run the editor without a terminal and print the screen (for testing plugins end to end)
+.TP
+.B \-\-package-entry \fIFILE.wasm\fR
+print a package index entry for a plugin (see docs/plugin-api.md, "Sharing plugins")
+.TP
+.B \-h, \-\-help
+show the help
+.TP
+.B \-V, \-\-version
+show the version
+.SH SEE ALSO
+The Forge manual: press \fIC\-h i\fR in the editor, or open \fImanual.html\fR on the documentation site. The \fBforge\fR plugin API is documented in \fIplugin-api.md\fR.

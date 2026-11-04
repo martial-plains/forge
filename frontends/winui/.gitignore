@@ -1,0 +1,22 @@
+# Visual Studio and .NET build output.
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.csproj.user
+AppPackages/
+BundleArtifacts/
+Generated Files/
+*.binlog
+
+# Signing certificates and packages.
+*.pfx
+*.snk
+*.msix
+*.msixbundle
+*.appx
+
+# The Rust core, copied in by the build.
+*.dll
+*.pdb

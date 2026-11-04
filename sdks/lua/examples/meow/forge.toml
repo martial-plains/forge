@@ -1,0 +1,4 @@
+[package]
+name = "meow"
+version = "0.1.0"
+description = "Modal editing like meow: selection first, a keypad on SPC for keys"

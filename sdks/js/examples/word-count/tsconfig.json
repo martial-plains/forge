@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["es2022", "esnext.disposable"],
+    "types": [],
+    "paths": { "@forge-editor/plugin": ["../../index.d.ts"] }
+  },
+  "files": ["plugin.ts", "../../types/plugin.d.ts"]
+}

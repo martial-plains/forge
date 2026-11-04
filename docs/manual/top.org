@@ -1,0 +1,62 @@
+# The opening sections of the manual, under the Top node (in forge.org). They
+# settle the conventions every later chapter follows; see Part 2 of
+# the documentation design. Node titles never contain =:=, =.= or =,= so that
+# Info-style references stay unambiguous.
+
+** How to read this manual
+   :PROPERTIES:
+   :SUMMARY:  How the manual is organized, and where the help fits
+   :END:
+
+Each chapter is a *node* (an Org heading). Nodes are short and link to one
+another; follow the links as you need them rather than reading front to
+back.
+
+The first chapters are:
+
+- [[*Getting started][Getting started]] — running Forge and opening your first file.
+- [[*Keys and commands][Keys and commands]] — how keys reach commands, and how to run them by name.
+- [[*Text][Text]] — moving over and acting on words, sentences, paragraphs and pages.
+- [[*Images][Images]] — visiting an image file and transforming the picture.
+- [[*Canvas][Canvas]] — drawings that plugins make: boards, Bases and graphs.
+- [[*Frontends][Frontends]] — the graphical apps, the system file picker and the canvas renderer.
+- [[*Display][Display]] — inserting images with the display text property.
+- [[*Conventions][Conventions]] — the notation used throughout the manual.
+
+The built-in help is the other half of the documentation:
+
+- ~C-h f~ (~describe-function~) documents one command by name, with its key
+  bindings and the commands it refers to.
+- ~C-h k~ (~describe-key~) documents whatever command a key runs.
+- ~C-h a~ (~apropos-command~) searches command names, and ~C-h d~
+  (~apropos-documentation~) searches their documentation as well.
+- ~C-h b~ (~describe-bindings~) lists every binding active in the current
+  buffers.
+
+#+CINDEX: manual, how to read
+
+** Conventions
+   :PROPERTIES:
+   :ID:       Conventions
+   :CUSTOM_ID: Conventions
+   :SUMMARY:  The notation used for commands, keys, options and references
+   :COMMANDS: describe-function describe-key apropos-command
+              execute-extended-command save-buffer find-file
+              keyboard-quit describe-variable
+   :END:
+
+The manual uses the same notation as the rest of Forge:
+
+- *Commands* are written ~like-this~ and can be run by name with ~M-x~
+  (~execute-extended-command~). ~save-buffer~ saves the current buffer;
+  ~find-file~ visits a file.
+- *Keys* are written ~like-this~ too, as a sequence to type:
+  ~C-x C-s~ saves, ~C-x C-f~ visits a file, and ~C-g~ (~keyboard-quit~)
+  cancels whatever is in progress.
+- *Options* are written ~forge.opt["name"]~ and can be set from =init.rhai= or
+  inspected with ~C-h v~ (~describe-variable~).
+- *References* to another node look [[*Top][like this]], and are how you move
+  around the manual.
+
+When a paragraph describes a command you have not met, follow its link or
+run ~C-h f~ on it before reading on.

@@ -1,0 +1,20 @@
+[project]
+name = "forge-plugin"
+version = "0.1.1"
+description = "Write Forge plugins in Python"
+requires-python = ">=3.11"
+dependencies = ["componentize-py>=0.25"]
+license = "MIT"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+forge-plugin-py = "forge_plugin_build:main"
+
+[tool.setuptools]
+packages = ["forge_plugin", "forge_plugin_build"]
+
+[tool.setuptools.package-data]
+forge_plugin = ["wit/*.wit"]

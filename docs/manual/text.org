@@ -1,0 +1,136 @@
+# The Text chapter: moving over and acting on words, sentences,
+# paragraphs, pages and quotation marks. It links only commands that exist
+# in the registry, so the manual and the command docs stay in step (see
+# Part 2 of the documentation design).
+
+** Text
+   :PROPERTIES:
+   :ID:       Text
+   :CUSTOM_ID: Text
+   :SUMMARY:  Move over and act on words, sentences, paragraphs and pages
+   :COMMANDS: forward-word backward-word kill-word backward-kill-word
+              mark-word transpose-words count-words count-words-region
+              forward-sentence backward-sentence kill-sentence
+              backward-kill-sentence forward-paragraph backward-paragraph
+              mark-paragraph forward-page backward-page mark-page
+              count-lines-page what-page
+              electric-quote-mode electric-quote-local-mode
+   :END:
+
+Text in Forge is worked on at the size of words, sentences, paragraphs and
+pages. Each has commands to move, to kill and to mark, and each takes an
+argument to repeat it (see [[*Keys and commands][Keys and commands]]).
+
+*** Words
+   :PROPERTIES:
+   :SUMMARY:  Move over, kill and transpose words
+   :COMMANDS: forward-word backward-word kill-word backward-kill-word
+              mark-word transpose-words count-words count-words-region
+   :END:
+
+~M-f~ (~forward-word~) moves point forward over a word and ~M-b~
+(~backward-word~) moves it back. A negative argument moves the other way.
+Forward motion stops just after the last character of the word; backward
+motion stops just before the first.
+
+~M-d~ (~kill-word~) kills from point to where ~M-f~ would move to, so a
+word in the middle loses only the part after point, and any punctuation
+before the next word goes with it. ~M-DEL~ (~backward-kill-word~) kills
+back to where ~M-b~ would move to. Both take an argument.
+
+~M-@~ (~mark-word~) sets the mark where ~M-f~ would move to and leaves
+point where it is, so the region is the next word. With an argument it
+marks that many words.
+
+~M-t~ (~transpose-words~) exchanges the word before or containing point
+with the one after it; the punctuation between them stays put, so ~FOO, BAR~
+becomes ~BAR, FOO~. If there is no word after point, it transposes the two
+words before it.
+
+A word is the run of letters, digits and underscores. ~M-=~
+(~count-words-region~) counts lines, words and characters in the region,
+and ~M-x count-words~ counts the whole buffer when there is no region.
+
+*** Sentences
+   :PROPERTIES:
+   :SUMMARY:  Move over sentences with M-a, M-e and M-k
+   :COMMANDS: forward-sentence backward-sentence kill-sentence
+              backward-kill-sentence
+   :END:
+
+~M-a~ (~backward-sentence~) moves to the beginning of the current sentence
+and ~M-e~ (~forward-sentence~) to the end of it. They move over successive
+sentences when repeated.
+
+A sentence is text that finishes with ~.~, ~?~ or ~!~, optionally followed by
+closing quotes or brackets, and then whitespace or the end of the buffer.
+Going backward puts point on the sentence's first character; going forward
+puts it right after the closing punctuation, ahead of the whitespace.
+
+By default Forge counts a single space after a period as a sentence break.
+To require two spaces (or a line break), as typewriter-era text does, set
+~forge.opt["sentence_end_double_space"]~. Languages that don't end sentences
+with a period, such as Thai, need ~forge.opt["sentence_end_without_period"]~.
+For full control, ~forge.opt["sentence_end"]~ takes your own regexp for
+"the end of a sentence plus the whitespace that follows".
+
+~M-k~ (~kill-sentence~) deletes from point through the end of the sentence
+and saves it on the kill ring. A numeric argument of ~N~ repeats that for ~N~
+sentences; a negative one works backward instead. ~C-x DEL~
+(~backward-kill-sentence~) deletes back to the beginning of the sentence.
+
+*** Paragraphs
+   :PROPERTIES:
+   :SUMMARY:  Move over paragraphs and mark one with M-h
+   :COMMANDS: forward-paragraph backward-paragraph mark-paragraph
+   :END:
+
+~M-{~ (~backward-paragraph~) goes to the top of the paragraph you are in, or
+the one before it when you are already at the top. ~M-}~ (~forward-paragraph~)
+goes to the bottom of the current paragraph, or the next one. A blank line
+in front of the paragraph is where ~M-{~ lands.
+
+A paragraph is a run of lines that are not blank; a blank line separates
+paragraphs. ~forge.opt["paragraph_start"]~ and ~forge.opt["paragraph_separate"]~
+are regexps that decide which lines start a paragraph and which separate
+them. ~M-h~ (~mark-paragraph~) sets point at the start and the
+mark at the end of the paragraph around point. With an argument ~N~ it
+marks ~N~ paragraphs from here.
+
+*** Pages
+   :PROPERTIES:
+   :SUMMARY:  Move over pages, and mark or count one
+   :COMMANDS: forward-page backward-page mark-page count-lines-page what-page
+   :END:
+
+A page is delimited by a formfeed (~C-q C-l~ inserts one), or by whatever
+~forge.opt["page_delimiter"]~ matches at the start of a line. ~C-x ]~
+(~forward-page~) moves point to the next delimiter and ~C-x [~
+(~backward-page~) to the previous one. ~M-x what-page~ shows the page
+number and the line within it; ~C-x l~ (~count-lines-page~) shows how many
+lines the page has, split before and after point. ~C-x C-p~ (~mark-page~)
+puts point at the start of the page and the mark at its end; a numeric
+argument chooses a page relative to the current one.
+
+*** Quotation Marks
+   :PROPERTIES:
+   :SUMMARY:  Type curved quotes with Electric Quote mode
+   :COMMANDS: electric-quote-mode electric-quote-local-mode
+   :END:
+
+Electric Quote mode turns ~`~ into a left single quote and ~'~ into a right
+single quote; ~``~ becomes a left double quote and ~''~ a right one. It is
+off by default. ~M-x electric-quote-local-mode~ toggles it in one buffer and
+~M-x electric-quote-mode~ in every buffer; a prefix argument turns it on.
+~C-q `~ and ~C-q '~ type the character unchanged.
+
+Electric Quote mode is active in text paragraphs and comments by default
+and not in strings. ~forge.opt["electric_quote_chars"]~ names the four quotes
+it types, ~forge.opt["electric_quote_replace_double"]~ makes ~"~ type a curved
+double quote, and ~forge.opt["electric_quote_paragraph"]~,
+~forge.opt["electric_quote_comment"]~ and ~forge.opt["electric_quote_string"]~ say
+where it applies.
+
+To insert a curved quote without turning the mode on, type ~C-x 8 [~ for a
+left single quote, ~C-x 8 ]~ for a right one, ~C-x 8 {~ for a left double
+and ~C-x 8 }~ for a right one.

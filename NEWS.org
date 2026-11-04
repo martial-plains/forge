@@ -1,0 +1,210 @@
+#+title: Forge NEWS
+** Forge is MIT OR Apache-2.0
+Added =LICENSE-MIT=, =LICENSE-APACHE=, =NOTICE=, =THIRD_PARTY_NOTICES.md= and
+=LICENSING.md=; source files carry SPDX headers. The third-party-derived data is
+gone and replaced with material written for Forge or from permissive sources:
+- C-x 8 is generated from Unicode composition data plus a table of symbols.
+- Input methods come from =scripts/gen-input-methods.py=: =latin-prefix=,
+  =latin-postfix=, =TeX=, =greek=, =russian-translit= and the Japanese family.
+  The Forge quail packages (Chinese, IPA, Indic, ...) are no longer included.
+  Names changed: =latin-1-postfix= is =latin-postfix=.
+- The Japanese dictionary is a trimmed Mozc dictionary (BSD-3), without
+  conjugated forms; kana tables come from Unicode.
+- Korean has the 2-Bulsik keyboard only, and F9 needs your own =hanja.txt=.
+- =forge.opt.grep_files_aliases= got a few new names (rs, py, js, ts, go, md).
+- The example init binds the greeting command to =C-c H=.
+** M-x term: C-x, C-c and M- keys no longer clash
+In a terminal buffer, C-x is now Forge's prefix as C-c is (C-x b, C-x o,
+C-x 1, C-x C-f work; C-c C-x sends a real C-x to the program). Before, C-x
+went to the shell, and a key sequence longer than two keys (C-x 4 b, C-x r b,
+M-g g, C-u 3 ...) lost its last keys to the program. A sequence Forge has
+started is now always finished by Forge. M-x, M-:, M-! and M-& stay Forge's;
+other Meta keys (M-f, M-b, M-d, M-.) still go to the shell.
+** consult-line previews live
+=consult-line= and =consult-line-multi= used to ask for a pattern first and
+only then show a list, so nothing was previewed while you typed. They are one
+prompt now, as in consult: every line is a candidate, typing narrows the list
+with your completion style, and point follows the selection (C-g puts it back).
+Rebuild the consult plugin to get it.
+** .gpg files are decrypted and encrypted for you
+Visiting =notes.org.gpg= decrypts it into the buffer (the mode comes from
+=notes.org=); saving encrypts it again, to the recipients the file already had
+or with a passphrase if it had none, using =gpg= and its agent. A new =.gpg=
+file uses a passphrase unless =forge.opt["epa_file_encrypt_to"]= names key ids
+or addresses. A buffer visiting one is never auto-saved, so no plaintext
+reaches the disk, and a failed encryption leaves the file as it was.
+** The macOS menu bar no longer flickers to a View-only bar
+An empty answer from the editor (a timeout) no longer replaces the menus.
+** use_package has use-package keywords
+=disabled=, =when= / ="if"= / =unless=, =requires=, =preface=, =init=, =config=
+(settings or a function), =custom=, ="catch"=, =bind=, =bind_mode=, =mode=,
+=delight=, =demand=, =vc=, =ensure= and =ensure_system_package= (installs
+missing executables with the machine's package manager), plus
+=use_package_report()= to see what each declaration did. keywords that
+=pin=, =load_path=, =no_require=, =autoload=, =diminish=, =bind_star=, =interpreter=,
+=magic=, =magic_fallback= and =custom_face= carry over too . =vc= takes a url or a map like =:vc= (=url=, =rev=, =make=, =lisp_dir=, =features=) to control how a plugin from git is built.
+** Command line like Forge's, and forgeclient
+=forge= takes options in the order given: =-l FILE= / =--load= (a Rhai
+script), =--eval EXPR=, =-f COMMAND= / =--funcall=, =--insert FILE=, =-L DIR=
+(load the plugins in DIR), =--kill=, =--batch= and =--script FILE= (no screen;
+messages go to standard error and the exit status says whether it worked),
+=--init-directory DIR=, =-u USER=, =-Q= and the other init-file options, and
+=--daemon[=NAME]= / =--bg-daemon= / =--fg-daemon= to run as a server. The
+options that would do nothing here (=-nw=, =-fn=, =--geometry=, the
+X display, colours, the splash screen) are not accepted. =M-x server-start=
+(or a daemon) opens a server on localhost, protected by a key in a file only
+you can read; =forgeclient= opens files in it (=+LINE:COL FILE=; =-n= to not
+wait; =C-x #= finishes a file you waited for), evaluates code (=-e=, =-u=), and
+takes =-s NAME=, =-f FILE=, =-a EDITOR= (empty: start a daemon), =-q=. Forge
+has one frame per process, so there is no =-c= or =-t=: files open in the
+running editor.
+** Canvases drawn by the frontend; widgets
+A frontend can now draw canvases itself (CoreGraphics, Compose, Cairo, Win2D)
+from a display list instead of showing a PNG: sharp at any size, in the system
+fonts, with no pixel work in the editor (docs/native-drawing.md). Plugins can
+describe an interface as a tree of widgets (cards, lists, boards, buttons,
+text) with =canvas.show-widgets=; Forge lays it out and draws it, in the
+terminal and in every window, and reports clicks by widget id.
+** Canvases no longer stall the editor
+Cards, kanban boards, graphs and canvases are drawn on their own thread:
+scrolling or zooming quickly asks for the newest view only, the previous
+picture stays up until the next is ready, and Forge no longer says it is
+busy. Scenes now name colour roles (card, line, fg, accent1 ...) rather than
+hex codes, and Forge picks the colours when it draws, so a change of theme or
+of the system's light/dark mode recolours every canvas at once, with no help
+from the plugin that made it (an old plugin's fixed colours are unchanged;
+rebuild plugins to get this). SVG and PNG exports use the current theme.
+** Files and directories
+New commands: =make-directory= (=mkdir=), =make-empty-file=, =copy-directory=,
+=delete-directory= (asks before deleting a directory with files in it) and
+=insert-directory= (an =ls -al= style listing at point, for a directory or a
+wildcard; set =insert_directory_program= to use your own =ls=, otherwise Forge
+lists it itself, so it works on Windows too). Plugin API: =files.make-directory=,
+=copy-directory=, =directory-files=, =directory-files-and-attributes=,
+=directory-empty=, =directory-files-recursively=, =locate-dominating-file=,
+=in-directory= (file-in-directory-p), =expand-wildcards=
+(file-expand-wildcards), and the file-name functions (=name-directory=,
+=name-nondirectory=, =name-extension=, =name-base=, =expand-name=,
+=relative-name= and so on). Rebuild plugins after updating (the API grew).
+** Cards look like Obsidian's
+Card text is measured, so a long title no longer runs into the properties
+under it. A card shows its picture across the top (the view's =image=
+property, or a property called cover, image, poster, thumbnail, banner and the
+like; =imageAspectRatio= and =imageFit: cover|contain= are honoured), then the
+bold title, then each property as a label and its value. A picture can be a
+file in the vault, =![[x.png]]=, =![](x.png)=, or a web address (fetched into
+the cache unless =org_display_remote_inline_images= is =skip=).
+** Canvases, Bases and graphs follow your theme
+Page, cards, lanes, lines and text take their colours from your theme (light
+or dark, and the system's mode when the theme doesn't set one) and redraw
+when it changes. Kanban cards can be dragged with the mouse again.
+** Graph on huge vaults
+Vaults of 300,000 notes and more open. The first time every note is read
+(one at a time, their text isn't kept); after that the index is kept in the
+graph plugin's cache folder and the global graph opens from a small saved
+picture of the dots, in a fraction of a second whatever the vault's size.
+Notes you save in Forge are folded in; =g= checks the disk for changes made
+elsewhere (and it happens by itself after a day, =rescan_hours=). A recursive
+folder listing is no longer cut off at 20,000 files, linking notes up is
+about twice as fast, and the global graph draws the best-connected notes
+rather than the first files found and says how many it left out; narrow it
+with a folder or tag filter to see the rest.
+Plugin API: =files.list-dir-info= (a listing with sizes and times) and
+=files.cache-dir= (a folder of the plugin's own that needs no permission).
+** Graph
+The graph uses a d3-style force simulation (what Obsidian uses): smaller
+dots, hairline links, labels only where they fit, loose notes drawn in near
+the rest. A hub note's local graph draws its 250 best-connected neighbours
+and says how many it left out. Dragging a dot runs the physics (its
+neighbours follow and spring back) and settles when you let go; nothing runs
+while the graph is idle, so it costs no battery. Building the global graph no
+longer re-checks every link against every other. The macOS app no longer
+draws pictures over completion popups, key hints or the busy label.
+The app id is com.isaiahharvey.forge (GNOME).
+** Canvases are faster
+Only the part of a canvas on screen is drawn, the PNG is compressed for
+speed, and the drawing libraries stay optimised in debug builds (they were
+the reason big Kanban boards and graphs crawled there). Touch: a swipe
+scrolls a page (sideways too), a press-and-hold on a card picks it up;
+sideways wheel and trackpad travel scroll as well. Bases and Graph find
+notes when the vault is written as ~/org. 
+** Kanban
+A new board: lanes share the window's width with a coloured header and
+count, cards are sized to what they show (title, tags as chips, three
+properties), and the board scrolls. On a phone a lane is nearly the width
+of the screen and the next one peeks in; swipe sideways. Dragging a card to
+another lane still sets the property. Cards are content-sized too.
+
+** Bases
+Cards are a page that scrolls (wheel, drag or finger), as wide as the
+window, so a long list is readable on a phone as on a desktop; a click
+opens a note when the button comes up. Tables fit the window: the title
+column narrows and columns that don't fit are left off. Titles are
+underlined links. Right-click (or the context menu key) a note for Open,
+Open in other window, Copy link, Copy file path, Sort by this column,
+Filter, Choose view and more. Picture buffers (canvases, Image mode) no
+longer show line numbers. New plugin functions: ~canvas.set-scroll~,
+~menus.popup~, ~kill-ring.push~.
+
+** Dashboard
+The dashboard now follows the dashboard's window layout: a centred emblem
+(redrawn as a clean badge), title and buttons, with the lists at the left
+edge and the footer centred; it centres on the window's real width.
+Entries and buttons are drawn as links (underlined), so you can see what is
+selectable. Pressing Enter on a recent file, bookmark or project opens it
+without a directory grant: what you choose is yours to open
+(~buffers.open-path~). New plugin functions: ~buffers.open-path~,
+~environment.frame-width~, ~images.set-centered~.
+#+author: The Forge contributors
+
+Release notes for Forge.  Each top-level heading is one release, newest
+first.  The text under each release is written by hand; the block between
+=#+begin_generated= and =#+end_generated= is rewritten by
+=cargo xtask news= from the documentation registry (commands, options,
+modes and so on whose =:since:= property names the release), so it always
+matches what the build actually contains.
+
+Read these inside the editor with =M-x view-news= (and =C-h n=), which
+opens the newest release in a help buffer with its links live.
+
+* 0.1.0
+#+begin_generated
+No documented items carry =:since: 0.1.0= yet.
+#+end_generated
+
+The first release.  Forge is a terminal text editor in the Forge
+tradition: keys run named commands, every command and option is
+documented in the same structured form the help buffers and manual are
+built from, and the manual can be read in the editor with =C-h i=.
+
+Highlights:
+
+- A full-screen terminal editor with windows, buffers and a mouse-aware
+  mode line.
+- A command loop with =M-x=, completion and a =M-x apropos= over the
+  whole registry.
+- A built-in manual browser (=C-h i=) built from =docs/manual/*.org=.
+- A plugin host that runs WebAssembly components against a documented
+  WIT interface, with Rust and Python SDKs.
+- A built-in canvas: plugins describe a drawing (shapes with ids, text,
+  paths, pictures, groups) and Forge draws it, tells them what was
+  clicked, and exports it as PNG or SVG. Plugins built on it: =canvas=
+  (Obsidian's JSON Canvas boards), =bases= (Obsidian Bases tables, lists, kanban boards, maps
+  and cards over your notes) and =graph= (local and global link graphs).
+- Canvases render on the GPU (wgpu, with a CPU fallback); Bases gained
+  Kanban and Map layouts beside Table, List and Cards.
+- Bases read Org property drawers (the top of the file and under the
+  first heading, with its tags), and writing a property from a Kanban
+  board puts it in that drawer. Starter Bases for notes and for movies,
+  shows, books and games are in =plugins/bases/examples=.
+- Open a file or folder, or save as, with the system file picker
+  (=find-file-dialog=, =find-directory-dialog=, =write-file-dialog=).
+- In a window the dashboard shows the Forge logo picture and symbols by
+  its headings, as dashboard does in a GUI (=banner: "logo"=,
+  =icons=); the terminal keeps the text banner. A canvas now takes the
+  shape of its window, so a board fills it instead of being cut off at
+  the picture's edge.
+- Frontends for GNOME (GTK 4), Windows (WinUI 3) (Jetpack
+  Compose), alongside the macOS app.
+
+See the manual ([[file:forge.org][Forge]]) for the full picture.

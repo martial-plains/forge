@@ -1,0 +1,74 @@
+# The Images chapter: viewing image files. It links only commands that
+# exist in the registry, so the manual and the command docs stay in step
+# (see Part 2 of the documentation design).
+
+** Images
+   :PROPERTIES:
+   :ID:       Images
+   :CUSTOM_ID: Images
+   :SUMMARY:  Visit an image file and transform the picture
+   :COMMANDS: image-toggle-display image-toggle-hex-display
+              image-transform-fit-to-window image-transform-set-percent
+              image-transform-set-scale image-transform-reset-to-initial
+              image-transform-reset-to-original image-rotate
+              image-flip-horizontally image-flip-vertically
+              image-increase-size image-decrease-size image-save
+              image-next-file image-previous-file image-mode-mark-file
+              image-mode-unmark-file image-mode-copy-file-name-as-kill
+              image-toggle-animation image-next-frame image-previous-frame
+              image-goto-frame image-increase-speed image-decrease-speed
+              image-reverse-speed image-reset-speed
+   :END:
+
+Visiting a file whose name ends in an image extension (~png~, ~jpg~,
+~gif~, ~webp~ and the rest Forge knows) selects ~image-mode~, which shows
+the picture instead of the file's bytes. The terminal draws it with the
+Kitty graphics protocol when it can, and leaves the ~[image]~ placeholder
+otherwise.
+
+*** Viewing Image Files
+   :PROPERTIES:
+   :SUMMARY:  Toggle the display, transform the picture and save it
+   :COMMANDS: image-toggle-display image-toggle-hex-display
+              image-transform-fit-to-window image-transform-set-percent
+              image-transform-set-scale image-transform-reset-to-initial
+              image-transform-reset-to-original image-rotate
+              image-flip-horizontally image-flip-vertically
+              image-increase-size image-decrease-size image-save
+   :END:
+
+~C-c C-c~ (~image-toggle-display~) switches between the picture and the
+file's raw text; ~C-c C-x~ (~image-toggle-hex-display~) switches between
+the picture and the file's bytes as hex.
+
+The picture is fitted to the window, and never scaled up past its
+natural size. The ~s~ prefix transforms it: ~s w~
+(~image-transform-fit-to-window~) fits it to the window, ~s p~
+(~image-transform-set-percent~) scales it to a percentage of its
+original size, ~s s~ (~image-transform-set-scale~) scales it by a factor,
+~s 0~ (~image-transform-reset-to-initial~) and ~s o~
+(~image-transform-reset-to-original~) reset the transform. A numeric
+prefix argument gives the percentage or factor, so ~C-u 2 s s~ doubles the
+size.
+
+The ~i~ prefix changes it: ~i +~ (~image-increase-size~) and ~i -~
+(~image-decrease-size~) grow or shrink it (20% by default, or the prefix
+argument as a tenth), ~i r~ (~image-rotate~) rotates it 90 degrees
+clockwise (counter-clockwise with a negative prefix), ~i h~
+(~image-flip-horizontally~) and ~i v~ (~image-flip-vertically~) flip it.
+~i o~ (~image-save~) writes the picture to a file.
+
+~n~ (~image-next-file~) and ~p~ (~image-previous-file~) visit the next or
+previous image file in the same directory. ~m~
+(~image-mode-mark-file~) and ~u~ (~image-mode-unmark-file~) mark or
+unmark the file in its Dired buffer, and ~w~
+(~image-mode-copy-file-name-as-kill~) copies the file's name to the kill
+ring.
+
+If the image is animated, ~RET~ (~image-toggle-animation~) starts or
+stops it, ~f~ (~image-next-frame~) and ~b~ (~image-previous-frame~) step
+through the frames, and ~F~ (~image-goto-frame~) jumps to one. The ~a~
+prefix changes the speed: ~a +~ and ~a -~ (~image-increase-speed~,
+~image-decrease-speed~) speed it up or slow it down, ~a r~
+(~image-reverse-speed~) reverses it, and ~a 0~ (~image-reset-speed~)
+resets it. ~forge.opt["image_animate_loop"]~ makes an animation loop.

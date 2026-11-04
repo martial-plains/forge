@@ -1,0 +1,20 @@
+# Swift Package Manager and Xcode build output.
+.build/
+.swiftpm/
+DerivedData/
+build/
+
+# Per-user Xcode state (scheme order, breakpoints, window layout).
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.moved-aside
+
+# The signed app and its archives.
+*.xcarchive
+*.ipa
+*.app
+*.dSYM/
+
+# Finder.
+.DS_Store

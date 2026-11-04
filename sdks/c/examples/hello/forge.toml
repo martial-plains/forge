@@ -1,0 +1,4 @@
+[package]
+name = "hello-c"
+version = "0.1.0"
+description = "Example plugin in C: greets you and counts words"

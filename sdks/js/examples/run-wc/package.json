@@ -1,0 +1,10 @@
+{
+  "name": "run-wc",
+  "version": "0.1.0",
+  "description": "Example: count words by running wc (a plugin that runs a program)",
+  "type": "module",
+  "private": true,
+  "forge": {
+    "permissions": { "processes": ["wc"] }
+  }
+}

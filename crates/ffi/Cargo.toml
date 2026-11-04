@@ -1,0 +1,35 @@
+[package]
+name = "forge-ffi"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Forge's editor for the macOS app: a Swift API (UniFFI) over forge-editor's App"
+
+[lib]
+# staticlib for the app; lib for the tests and uniffi-bindgen.
+crate-type = ["staticlib", "cdylib", "lib"]
+name = "forge_ffi"
+
+[[bin]]
+# cargo run -p forge-ffi --bin uniffi-bindgen -- generate --library ... --language swift
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+forge-core = { path = "../core" }
+forge-editor = { path = "../editor" }
+forge-terminal = { path = "../terminal" }
+uniffi = { version = "0.32", features = ["cli"] }
+ratatui = "0.29"
+unicode-width = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+# Draw canvases on the GPU (wgpu), falling back to the CPU.
+gpu = ["forge-editor/gpu"]
+
+[lints]
+workspace = true

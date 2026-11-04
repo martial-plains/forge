@@ -1,0 +1,16 @@
+[package]
+name = "forge-plugin-sdk-macros"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Build-time helpers for forge-plugin-sdk (the embedded plugin manifest)"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+toml = "0.8"
+
+[lints]
+workspace = true

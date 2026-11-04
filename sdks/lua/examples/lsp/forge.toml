@@ -1,0 +1,16 @@
+[package]
+name = "lsp"
+version = "0.1.0"
+description = "Language Server Protocol client: diagnostics, hover (C-h .), go to definition (M-.)"
+
+[permissions]
+# The language servers it may start. Remove the ones you don't want.
+processes = [
+    "pyright-langserver",
+    "rust-analyzer",
+    "clangd",
+    "gopls",
+    "typescript-language-server",
+    "bash-language-server",
+    "lua-language-server",
+]

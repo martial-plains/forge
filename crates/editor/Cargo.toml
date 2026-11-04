@@ -1,0 +1,45 @@
+[package]
+name = "forge-editor"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Forge's editor application: keys to commands, the minibuffer, plugins and init.rhai, shared by both frontends"
+autobins = false
+
+[lib]
+name = "forge_editor"
+path = "src/lib.rs"
+
+[dependencies]
+libc = "0.2"
+forge-core = { path = "../core" }
+forge-canvas = { path = "../canvas" }
+forge-docs = { path = "../docs" }
+# Only the crossterm re-export: keys and mouse events are the editor's
+# vocabulary, so both frontends speak it. Ratatui (the terminal drawing)
+# is not here.
+ratatui = "0.29"
+anyhow = "1.0"
+serde_json = "1"
+unicode-width = "0.2"
+regex = "1"
+unicode_names2 = "4.0.0"
+emojis = "0.9.0"
+# Inflates the Japanese dictionary (data/ja-dict.txt.gz) on first use.
+miniz_oxide = "0.8"
+# few's page fetching: pure Rust TLS so it works the same on Windows,
+# macOS and Linux without a curl or OpenSSL install.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "deflate"] }
+# few decodes pages in the charset they claim (or their meta tag names).
+encoding_rs = "0.8"
+# Image mode: read, transform and save pictures without external tools.
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "pnm", "tga", "qoi"] }
+unicode-normalization = "0.1.26"
+
+[features]
+# Draw canvases on the GPU (wgpu), falling back to the CPU.
+gpu = ["forge-core/gpu"]
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+<Window x:Class="Forge.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
+        Title="Forge">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <CommandBar Grid.Row="0" DefaultLabelPosition="Right" IsOpen="False">
+            <AppBarButton Icon="OpenFile" Label="Open" ToolTipService.ToolTip="Open a file with the system picker" Click="OnOpen" />
+            <AppBarButton Icon="Folder" Label="Folder" ToolTipService.ToolTip="Open a folder with the system picker" Click="OnFolder" />
+            <AppBarButton Icon="Save" Label="Save" ToolTipService.ToolTip="Save this buffer" Click="OnSave" />
+            <AppBarButton Icon="Edit" Label="Command" ToolTipService.ToolTip="Run a command (M-x)" Click="OnCommand" />
+        </CommandBar>
+        <canvas:CanvasControl Grid.Row="1" x:Name="Surface"
+                              ClearColor="#1E1E2E"
+                              IsTabStop="True" AllowFocusOnInteraction="True"
+                              Draw="OnDraw" SizeChanged="OnSizeChanged"
+                              CreateResources="OnCreateResources"
+                              KeyDown="OnKeyDown" CharacterReceived="OnCharacter"
+                              PointerPressed="OnPointerPressed" PointerMoved="OnPointerMoved"
+                              PointerReleased="OnPointerReleased" PointerWheelChanged="OnWheel" />
+    </Grid>
+</Window>

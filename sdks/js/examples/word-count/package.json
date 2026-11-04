@@ -1,0 +1,7 @@
+{
+  "name": "word-count",
+  "version": "0.1.0",
+  "description": "Example plugin in TypeScript: counts words and marks long lines",
+  "private": true,
+  "forge": { "name": "word-count" }
+}

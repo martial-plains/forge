@@ -1,0 +1,23 @@
+[package]
+name = "forge-capi"
+description = "Forge's grid API as a plain C library, for frontends without UniFFI bindings (WinUI / C#)"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "forge"
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[dependencies]
+forge-ffi = { path = "../ffi" }
+serde_json = "1"
+pollster = "0.4"
+
+[features]
+# Draw canvases on the GPU (wgpu): Direct3D 12 on Windows.
+gpu = ["forge-ffi/gpu"]
+
+[lints]
+workspace = true

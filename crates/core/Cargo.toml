@@ -1,0 +1,83 @@
+[package]
+name = "forge-core"
+authors.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1.0"
+log = "0.4"
+wasmtime = "48"
+serde = { version = "1.0", features = ["derive"] }
+ropey = { version = "1.6", default-features = false, features = ["simd"] }
+unicode-segmentation = "1"
+unicode-width = "0.2"
+regex = "1"
+wasmtime-wasi = { version = "48", features = ["p3"] }
+tokio = { version = "1", features = ["rt"] }
+rhai = "1.23"
+toml = "0.8"
+serde_json = "1"
+forge-canvas = { path = "../canvas" }
+forge-canvas-gpu = { path = "../canvas-gpu", optional = true }
+wasmparser = "0.254"
+sha2 = "0.10"
+tree-sitter = { version = "0.27.0", optional = true }
+tree-sitter-rust = { version = "0.24.2", optional = true }
+tree-sitter-python = { version = "0.25.0", optional = true }
+tree-sitter-javascript = { version = "0.25.0", optional = true }
+tree-sitter-c = { version = "0.24.2", optional = true }
+tree-sitter-go = { version = "0.25.0", optional = true }
+tree-sitter-json = { version = "0.24.8", optional = true }
+tree-sitter-toml-ng = { version = "0.7.0", optional = true }
+tree-sitter-bash = { version = "0.25.1", optional = true }
+tree-sitter-lua = { version = "0.5.0", optional = true }
+tree-sitter-language = { version = "0.1", optional = true }
+libloading = { version = "0.8", optional = true }
+# Markdown: a single grammar that parses blocks and inline markup (the
+# fork tracks the ikatyang grammar with GFM's tables, task lists and
+# strikethrough turned on, and a loose tree-sitter version requirement).
+tree-sitter-markdown-fork = { version = "0.7.3", optional = true }
+pgp = "0.21"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "deflate"] }
+
+[features]
+# Draw canvases on the GPU (wgpu) when there is an adapter; the CPU
+# rasteriser stays as the fallback. FORGE_RENDERER=cpu turns it off.
+gpu = ["dep:forge-canvas-gpu"]
+default = ["tree-sitter", "grammars"]
+# The parser and structural commands. Without it Forge still knows each
+# language's comment syntax, indentation width and electric pairs.
+tree-sitter = ["dep:tree-sitter", "dep:tree-sitter-language", "dep:libloading"]
+# Grammars compiled into Forge. Turn this off to build only the parser and
+# load every grammar at runtime with forge.grammar.register.
+grammars = [
+    "tree-sitter",
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-python",
+    "dep:tree-sitter-javascript",
+    "dep:tree-sitter-c",
+    "dep:tree-sitter-go",
+    "dep:tree-sitter-json",
+    "dep:tree-sitter-toml-ng",
+    "dep:tree-sitter-bash",
+    "dep:tree-sitter-lua",
+    "dep:tree-sitter-markdown-fork",
+]
+
+[build-dependencies]
+cc = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+proptest = "1.12.0"
+wat = "1.259.0"
+wit-component = "0.259.0"
+wit-parser = "0.259"
+
+[lints]
+workspace = true

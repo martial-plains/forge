@@ -1,0 +1,7 @@
+{
+  "name": "hello-js",
+  "version": "0.1.0",
+  "description": "Example plugin in JavaScript: greets you",
+  "private": true,
+  "forge": { "name": "hello-js" }
+}

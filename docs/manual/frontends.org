@@ -1,0 +1,37 @@
+# The Frontends chapter: the windows Forge runs in, the system file picker
+# and the GPU renderer. It links only commands that exist in the registry.
+
+** Frontends
+   :PROPERTIES:
+   :ID:       Frontends
+   :CUSTOM_ID: Frontends
+   :SUMMARY:  The terminal and the graphical apps, the system file picker, and the canvas renderer
+   :COMMANDS: find-file-dialog find-directory-dialog write-file-dialog canvas-renderer
+   :END:
+
+Forge runs in a terminal, and has graphical apps for macOS (SwiftUI and
+Metal), GNOME (GTK 4) and Windows (WinUI 3).
+The GNOME and Windows apps are thin: the editor draws its own
+screen, menu bar and tabs as a grid of styled text, and the app shows
+that grid, sends keys, text and the mouse back, and provides what only
+the system can (the clipboard and the file picker). A canvas arrives in
+the grid as a picture, drawn by the shared renderer.
+
+The apps live under =frontends/=. Build the GNOME app with
+=cargo build --release= in =frontends/gnome= (it needs the GTK 4
+development files), and the Windows app with =scripts/build-windows.ps1=. The Windows
+app has not been compiled or run by the authors yet.
+
+*** The system file picker
+
+=find-file-dialog= opens a file, =find-directory-dialog= opens a folder in
+Dired and =write-file-dialog= saves the buffer under a new name, each
+with the system's own picker, like the file chooser in other editors. They
+are in the File menu. When the frontend has no picker (the terminal), they
+fall back to the usual minibuffer commands.
+
+*** The canvas renderer
+
+Canvases are drawn on the GPU (wgpu) when one is available, and on the
+CPU otherwise; both draw the same scene. =canvas-renderer= says which is
+in use.
