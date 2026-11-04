@@ -531,8 +531,8 @@ fn limit_entries(r: &mut Rendered, n: usize) {
         }
     }
     let (mut lines, mut refs, mut dates) = (Vec::new(), Vec::new(), Vec::new());
-    for i in 0..r.lines.len() {
-        if keep[i] {
+    for (i, keep_line) in keep.into_iter().enumerate() {
+        if keep_line {
             lines.push(std::mem::take(&mut r.lines[i]));
             refs.push(r.refs[i]);
             dates.push(r.dates[i]);

@@ -78,12 +78,17 @@ impl Pty {
         let prog = words.next().unwrap_or("/bin/sh");
         let args: Vec<&str> = words.collect();
         let (mut master, mut slave) = (0, 0);
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
         let mut ws = libc::winsize {
             ws_row: rows,
             ws_col: cols,
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
+        #[cfg(target_os = "macos")]
+        let ws_ptr = &mut ws;
+        #[cfg(not(target_os = "macos"))]
+        let ws_ptr = &ws;
         // SAFETY: openpty fills in two descriptors we own from here on.
         let rc = unsafe {
             libc::openpty(
@@ -91,7 +96,7 @@ impl Pty {
                 &mut slave,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                &mut ws,
+                ws_ptr,
             )
         };
         if rc != 0 {
