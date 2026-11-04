@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Forge core editor engine.
 
+pub mod agenda_faces;
 pub mod app;
 pub mod auto_fill;
 pub mod background;
 pub mod backup;
 pub mod buffer;
-pub mod canvas;
 mod buffer_ext;
+pub mod canvas;
 pub mod clipboard;
 pub mod commands;
 pub mod completion;
 pub mod config;
-pub mod epa;
 pub mod context_menu;
 pub mod declare;
 pub mod decoration;
@@ -21,17 +21,17 @@ pub mod display_spec;
 pub mod editing;
 pub mod editorconfig;
 pub mod env;
+pub mod epa;
 pub mod events;
 pub mod export;
 pub mod few;
 pub mod filelock;
+pub mod fileops;
 pub mod fill;
 pub mod fold;
-pub mod fileops;
 pub mod fsutil;
 #[cfg(feature = "tree-sitter")]
 pub mod grammar_install;
-pub mod agenda_faces;
 pub mod help_faces;
 pub mod http;
 pub mod icons;

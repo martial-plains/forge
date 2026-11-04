@@ -20,7 +20,7 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     ),
     forge_docs::CommandDoc::line(
         "few-set-search-engine",
-        "few: set the search engine (this session).",
+        "Few: set the search engine (this session).",
     ),
 ];
 

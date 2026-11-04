@@ -709,7 +709,7 @@ public protocol ForgeProtocol: AnyObject, Sendable {
      * What to draw now. If the editor is busy (a plugin running long),
      * the last frame, with `busy` set. Async so the app awaits it off
      * the main thread: the wait is the editor thread's answer, up to
-     * [`FRAME_WAIT`].
+     * `FRAME_WAIT`.
      */
     func frame(width: UInt16, height: UInt16) async  -> Frame
 
@@ -1105,7 +1105,7 @@ open func dialogResult(id: UInt32, path: String?)  {try! rustCall() {
      * What to draw now. If the editor is busy (a plugin running long),
      * the last frame, with `busy` set. Async so the app awaits it off
      * the main thread: the wait is the editor thread's answer, up to
-     * [`FRAME_WAIT`].
+     * `FRAME_WAIT`.
      */
 open func frame(width: UInt16, height: UInt16)async  -> Frame  {
     return
@@ -5430,7 +5430,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_forge_ffi_checksum_method_forge_dialog_result() != 53318) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_forge_ffi_checksum_method_forge_frame() != 23284) {
+    if (uniffi_forge_ffi_checksum_method_forge_frame() != 28929) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_forge_ffi_checksum_method_forge_frame_at() != 8103) {

@@ -504,7 +504,7 @@ impl Vt {
 
     fn csi_byte(&mut self, b: u8) {
         match b {
-            0x30..=0x3f | 0x20..=0x2f => self.params.push(b),
+            0x20..=0x3f => self.params.push(b),
             0x40..=0x7e => {
                 self.state = State::Ground;
                 let params = std::mem::take(&mut self.params);
@@ -530,12 +530,11 @@ impl Vt {
                     .unwrap_or(rest);
                 self.cwd = Some(percent_decode(path));
             }
-            "133" => {
-                if rest.starts_with('A') {
-                    let at = self.scrollback.len() + self.row;
-                    self.prompt_rows.push(at);
-                }
+            "133" if rest.starts_with('A') => {
+                let at = self.scrollback.len() + self.row;
+                self.prompt_rows.push(at);
             }
+            "133" => {}
             _ => {}
         }
     }
@@ -753,14 +752,14 @@ impl Vt {
             0 => {
                 let g = self.g();
                 g[row][col..].fill(blank);
-                for r in row + 1..rows {
-                    g[r].fill(blank);
+                for line in g.iter_mut().take(rows).skip(row + 1) {
+                    line.fill(blank);
                 }
             }
             1 => {
                 let g = self.g();
-                for r in 0..row {
-                    g[r].fill(blank);
+                for line in g.iter_mut().take(row) {
+                    line.fill(blank);
                 }
                 g[row][..=col].fill(blank);
             }

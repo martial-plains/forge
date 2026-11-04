@@ -408,22 +408,22 @@ fn edit(app: &mut App, req: &Value, stream: &TcpStream) -> Handled {
             Ok((id, _)) => {
                 app.switch_to(id);
                 if line > 0 {
-                    app.buf()
-                        .set_point(Pos::new(line.saturating_sub(1), col));
+                    app.buf().set_point(Pos::new(line.saturating_sub(1), col));
                 }
                 ids.push(id);
             }
             Err(e) => return Handled::Reply(fail(format!("{}: {e}", full.display()))),
         }
     }
-    if wait && !ids.is_empty() {
-        if let (Some(s), Ok(clone)) = (app.server.as_mut(), stream.try_clone()) {
-            s.waiters.push(Waiter {
-                stream: clone,
-                buffers: ids,
-            });
-            return Handled::Waiting;
-        }
+    if wait
+        && !ids.is_empty()
+        && let (Some(s), Ok(clone)) = (app.server.as_mut(), stream.try_clone())
+    {
+        s.waiters.push(Waiter {
+            stream: clone,
+            buffers: ids,
+        });
+        return Handled::Waiting;
     }
     Handled::Reply(ok(""))
 }

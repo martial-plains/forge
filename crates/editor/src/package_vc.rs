@@ -145,7 +145,10 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
     let dir = declared.as_ref().and_then(|u| u.git_dir.clone());
     if let Some(d) = &dir {
         let p = std::path::Path::new(d);
-        if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        if p.is_absolute()
+            || p.components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             return app.error(format!("{name}: lisp_dir must stay inside the repository"));
         }
     }
@@ -344,7 +347,10 @@ fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
                         && p.how == "Cargo.toml"
                         && let Some(c) = p.command.as_mut()
                     {
-                        c.push_str(&format!(" --features {}", shell_quote(&job.features.join(","))));
+                        c.push_str(&format!(
+                            " --features {}",
+                            shell_quote(&job.features.join(","))
+                        ));
                     }
                     p
                 }

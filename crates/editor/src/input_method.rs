@@ -2274,15 +2274,24 @@ mod tests {
     #[test]
     fn greek_and_russian() {
         assert_eq!(run("greek", "ab"), ("αβ".into(), String::new()));
-        assert_eq!(run("russian-translit", "privet "), ("привет ".into(), String::new()));
+        assert_eq!(
+            run("russian-translit", "privet "),
+            ("привет ".into(), String::new())
+        );
         assert_eq!(run("russian-translit", "sh"), (String::new(), "ш".into()));
     }
 
     #[test]
     fn japanese_kana() {
-        assert_eq!(typed_in(&mut new_app(), "japanese-hiragana", "kyou"), "きょう");
+        assert_eq!(
+            typed_in(&mut new_app(), "japanese-hiragana", "kyou"),
+            "きょう"
+        );
         assert_eq!(typed_in(&mut new_app(), "japanese-hiragana", "kka"), "っか");
-        assert_eq!(typed_in(&mut new_app(), "japanese-katakana", "kanzi"), "カンジ");
+        assert_eq!(
+            typed_in(&mut new_app(), "japanese-katakana", "kanzi"),
+            "カンジ"
+        );
         assert_eq!(typed_in(&mut new_app(), "japanese-hankaku-kana", "ga"), "ｶﾞ");
     }
 }

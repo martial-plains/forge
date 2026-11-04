@@ -67,7 +67,10 @@ pub const DEFAULT_FILES_ALIASES: &[(&str, &str)] = &[
     ("ch", "*.c *.h"),
     ("c", "*.c"),
     ("cc", "*.cc *.cpp *.cxx *.c++ *.C"),
-    ("cchh", "*.cc *.cpp *.cxx *.c++ *.C *.c *.h *.hh *.hpp *.hxx *.h++ *.H"),
+    (
+        "cchh",
+        "*.cc *.cpp *.cxx *.c++ *.C *.c *.h *.hh *.hpp *.hxx *.h++ *.H",
+    ),
     ("hh", "*.hh *.hpp *.hxx *.h++ *.H"),
     ("h", "*.h"),
     ("l", "ChangeLog* changelog* CHANGELOG*"),

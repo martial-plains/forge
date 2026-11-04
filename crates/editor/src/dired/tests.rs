@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::git::*;
 use super::*;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
@@ -541,6 +542,7 @@ fn the_gradient_spreads_a_listing_out_by_size_and_age() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_symlinks_target_is_coloured_on_its_own() {
     let dir = std::env::temp_dir().join(format!("forge-dired-link-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -746,6 +748,7 @@ fn listing_app(tag: &str) -> (App, PathBuf) {
     for f in ["a.txt", "b.txt", "c.log", "old.txt~", "run.sh"] {
         fs::write(dir.join(f), format!("content of {f}\n")).unwrap();
     }
+    #[cfg(unix)]
     fs::set_permissions(dir.join("run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
     let mut app = App::new(forge_core::Editor::default());
     let id = app.editor.add_buffer(Buffer::new("scratch"));
@@ -804,21 +807,24 @@ fn links_regexp_renames_chmod_and_shell() {
     assert!(dir.join("a-new.md").exists() && dir.join("b-new.md").exists());
     assert!(!dir.join("a.txt").exists());
     // Symlinks, absolute and relative.
-    extra::answered(
-        &mut a,
-        Extra::Link('S', vec![dir.join("c.log")]),
-        &dir.join("c.sym").display().to_string(),
-    );
-    assert_eq!(fs::read_link(dir.join("c.sym")).unwrap(), dir.join("c.log"));
-    extra::answered(
-        &mut a,
-        Extra::Link('Y', vec![dir.join("c.log")]),
-        &dir.join("sub/c.rel").display().to_string(),
-    );
-    assert_eq!(
-        fs::read_link(dir.join("sub/c.rel")).unwrap(),
-        PathBuf::from("../c.log")
-    );
+    #[cfg(unix)]
+    {
+        extra::answered(
+            &mut a,
+            Extra::Link('S', vec![dir.join("c.log")]),
+            &dir.join("c.sym").display().to_string(),
+        );
+        assert_eq!(fs::read_link(dir.join("c.sym")).unwrap(), dir.join("c.log"));
+        extra::answered(
+            &mut a,
+            Extra::Link('Y', vec![dir.join("c.log")]),
+            &dir.join("sub/c.rel").display().to_string(),
+        );
+        assert_eq!(
+            fs::read_link(dir.join("sub/c.rel")).unwrap(),
+            PathBuf::from("../c.log")
+        );
+    }
     extra::answered(
         &mut a,
         Extra::Link('H', vec![dir.join("c.log")]),
@@ -829,24 +835,27 @@ fn links_regexp_renames_chmod_and_shell() {
         "content of c.log\n"
     );
     // chmod, octal and symbolic.
-    extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "600");
-    assert_eq!(
-        fs::metadata(dir.join("c.log"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
-    extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "u+x,go+r");
-    assert_eq!(
-        fs::metadata(dir.join("c.log"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o744
-    );
+    #[cfg(unix)]
+    {
+        extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "600");
+        assert_eq!(
+            fs::metadata(dir.join("c.log"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "u+x,go+r");
+        assert_eq!(
+            fs::metadata(dir.join("c.log"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o744
+        );
+    }
     // Upper-casing.
     goto_path(&mut a, &dir.join("c.log"));
     execute(&mut a, "dired-mark");
@@ -1095,15 +1104,18 @@ fn a_tether_directory_is_a_real_dired_listing() {
     )
     .unwrap();
     assert!(!dir.join("copy.txt").exists() && dir.join("moved.txt").exists());
-    rfs::chmod(&PathBuf::from(format!("{name}/moved.txt")), "600").unwrap();
-    assert_eq!(
-        fs::metadata(dir.join("moved.txt"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
+    #[cfg(unix)]
+    {
+        rfs::chmod(&PathBuf::from(format!("{name}/moved.txt")), "600").unwrap();
+        assert_eq!(
+            fs::metadata(dir.join("moved.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
     assert!(rfs::exists(&PathBuf::from(format!("{name}/moved.txt"))));
     assert!(rfs::is_dir(&PathBuf::from(format!("{name}/sub"))));
     delete_confirmed(&mut a, vec![PathBuf::from(format!("{name}/moved.txt"))]);

@@ -16,9 +16,18 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use crate::app::App;
 
 pub const COMMANDS: &[forge_docs::CommandDoc] = &[
-    forge_docs::CommandDoc::line("find-directory-dialog", "Open a folder in Dired with the system file picker."),
-    forge_docs::CommandDoc::line("find-file-dialog", "Visit a file chosen with the system file picker."),
-    forge_docs::CommandDoc::line("write-file-dialog", "Save this buffer under a name chosen with the system file picker."),
+    forge_docs::CommandDoc::line(
+        "find-directory-dialog",
+        "Open a folder in Dired with the system file picker.",
+    ),
+    forge_docs::CommandDoc::line(
+        "find-file-dialog",
+        "Visit a file chosen with the system file picker.",
+    ),
+    forge_docs::CommandDoc::line(
+        "write-file-dialog",
+        "Save this buffer under a name chosen with the system file picker.",
+    ),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,10 +85,22 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
     }
     let (start, name) = {
         let b = app.buf_ref();
-        let dir = b.path().and_then(|p| p.parent().map(PathBuf::from)).or_else(|| std::env::current_dir().ok());
-        (dir.map(|d| d.display().to_string()).unwrap_or_default(), b.name().to_string())
+        let dir = b
+            .path()
+            .and_then(|p| p.parent().map(PathBuf::from))
+            .or_else(|| std::env::current_dir().ok());
+        (
+            dir.map(|d| d.display().to_string()).unwrap_or_default(),
+            b.name().to_string(),
+        )
     };
-    ask(Request { id: NEXT.fetch_add(1, Ordering::SeqCst), kind, title: title.into(), start, name });
+    ask(Request {
+        id: NEXT.fetch_add(1, Ordering::SeqCst),
+        kind,
+        title: title.into(),
+        start,
+        name,
+    });
     true
 }
 
@@ -93,10 +114,12 @@ pub fn finish(app: &mut App, id: u32, path: Option<String>) {
             _ => None,
         }
     };
-    let (Some(r), Some(path)) = (request, path.filter(|p| !p.is_empty())) else { return };
+    let (Some(r), Some(path)) = (request, path.filter(|p| !p.is_empty())) else {
+        return;
+    };
     let path = PathBuf::from(path);
     match r.kind {
-        Kind::OpenFile => match app.editor.open_file(&path.display().to_string()) {
+        Kind::OpenFile => match app.editor.open_file(path.display().to_string()) {
             Ok((id, _)) => app.switch_to(id),
             Err(e) => app.error(format!("Cannot open {}: {e}", path.display())),
         },
@@ -158,7 +181,11 @@ mod tests {
         assert!(execute(&mut a, "find-directory-dialog"));
         let r = pending().unwrap();
         finish(&mut a, r.id, Some(dir.display().to_string()));
-        assert!(a.buf_ref().name().contains("forge-dialog"), "{}", a.buf_ref().name());
+        assert!(
+            a.buf_ref().name().contains("forge-dialog"),
+            "{}",
+            a.buf_ref().name()
+        );
         set_capable(false);
         let _ = std::fs::remove_dir_all(dir);
     }

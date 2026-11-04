@@ -148,9 +148,7 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
                 opts.actions.push(Action::Load(value("a file")?));
             }
             "--daemon" | "--bg-daemon" => {
-                opts.daemon = Some(Daemon::Background(
-                    inline.unwrap_or("server").to_string(),
-                ));
+                opts.daemon = Some(Daemon::Background(inline.unwrap_or("server").to_string()));
             }
             "--fg-daemon" => {
                 opts.daemon = Some(Daemon::Foreground(inline.unwrap_or("server").to_string()));
@@ -204,7 +202,11 @@ pub fn run_actions(app: &mut App, actions: &[Action], batch: bool) -> bool {
             Action::Eval(src) => ok &= eval(app, src),
             Action::Funcall(cmd) => {
                 app.run_command(cmd);
-                if app.message.as_deref().is_some_and(|m| m.starts_with("Unknown command")) {
+                if app
+                    .message
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("Unknown command"))
+                {
                     ok = false;
                 }
             }

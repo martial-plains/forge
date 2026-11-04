@@ -29,6 +29,10 @@
 //! C-c C-n jump between prompts. `forge-term-integration` prints the
 //! snippet for bash, zsh and fish.
 
+#[cfg(unix)]
+pub mod pty;
+#[cfg(not(unix))]
+#[path = "pty_stub.rs"]
 pub mod pty;
 pub mod vt;
 
@@ -168,8 +172,8 @@ pub fn start(app: &mut App, shell: &str) {
         PathBuf::from("/")
     };
     let (rows, cols) = (
-        app.win().height.max(4).min(500) as u16,
-        app.win().width.max(10).min(1000) as u16,
+        app.win().height.clamp(4, 500) as u16,
+        app.win().width.clamp(10, 1000) as u16,
     );
     let pty = match pty::Pty::spawn(shell, &dir, rows, cols, &[]) {
         Ok(p) => p,
@@ -705,6 +709,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_term_buffer_runs_a_shell_and_follows_it() {
         let mut app = App::new(forge_core::Editor::default());
         let scratch = app.editor.add_buffer(forge_core::Buffer::new("*scratch*"));

@@ -77,6 +77,7 @@ fn backups_auto_save_revert_and_recover() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_locked_file_is_asked_about_at_the_first_change() {
     let dir = std::env::temp_dir().join(format!("forge-lock-prompt-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

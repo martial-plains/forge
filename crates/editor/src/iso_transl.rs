@@ -139,12 +139,12 @@ pub fn char_map() -> &'static [Entry] {
         for &(key, mark) in ACCENTS {
             for base in ('A'..='Z').chain('a'..='z') {
                 let mut composed = [base, mark].into_iter().nfc();
-                if let (Some(c), None) = (composed.next(), composed.next()) {
-                    if c != base {
-                        let k = leak(format!("{key}{base}"));
-                        if !v.iter().any(|(e, _)| *e == k) {
-                            v.push((k, c));
-                        }
+                if let (Some(c), None) = (composed.next(), composed.next())
+                    && c != base
+                {
+                    let k = leak(format!("{key}{base}"));
+                    if !v.iter().any(|(e, _)| *e == k) {
+                        v.push((k, c));
                     }
                 }
             }
@@ -161,10 +161,7 @@ const LANGUAGE_KEYS: &[(&str, &str)] = &[
         "C=Ĉ G=Ĝ H=Ĥ J=Ĵ S=Ŝ U=Ŭ c=ĉ g=ĝ h=ĥ j=ĵ s=ŝ u=ŭ",
     ),
     ("French", "C=Ç c=ç"),
-    (
-        "German",
-        "A=Ä O=Ö U=Ü a=ä o=ö u=ü S=ẞ s=ß",
-    ),
+    ("German", "A=Ä O=Ö U=Ü a=ä o=ö u=ü S=ẞ s=ß"),
     ("Portuguese", "C=Ç c=ç"),
     ("Spanish", "N=Ñ n=ñ"),
 ];

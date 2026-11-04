@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::*;
+#[cfg(unix)]
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[test]
+#[cfg(unix)]
 fn terminal_char_mode_routes_only_documented_keys_to_forge() {
     let mut app = app_with("");
     crate::term::start(&mut app, "sh");

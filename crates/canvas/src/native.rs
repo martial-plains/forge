@@ -71,7 +71,10 @@ fn cmds(cmds: &[PathCmd]) -> Value {
             }
             PathCmd::Quad(q, p) => {
                 // The cubic with the same shape.
-                let c1 = Point::new(cur.x + 2.0 / 3.0 * (q.x - cur.x), cur.y + 2.0 / 3.0 * (q.y - cur.y));
+                let c1 = Point::new(
+                    cur.x + 2.0 / 3.0 * (q.x - cur.x),
+                    cur.y + 2.0 / 3.0 * (q.y - cur.y),
+                );
                 let c2 = Point::new(p.x + 2.0 / 3.0 * (q.x - p.x), p.y + 2.0 / 3.0 * (q.y - p.y));
                 out.push(json!(["C", c1.x, c1.y, c2.x, c2.y, p.x, p.y]));
                 cur = p;
@@ -106,18 +109,29 @@ fn arrowhead(tip: Point, from: Point, s: &Stroke) -> Option<Value> {
     let (bx, by) = (tip.x - ux * size, tip.y - uy * size);
     let half = size * 0.45;
     Some(path_op(
-        json!([["M", tip.x, tip.y], ["L", bx - uy * half, by + ux * half], ["L", bx + uy * half, by - ux * half], ["Z"]]),
+        json!([
+            ["M", tip.x, tip.y],
+            ["L", bx - uy * half, by + ux * half],
+            ["L", bx + uy * half, by - ux * half],
+            ["Z"]
+        ]),
         json!({"c": color(&s.color)}),
         Value::Null,
     ))
 }
 
 fn arrows(out: &mut Vec<Value>, polys: &[(Vec<Point>, bool)], s: &Stroke) {
-    let Some((pts, _)) = polys.iter().find(|(p, _)| p.len() >= 2) else { return };
-    if s.arrow_end && let Some(a) = arrowhead(pts[pts.len() - 1], pts[pts.len() - 2], s) {
+    let Some((pts, _)) = polys.iter().find(|(p, _)| p.len() >= 2) else {
+        return;
+    };
+    if s.arrow_end
+        && let Some(a) = arrowhead(pts[pts.len() - 1], pts[pts.len() - 2], s)
+    {
         out.push(a);
     }
-    if s.arrow_start && let Some(a) = arrowhead(pts[0], pts[1], s) {
+    if s.arrow_start
+        && let Some(a) = arrowhead(pts[0], pts[1], s)
+    {
         out.push(a);
     }
 }
@@ -125,13 +139,37 @@ fn arrows(out: &mut Vec<Value>, polys: &[(Vec<Point>, bool)], s: &Stroke) {
 fn convert(ops: &[Op], out: &mut Vec<Value>) {
     for op in ops {
         match op {
-            Op::Rect { x, y, w, h, radius, fill: f, stroke: s, .. } => {
+            Op::Rect {
+                x,
+                y,
+                w,
+                h,
+                radius,
+                fill: f,
+                stroke: s,
+                ..
+            } => {
                 out.push(json!({"t": "rect", "x": x, "y": y, "w": w, "h": h, "r": radius, "f": fill(f), "s": stroke(s)}));
             }
-            Op::Ellipse { cx, cy, rx, ry, fill: f, stroke: s, .. } => {
+            Op::Ellipse {
+                cx,
+                cy,
+                rx,
+                ry,
+                fill: f,
+                stroke: s,
+                ..
+            } => {
                 out.push(json!({"t": "ellipse", "cx": cx, "cy": cy, "rx": rx, "ry": ry, "f": fill(f), "s": stroke(s)}));
             }
-            Op::Line { x1, y1, x2, y2, stroke: s, .. } => {
+            Op::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                stroke: s,
+                ..
+            } => {
                 out.push(path_op(
                     json!([["M", x1, y1], ["L", x2, y2]]),
                     Value::Null,
@@ -140,14 +178,33 @@ fn convert(ops: &[Op], out: &mut Vec<Value>) {
                 let pts = vec![(vec![Point::new(*x1, *y1), Point::new(*x2, *y2)], false)];
                 arrows(out, &pts, s);
             }
-            Op::Path { d, fill: f, stroke: s, .. } => {
-                let Some(parsed) = parse_path(d) else { continue };
+            Op::Path {
+                d,
+                fill: f,
+                stroke: s,
+                ..
+            } => {
+                let Some(parsed) = parse_path(d) else {
+                    continue;
+                };
                 out.push(path_op(cmds(&parsed), fill(f), stroke(s)));
                 if let Some(s) = s {
                     arrows(out, &flatten(&parsed), s);
                 }
             }
-            Op::Text { x, y, text, size, color: c, bold, italic, align, max_width, max_lines, .. } => {
+            Op::Text {
+                x,
+                y,
+                text,
+                size,
+                color: c,
+                bold,
+                italic,
+                align,
+                max_width,
+                max_lines,
+                ..
+            } => {
                 let mut lines = match max_width {
                     Some(w) => wrap(text, *size, *bold, *w),
                     None => text.split('\n').map(str::to_string).collect(),
@@ -166,10 +223,21 @@ fn convert(ops: &[Op], out: &mut Vec<Value>) {
                     Align::Center => "center",
                     Align::Right => "right",
                 };
-                out.push(json!({"t": "text", "x": x, "y": y, "size": size, "color": color(c),
-                    "bold": bold, "italic": italic, "align": align, "lines": lines}));
+                out.push(
+                    json!({"t": "text", "x": x, "y": y, "size": size, "color": color(c),
+                    "bold": bold, "italic": italic, "align": align, "lines": lines}),
+                );
             }
-            Op::Image { path, x, y, w, h, fit, opacity, .. } => {
+            Op::Image {
+                path,
+                x,
+                y,
+                w,
+                h,
+                fit,
+                opacity,
+                ..
+            } => {
                 let fit = match fit {
                     ImageFit::Stretch => "stretch",
                     ImageFit::Cover => "cover",
@@ -177,12 +245,22 @@ fn convert(ops: &[Op], out: &mut Vec<Value>) {
                 };
                 out.push(json!({"t": "image", "path": path, "x": x, "y": y, "w": w, "h": h, "fit": fit, "o": opacity}));
             }
-            Op::Group { ops, transform, clip, opacity, .. } => {
-                let m = transform.as_ref().map_or(crate::Matrix::IDENTITY, |t| t.matrix());
+            Op::Group {
+                ops,
+                transform,
+                clip,
+                opacity,
+                ..
+            } => {
+                let m = transform
+                    .as_ref()
+                    .map_or(crate::Matrix::IDENTITY, |t| t.matrix());
                 let mut inner = Vec::new();
                 convert(ops, &mut inner);
-                out.push(json!({"t": "group", "m": [m.a, m.b, m.c, m.d, m.e, m.f], "clip": clip,
-                    "o": opacity, "ops": inner}));
+                out.push(
+                    json!({"t": "group", "m": [m.a, m.b, m.c, m.d, m.e, m.f], "clip": clip,
+                    "o": opacity, "ops": inner}),
+                );
             }
         }
     }
@@ -217,9 +295,21 @@ mod tests {
         let ops = v["ops"].as_array().unwrap();
         // The path, its arrowhead, the line, the text.
         assert_eq!(ops.len(), 4, "{v}");
-        assert!(ops[0]["c"].as_array().unwrap().iter().all(|c| matches!(c[0].as_str(), Some("M" | "L" | "C" | "Z"))));
-        assert_eq!(ops[1]["f"]["c"], ops[0]["s"]["c"], "the arrowhead has the stroke colour");
+        assert!(
+            ops[0]["c"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|c| matches!(c[0].as_str(), Some("M" | "L" | "C" | "Z")))
+        );
+        assert_eq!(
+            ops[1]["f"]["c"], ops[0]["s"]["c"],
+            "the arrowhead has the stroke colour"
+        );
         assert_eq!(ops[2]["t"], "path");
-        assert!(ops[3]["lines"].as_array().unwrap().len() > 1, "wrapped: {v}");
+        assert!(
+            ops[3]["lines"].as_array().unwrap().len() > 1,
+            "wrapped: {v}"
+        );
     }
 }

@@ -9,15 +9,16 @@
 //! it differently.
 
 pub mod app;
-pub mod server;
 pub mod authinfo;
 pub mod bookmarks;
 pub mod builtins;
+pub mod canvas;
 pub mod capf;
 pub mod clipboard;
 pub mod commands;
 pub mod compile;
 pub mod declare;
+pub mod dialog;
 pub mod dired;
 pub mod docs_bridge;
 pub mod docs_tables;
@@ -30,8 +31,6 @@ pub mod grep;
 pub mod hangul;
 pub mod help;
 pub mod icon;
-pub mod canvas;
-pub mod dialog;
 pub mod image_mode;
 pub mod info;
 pub mod input_method;
@@ -40,6 +39,7 @@ pub mod keymap;
 pub mod kkc;
 pub mod kmacro;
 pub mod mode_line;
+pub mod server;
 pub mod term;
 pub mod webkit;
 

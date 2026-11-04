@@ -442,7 +442,11 @@ impl Registry {
         // A plugin may define several menus (a Bases menu for each of its
         // modes, say), and one plugin's menus may share a title when they
         // show under different conditions: only one shows at a time.
-        if self.menus.iter().any(|m| m.title == title && (m.owner.as_deref() != Some(owner) || m.when == when)) {
+        if self
+            .menus
+            .iter()
+            .any(|m| m.title == title && (m.owner.as_deref() != Some(owner) || m.when == when))
+        {
             return Err(format!("there is already a {title} menu"));
         }
         self.menus.push(Menu {
@@ -2706,9 +2710,17 @@ mod per_mode_menu_tests {
     fn a_plugin_may_define_a_menu_for_each_mode() {
         let mut r = Registry::default();
         let item = || vec![Item::new("A", "a")];
-        r.define_when("Bases", item(), "bases", When::MajorMode("x".into())).unwrap();
-        r.define_when("Bases", item(), "bases", When::MajorMode("y".into())).unwrap();
-        assert!(r.define_when("Bases", item(), "bases", When::MajorMode("y".into())).is_err());
-        assert!(r.define_when("Bases", item(), "other", When::MajorMode("z".into())).is_err());
+        r.define_when("Bases", item(), "bases", When::MajorMode("x".into()))
+            .unwrap();
+        r.define_when("Bases", item(), "bases", When::MajorMode("y".into()))
+            .unwrap();
+        assert!(
+            r.define_when("Bases", item(), "bases", When::MajorMode("y".into()))
+                .is_err()
+        );
+        assert!(
+            r.define_when("Bases", item(), "other", When::MajorMode("z".into()))
+                .is_err()
+        );
     }
 }

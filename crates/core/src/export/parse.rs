@@ -1092,7 +1092,6 @@ impl P {
                     {
                         flush!();
                         let name = rest[2..e].to_string();
-                        if rest.starts_with("<<<") {}
                         out.push(Inline::Target(name));
                         i += e + 2;
                         continue;

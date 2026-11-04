@@ -45,7 +45,15 @@ impl Scene {
         }
         fn any(ops: &[Op]) -> bool {
             ops.iter().any(|op| match op {
-                Op::Rect { fill, stroke: s, .. } | Op::Ellipse { fill, stroke: s, .. } | Op::Path { fill, stroke: s, .. } => paint(fill) || stroke(s),
+                Op::Rect {
+                    fill, stroke: s, ..
+                }
+                | Op::Ellipse {
+                    fill, stroke: s, ..
+                }
+                | Op::Path {
+                    fill, stroke: s, ..
+                } => paint(fill) || stroke(s),
                 Op::Line { stroke: s, .. } => is_role(&s.color),
                 Op::Text { color, .. } => is_role(color),
                 Op::Image { .. } => false,
@@ -72,7 +80,9 @@ impl Scene {
         fn walk(ops: &mut [Op], pal: &crate::Palette) {
             for op in ops {
                 match op {
-                    Op::Rect { fill, stroke, .. } | Op::Ellipse { fill, stroke, .. } | Op::Path { fill, stroke, .. } => {
+                    Op::Rect { fill, stroke, .. }
+                    | Op::Ellipse { fill, stroke, .. }
+                    | Op::Path { fill, stroke, .. } => {
                         paint(fill, pal);
                         if let Some(s) = stroke {
                             fix(&mut s.color, pal);
@@ -132,7 +142,12 @@ impl ImageFit {
 
     /// Where a `iw` x `ih` picture lands in the box (`x`, `y`, `w`, `h`): its
     /// own rectangle (which may stick out of the box for `Cover`).
-    pub fn place(self, iw: f32, ih: f32, (x, y, w, h): (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+    pub fn place(
+        self,
+        iw: f32,
+        ih: f32,
+        (x, y, w, h): (f32, f32, f32, f32),
+    ) -> (f32, f32, f32, f32) {
         let (iw, ih) = (iw.max(1.0), ih.max(1.0));
         let s = match self {
             ImageFit::Stretch => return (x, y, w, h),
@@ -185,7 +200,13 @@ pub struct Stroke {
 
 impl Stroke {
     pub fn new(color: &str, width: f32) -> Self {
-        Self { color: color.into(), width, dash: Vec::new(), arrow_start: false, arrow_end: false }
+        Self {
+            color: color.into(),
+            width,
+            dash: Vec::new(),
+            arrow_start: false,
+            arrow_end: false,
+        }
     }
 
     pub fn dashed(mut self, on: f32, off: f32) -> Self {
@@ -231,17 +252,35 @@ pub struct Transform {
 
 impl Default for Transform {
     fn default() -> Self {
-        Self { x: 0.0, y: 0.0, sx: 1.0, sy: 1.0, rotate: 0.0, ox: 0.0, oy: 0.0 }
+        Self {
+            x: 0.0,
+            y: 0.0,
+            sx: 1.0,
+            sy: 1.0,
+            rotate: 0.0,
+            ox: 0.0,
+            oy: 0.0,
+        }
     }
 }
 
 impl Transform {
     pub fn translate(x: f32, y: f32) -> Self {
-        Self { x, y, ..Self::default() }
+        Self {
+            x,
+            y,
+            ..Self::default()
+        }
     }
 
     pub fn scale_about(s: f32, ox: f32, oy: f32) -> Self {
-        Self { sx: s, sy: s, ox, oy, ..Self::default() }
+        Self {
+            sx: s,
+            sy: s,
+            ox,
+            oy,
+            ..Self::default()
+        }
     }
 
     pub fn matrix(&self) -> Matrix {
@@ -382,7 +421,16 @@ impl Op {
     }
 
     pub fn rect(x: f32, y: f32, w: f32, h: f32) -> Op {
-        Op::Rect { x, y, w, h, radius: 0.0, fill: None, stroke: None, id: None }
+        Op::Rect {
+            x,
+            y,
+            w,
+            h,
+            radius: 0.0,
+            fill: None,
+            stroke: None,
+            id: None,
+        }
     }
 
     pub fn fill(mut self, paint: impl Into<Paint>) -> Op {
@@ -427,15 +475,35 @@ impl Op {
     }
 
     pub fn ellipse(cx: f32, cy: f32, rx: f32, ry: f32) -> Op {
-        Op::Ellipse { cx, cy, rx, ry, fill: None, stroke: None, id: None }
+        Op::Ellipse {
+            cx,
+            cy,
+            rx,
+            ry,
+            fill: None,
+            stroke: None,
+            id: None,
+        }
     }
 
     pub fn line(x1: f32, y1: f32, x2: f32, y2: f32, stroke: Stroke) -> Op {
-        Op::Line { x1, y1, x2, y2, stroke, id: None }
+        Op::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            stroke,
+            id: None,
+        }
     }
 
     pub fn path(d: &str) -> Op {
-        Op::Path { d: d.into(), fill: None, stroke: None, id: None }
+        Op::Path {
+            d: d.into(),
+            fill: None,
+            stroke: None,
+            id: None,
+        }
     }
 
     pub fn text(x: f32, y: f32, text: &str, size: f32, color: &str) -> Op {
@@ -462,7 +530,13 @@ impl Op {
     }
 
     pub fn group(ops: Vec<Op>) -> Op {
-        Op::Group { ops, transform: None, clip: None, opacity: 1.0, id: None }
+        Op::Group {
+            ops,
+            transform: None,
+            clip: None,
+            opacity: 1.0,
+            id: None,
+        }
     }
 
     pub fn transformed(mut self, t: Transform) -> Op {
@@ -480,12 +554,30 @@ impl Op {
     }
 
     pub fn image(path: &str, x: f32, y: f32, w: f32, h: f32) -> Op {
-        Op::Image { path: path.into(), x, y, w, h, fit: ImageFit::Stretch, opacity: 1.0, id: None }
+        Op::Image {
+            path: path.into(),
+            x,
+            y,
+            w,
+            h,
+            fit: ImageFit::Stretch,
+            opacity: 1.0,
+            id: None,
+        }
     }
 
     /// An image that fills its box without distortion (the overflow is cut).
     pub fn image_cover(path: &str, x: f32, y: f32, w: f32, h: f32) -> Op {
-        Op::Image { path: path.into(), x, y, w, h, fit: ImageFit::Cover, opacity: 1.0, id: None }
+        Op::Image {
+            path: path.into(),
+            x,
+            y,
+            w,
+            h,
+            fit: ImageFit::Cover,
+            opacity: 1.0,
+            id: None,
+        }
     }
 
     pub fn fill_linear(mut self, x1: f32, y1: f32, x2: f32, y2: f32, stops: &[(f32, &str)]) -> Op {
@@ -497,7 +589,9 @@ impl Op {
             stops: stops.iter().map(|(o, c)| (*o, (*c).to_string())).collect(),
         });
         match &mut self {
-            Op::Rect { fill, .. } | Op::Ellipse { fill, .. } | Op::Path { fill, .. } => *fill = Some(g),
+            Op::Rect { fill, .. } | Op::Ellipse { fill, .. } | Op::Path { fill, .. } => {
+                *fill = Some(g)
+            }
             _ => {}
         }
         self
@@ -513,7 +607,12 @@ impl Op {
 
 impl Scene {
     pub fn new(width: f32, height: f32) -> Self {
-        Self { width, height, background: None, ops: Vec::new() }
+        Self {
+            width,
+            height,
+            background: None,
+            ops: Vec::new(),
+        }
     }
 
     pub fn background(mut self, c: &str) -> Self {

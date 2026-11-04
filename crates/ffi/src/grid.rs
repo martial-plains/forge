@@ -94,7 +94,8 @@ const DARK: Palette = Palette {
     bg: 0x1e1e2e,
     ansi: [
         0x45475a, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xbac2de, // 0-7
-        0x585b70, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xa6adc8, // 8-15
+        0x585b70, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5,
+        0xa6adc8, // 8-15
     ],
 };
 
@@ -156,7 +157,10 @@ fn dim(c: u32, towards: u32) -> u32 {
 /// What a frontend asks of the terminal UI: kitty-style pictures, and colour
 /// underlines it can draw.
 pub fn caps() -> TermCaps {
-    TermCaps { underline_color: true, graphics: GraphicsProto::Kitty }
+    TermCaps {
+        underline_color: true,
+        graphics: GraphicsProto::Kitty,
+    }
 }
 
 pub fn build(app: &mut App, cols: u16, rows: u16, dark: bool) -> Grid {
@@ -164,8 +168,12 @@ pub fn build(app: &mut App, cols: u16, rows: u16, dark: bool) -> Grid {
     let p = if dark { &DARK } else { &LIGHT };
     let mut term = Terminal::new(TestBackend::new(cols, rows)).expect("a test terminal");
     let mut slots = Vec::new();
-    term.draw(|f| slots = forge_terminal::ui::render_with(f, app, caps())).expect("drawing");
-    let cursor = term.get_cursor_position().map(|p| (p.x, p.y)).unwrap_or((0, 0));
+    term.draw(|f| slots = forge_terminal::ui::render_with(f, app, caps()))
+        .expect("drawing");
+    let cursor = term
+        .get_cursor_position()
+        .map(|p| (p.x, p.y))
+        .unwrap_or((0, 0));
     let buf = term.backend().buffer();
     let mut runs: Vec<GridRun> = Vec::new();
     for y in 0..rows {
@@ -176,7 +184,10 @@ pub fn build(app: &mut App, cols: u16, rows: u16, dark: bool) -> Grid {
             let sym = cell.symbol();
             let width = (sym.width() as u16).max(1);
             let m = cell.modifier;
-            let (mut fg, mut bg) = (rgb(cell.fg, p).unwrap_or(p.fg), rgb(cell.bg, p).unwrap_or(p.bg));
+            let (mut fg, mut bg) = (
+                rgb(cell.fg, p).unwrap_or(p.fg),
+                rgb(cell.bg, p).unwrap_or(p.bg),
+            );
             if m.contains(Modifier::REVERSED) {
                 std::mem::swap(&mut fg, &mut bg);
             }
@@ -199,7 +210,13 @@ pub fn build(app: &mut App, cols: u16, rows: u16, dark: bool) -> Grid {
             let wide = width > 1;
             match &mut current {
                 // Wide characters stand alone so the columns line up.
-                Some(run) if !wide && run.fg == fg && run.bg == bg && run.flags == flags && run.cols == run.text.chars().count() as u16 => {
+                Some(run)
+                    if !wide
+                        && run.fg == fg
+                        && run.bg == bg
+                        && run.flags == flags
+                        && run.cols == run.text.chars().count() as u16 =>
+                {
                     run.text.push_str(sym);
                     run.cols += 1;
                 }
@@ -207,7 +224,15 @@ pub fn build(app: &mut App, cols: u16, rows: u16, dark: bool) -> Grid {
                     if let Some(run) = current.take() {
                         runs.push(run);
                     }
-                    current = Some(GridRun { row: y, col: x, cols: width, text: sym.to_string(), fg, bg, flags });
+                    current = Some(GridRun {
+                        row: y,
+                        col: x,
+                        cols: width,
+                        text: sym.to_string(),
+                        fg,
+                        bg,
+                        flags,
+                    });
                     if wide {
                         runs.push(current.take().expect("just set"));
                     }
@@ -220,7 +245,9 @@ pub fn build(app: &mut App, cols: u16, rows: u16, dark: bool) -> Grid {
         }
     }
     // Rows of blanks in the default style need no drawing at all.
-    runs.retain(|r| !(r.bg == p.bg && r.text.chars().all(|c| c == ' ') && r.flags & (UNDERLINE | STRIKE) == 0));
+    runs.retain(|r| {
+        !(r.bg == p.bg && r.text.chars().all(|c| c == ' ') && r.flags & (UNDERLINE | STRIKE) == 0)
+    });
     let (title, modified) = {
         let b = app.buf_ref();
         (b.name().to_string(), b.is_modified())
@@ -229,7 +256,16 @@ pub fn build(app: &mut App, cols: u16, rows: u16, dark: bool) -> Grid {
         cols,
         rows,
         runs,
-        pictures: slots.into_iter().map(|s| GridPicture { col: s.x, row: s.y, cols: s.w, rows: s.h, path: s.path }).collect(),
+        pictures: slots
+            .into_iter()
+            .map(|s| GridPicture {
+                col: s.x,
+                row: s.y,
+                cols: s.w,
+                rows: s.h,
+                path: s.path,
+            })
+            .collect(),
         cursor_col: cursor.0,
         cursor_row: cursor.1,
         fg: p.fg,

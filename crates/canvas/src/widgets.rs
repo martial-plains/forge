@@ -145,13 +145,28 @@ struct Placed {
     width: f32,
 }
 
-fn text_op(x: f32, y: f32, text: &str, size: f32, color: &str, bold: bool, width: f32, lines: Option<u32>) -> (Op, f32) {
+fn text_op(
+    x: f32,
+    y: f32,
+    text: &str,
+    size: f32,
+    color: &str,
+    bold: bool,
+    width: f32,
+    lines: Option<u32>,
+) -> (Op, f32) {
     let mut op = Op::text(x, y, text, size, color).wrapped(width);
-    if let Op::Text { bold: b, max_lines, .. } = &mut op {
+    if let Op::Text {
+        bold: b, max_lines, ..
+    } = &mut op
+    {
         *b = bold;
         *max_lines = lines;
     }
-    let n = wrap(text, size, bold, width).len().min(lines.map_or(usize::MAX, |l| l as usize)).max(1);
+    let n = wrap(text, size, bold, width)
+        .len()
+        .min(lines.map_or(usize::MAX, |l| l as usize))
+        .max(1);
     (op, n as f32 * size * LINE)
 }
 
@@ -161,7 +176,16 @@ fn card(c: &Card, x: f32, y: f32, width: f32) -> Placed {
     let mut cy = y + PAD;
     if let Some(img) = &c.image {
         let h = (inner * 0.5).clamp(60.0, 150.0);
-        ops.push(Op::Image { path: img.clone(), x: x + PAD, y: cy, w: inner, h, fit: ImageFit::Cover, opacity: 1.0, id: None });
+        ops.push(Op::Image {
+            path: img.clone(),
+            x: x + PAD,
+            y: cy,
+            w: inner,
+            h,
+            fit: ImageFit::Cover,
+            opacity: 1.0,
+            id: None,
+        });
         cy += h + 8.0;
     }
     let (t, h) = text_op(x + PAD, cy, &c.title, 14.0, "@strong", true, inner, Some(2));
@@ -198,13 +222,20 @@ fn card(c: &Card, x: f32, y: f32, width: f32) -> Placed {
         ops.extend(p.ops);
     }
     let height = (cy - y + PAD - 4.0).max(2.0 * PAD);
-    let mut frame = Op::rect(x, y, width, height).rounded(8.0).fill("@card").stroked(Stroke::new("@line", 1.0));
+    let mut frame = Op::rect(x, y, width, height)
+        .rounded(8.0)
+        .fill("@card")
+        .stroked(Stroke::new("@line", 1.0));
     if let Some(id) = &c.id {
         frame = frame.with_id(id);
     }
     let mut all = vec![frame];
     all.extend(ops);
-    Placed { ops: all, height, width }
+    Placed {
+        ops: all,
+        height,
+        width,
+    }
 }
 
 fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
@@ -222,7 +253,11 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
                 widest = widest.max(p.width);
                 ops.extend(p.ops);
             }
-            Placed { ops, height: cy - y, width: widest }
+            Placed {
+                ops,
+                height: cy - y,
+                width: widest,
+            }
         }
         Widget::Row { children, gap } => {
             let n = children.len().max(1) as f32;
@@ -245,7 +280,11 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
                 TextStyle::Code => (12.0, "@soft", false),
             };
             let (op, h) = text_op(x, y, text, size, color, bold, width, None);
-            Placed { ops: vec![op], height: h, width }
+            Placed {
+                ops: vec![op],
+                height: h,
+                width,
+            }
         }
         Widget::Card(c) => card(c, x, y, width),
         Widget::List { items } => {
@@ -258,21 +297,43 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
                     row = row.with_id(id);
                 }
                 ops.push(row);
-                ops.push(Op::text(x + PAD, cy + if it.subtitle.is_some() { 6.0 } else { 9.0 }, &it.title, 13.0, "@fg"));
+                ops.push(Op::text(
+                    x + PAD,
+                    cy + if it.subtitle.is_some() { 6.0 } else { 9.0 },
+                    &it.title,
+                    13.0,
+                    "@fg",
+                ));
                 if let Some(s) = &it.subtitle {
                     ops.push(Op::text(x + PAD, cy + 25.0, s, 11.0, "@dim"));
                 }
                 if let Some(t) = &it.trailing {
-                    let mut op = Op::text(x + width - PAD, cy + (h - 11.0 * LINE) / 2.0, t, 11.0, "@dim");
+                    let mut op = Op::text(
+                        x + width - PAD,
+                        cy + (h - 11.0 * LINE) / 2.0,
+                        t,
+                        11.0,
+                        "@dim",
+                    );
                     if let Op::Text { align, .. } = &mut op {
                         *align = Align::Right;
                     }
                     ops.push(op);
                 }
-                ops.push(Op::line(x, cy + h, x + width, cy + h, Stroke::new("@line", 1.0)));
+                ops.push(Op::line(
+                    x,
+                    cy + h,
+                    x + width,
+                    cy + h,
+                    Stroke::new("@line", 1.0),
+                ));
                 cy += h + 1.0;
             }
-            Placed { ops, height: cy - y, width }
+            Placed {
+                ops,
+                height: cy - y,
+                width,
+            }
         }
         Widget::Board { lanes } => {
             let mut ops = Vec::new();
@@ -281,7 +342,16 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
                 let lx = x + i as f32 * (LANE_WIDTH + 12.0);
                 let mut cy = y + PAD;
                 let mut inner = Vec::new();
-                let (t, h) = text_op(lx + PAD, cy, &lane.title, 13.0, "@strong", true, LANE_WIDTH - 2.0 * PAD, Some(1));
+                let (t, h) = text_op(
+                    lx + PAD,
+                    cy,
+                    &lane.title,
+                    13.0,
+                    "@strong",
+                    true,
+                    LANE_WIDTH - 2.0 * PAD,
+                    Some(1),
+                );
                 inner.push(t);
                 cy += h + 8.0;
                 for c in &lane.cards {
@@ -291,7 +361,9 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
                 }
                 let height = cy - y + 4.0;
                 tallest = tallest.max(height);
-                let mut frame = Op::rect(lx, y, LANE_WIDTH, height).rounded(10.0).fill("@sunken");
+                let mut frame = Op::rect(lx, y, LANE_WIDTH, height)
+                    .rounded(10.0)
+                    .fill("@sunken");
                 if let Some(id) = &lane.id {
                     frame = frame.with_id(id);
                 }
@@ -301,7 +373,13 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
             let total = lanes.len() as f32 * (LANE_WIDTH + 12.0) - 12.0;
             // Every lane is as tall as the tallest.
             for op in ops.iter_mut() {
-                if let Op::Rect { y: ry, h, w, fill: Some(crate::Paint::Color(c)), .. } = op
+                if let Op::Rect {
+                    y: ry,
+                    h,
+                    w,
+                    fill: Some(crate::Paint::Color(c)),
+                    ..
+                } = op
                     && *ry == y
                     && *w == LANE_WIDTH
                     && c == "@sunken"
@@ -309,12 +387,19 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
                     *h = tallest;
                 }
             }
-            Placed { ops, height: tallest, width: total.max(width) }
+            Placed {
+                ops,
+                height: tallest,
+                width: total.max(width),
+            }
         }
         Widget::Button { id, label } => {
             let w = (crate::measure(label, 13.0, true).0 + 28.0).min(width);
             let ops = vec![
-                Op::rect(x, y, w, 32.0).rounded(8.0).fill("@accent0").with_id(id),
+                Op::rect(x, y, w, 32.0)
+                    .rounded(8.0)
+                    .fill("@accent0")
+                    .with_id(id),
                 {
                     let mut t = Op::text(x + w / 2.0, y + 8.0, label, 13.0, "@bg");
                     if let Op::Text { align, bold, .. } = &mut t {
@@ -324,14 +409,37 @@ fn place(w: &Widget, x: f32, y: f32, width: f32) -> Placed {
                     t
                 },
             ];
-            Placed { ops, height: 32.0, width: w }
+            Placed {
+                ops,
+                height: 32.0,
+                width: w,
+            }
         }
         Widget::Image { path, height } => Placed {
-            ops: vec![Op::Image { path: path.clone(), x, y, w: width, h: *height, fit: ImageFit::Contain, opacity: 1.0, id: None }],
+            ops: vec![Op::Image {
+                path: path.clone(),
+                x,
+                y,
+                w: width,
+                h: *height,
+                fit: ImageFit::Contain,
+                opacity: 1.0,
+                id: None,
+            }],
             height: *height,
             width,
         },
-        Widget::Separator => Placed { ops: vec![Op::line(x, y + 4.0, x + width, y + 4.0, Stroke::new("@line", 1.0))], height: 9.0, width },
+        Widget::Separator => Placed {
+            ops: vec![Op::line(
+                x,
+                y + 4.0,
+                x + width,
+                y + 4.0,
+                Stroke::new("@line", 1.0),
+            )],
+            height: 9.0,
+            width,
+        },
     }
 }
 
@@ -382,7 +490,10 @@ mod tests {
         let n1 = scene.bounds_of("n1").unwrap();
         let n2 = scene.bounds_of("n2").unwrap();
         assert!(n2[1] >= n1[1] + n1[3], "n2 starts below n1: {n1:?} {n2:?}");
-        let (todo, done) = (scene.bounds_of("todo").unwrap(), scene.bounds_of("done").unwrap());
+        let (todo, done) = (
+            scene.bounds_of("todo").unwrap(),
+            scene.bounds_of("done").unwrap(),
+        );
         assert_eq!(todo[3], done[3]);
     }
 

@@ -856,7 +856,8 @@ pub fn redisplay_frame(
                         .map(|r| r.2.height_pct)
                         .max()
                         .unwrap_or(100);
-                    let extra = ((usize::from(pct) + 99) / 100)
+                    let extra = usize::from(pct)
+                        .div_ceil(100)
                         .saturating_sub(1)
                         .min(3)
                         .min(text_h.saturating_sub(2));

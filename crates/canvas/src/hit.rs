@@ -23,7 +23,13 @@ fn hit_op(op: &Op, m: &Matrix, p: Point, inherited: Option<&str>) -> Option<Stri
     // Only a shape that has (or inherits) an id can be reported.
     let local = |m: &Matrix| m.invert().map(|i| i.apply(p));
     match op {
-        Op::Group { ops, transform, clip, id: gid, .. } => {
+        Op::Group {
+            ops,
+            transform,
+            clip,
+            id: gid,
+            ..
+        } => {
             let gm = match transform {
                 Some(t) => m.then(&t.matrix()),
                 None => *m,
@@ -48,18 +54,32 @@ fn hit_op(op: &Op, m: &Matrix, p: Point, inherited: Option<&str>) -> Option<Stri
                     let (dx, dy) = ((q.x - cx) / rx.max(1e-6), (q.y - cy) / ry.max(1e-6));
                     dx * dx + dy * dy <= 1.0
                 }
-                Op::Line { x1, y1, x2, y2, stroke, .. } => {
+                Op::Line {
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    stroke,
+                    ..
+                } => {
                     dist_to_segment(q, Point::new(*x1, *y1), Point::new(*x2, *y2))
                         <= (stroke.width / 2.0).max(3.0 / scale)
                 }
-                Op::Path { d, fill, stroke, .. } => {
-                    let Some(cmds) = parse_path(d) else { return None };
+                Op::Path {
+                    d, fill, stroke, ..
+                } => {
+                    let cmds = parse_path(d)?;
                     let polys = flatten(&cmds);
-                    let tol = stroke.as_ref().map_or(0.0, |s| (s.width / 2.0).max(3.0 / scale));
+                    let tol = stroke
+                        .as_ref()
+                        .map_or(0.0, |s| (s.width / 2.0).max(3.0 / scale));
                     let near = tol > 0.0
                         && polys.iter().any(|(pts, closed)| {
-                            pts.windows(2).any(|w| dist_to_segment(q, w[0], w[1]) <= tol)
-                                || (*closed && pts.len() > 1 && dist_to_segment(q, pts[pts.len() - 1], pts[0]) <= tol)
+                            pts.windows(2)
+                                .any(|w| dist_to_segment(q, w[0], w[1]) <= tol)
+                                || (*closed
+                                    && pts.len() > 1
+                                    && dist_to_segment(q, pts[pts.len() - 1], pts[0]) <= tol)
                         });
                     near || (fill.is_some() && polys.iter().any(|(pts, _)| in_polygon(q, pts)))
                 }
@@ -76,7 +96,11 @@ fn hit_op(op: &Op, m: &Matrix, p: Point, inherited: Option<&str>) -> Option<Stri
 fn dist_to_segment(p: Point, a: Point, b: Point) -> f32 {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let len2 = dx * dx + dy * dy;
-    let t = if len2 == 0.0 { 0.0 } else { (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamp(0.0, 1.0) };
+    let t = if len2 == 0.0 {
+        0.0
+    } else {
+        (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamp(0.0, 1.0)
+    };
     let (cx, cy) = (a.x + t * dx, a.y + t * dy);
     ((p.x - cx).powi(2) + (p.y - cy).powi(2)).sqrt()
 }
@@ -100,7 +124,18 @@ fn in_polygon(p: Point, pts: &[Point]) -> bool {
 
 /// A text op's box in its own coordinates.
 pub(crate) fn text_bounds(op: &Op) -> Option<[f32; 4]> {
-    let Op::Text { x, y, text, size, bold, align, max_width, max_lines, .. } = op else {
+    let Op::Text {
+        x,
+        y,
+        text,
+        size,
+        bold,
+        align,
+        max_width,
+        max_lines,
+        ..
+    } = op
+    else {
         return None;
     };
     let mut lines = match max_width {
@@ -110,7 +145,10 @@ pub(crate) fn text_bounds(op: &Op) -> Option<[f32; 4]> {
     if let Some(n) = max_lines {
         lines.truncate(*n as usize);
     }
-    let w = lines.iter().map(|l| measure(l, *size, *bold).0).fold(0.0, f32::max);
+    let w = lines
+        .iter()
+        .map(|l| measure(l, *size, *bold).0)
+        .fold(0.0, f32::max);
     let h = lines.len() as f32 * size * 1.3;
     let left = match align {
         crate::model::Align::Left => *x,
@@ -126,7 +164,10 @@ fn union(a: Option<[f32; 4]>, b: Option<[f32; 4]>) -> Option<[f32; 4]> {
         (a, None) => a,
         (Some(a), Some(b)) => {
             let (x0, y0) = (a[0].min(b[0]), a[1].min(b[1]));
-            let (x1, y1) = ((a[0] + a[2]).max(b[0] + b[2]), (a[1] + a[3]).max(b[1] + b[3]));
+            let (x1, y1) = (
+                (a[0] + a[2]).max(b[0] + b[2]),
+                (a[1] + a[3]).max(b[1] + b[3]),
+            );
             Some([x0, y0, x1 - x0, y1 - y0])
         }
     }
@@ -147,7 +188,8 @@ fn boxed(m: &Matrix, [x, y, w, h]: [f32; 4]) -> [f32; 4] {
 }
 
 pub fn bounds(ops: &[Op], m: &Matrix) -> Option<[f32; 4]> {
-    ops.iter().fold(None, |acc, op| union(acc, op_bounds(op, m)))
+    ops.iter()
+        .fold(None, |acc, op| union(acc, op_bounds(op, m)))
 }
 
 fn op_bounds(op: &Op, m: &Matrix) -> Option<[f32; 4]> {
@@ -167,7 +209,12 @@ fn op_bounds(op: &Op, m: &Matrix) -> Option<[f32; 4]> {
             (x1 >= x0).then_some([x0, y0, x1 - x0, y1 - y0])
         }
         Op::Text { .. } => text_bounds(op),
-        Op::Group { ops, transform, clip, .. } => {
+        Op::Group {
+            ops,
+            transform,
+            clip,
+            ..
+        } => {
             let gm = match transform {
                 Some(t) => m.then(&t.matrix()),
                 None => *m,
@@ -184,7 +231,10 @@ fn op_bounds(op: &Op, m: &Matrix) -> Option<[f32; 4]> {
 
 fn intersect(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     let (x0, y0) = (a[0].max(b[0]), a[1].max(b[1]));
-    let (x1, y1) = ((a[0] + a[2]).min(b[0] + b[2]), (a[1] + a[3]).min(b[1] + b[3]));
+    let (x1, y1) = (
+        (a[0] + a[2]).min(b[0] + b[2]),
+        (a[1] + a[3]).min(b[1] + b[3]),
+    );
     [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
 }
 
@@ -213,7 +263,11 @@ mod tests {
     fn scene() -> Scene {
         let mut s = Scene::new(200.0, 100.0);
         s.push(Op::rect(0.0, 0.0, 100.0, 50.0).fill("#fff").with_id("back"));
-        s.push(Op::ellipse(50.0, 25.0, 10.0, 10.0).fill("red").with_id("dot"));
+        s.push(
+            Op::ellipse(50.0, 25.0, 10.0, 10.0)
+                .fill("red")
+                .with_id("dot"),
+        );
         s.push(Op::line(0.0, 80.0, 100.0, 80.0, Stroke::new("#000", 2.0)).with_id("rule"));
         s.push(Op::rect(5.0, 5.0, 4.0, 4.0).fill("blue")); // no id: never reported
         s
@@ -224,7 +278,11 @@ mod tests {
         let s = scene();
         assert_eq!(s.hit(50.0, 25.0).as_deref(), Some("dot"));
         assert_eq!(s.hit(10.0, 10.0).as_deref(), Some("back"));
-        assert_eq!(s.hit(7.0, 7.0).as_deref(), Some("back"), "an id-less shape doesn't block");
+        assert_eq!(
+            s.hit(7.0, 7.0).as_deref(),
+            Some("back"),
+            "an id-less shape doesn't block"
+        );
         assert_eq!(s.hit(50.0, 81.0).as_deref(), Some("rule"));
         assert_eq!(s.hit(150.0, 90.0), None);
     }
@@ -233,7 +291,13 @@ mod tests {
     fn groups_apply_their_transform_and_pass_their_id_down() {
         let mut s = Scene::new(200.0, 200.0);
         let card = Op::group(vec![Op::rect(0.0, 0.0, 10.0, 10.0).fill("#000")])
-            .transformed(Transform { x: 100.0, y: 100.0, sx: 2.0, sy: 2.0, ..Default::default() })
+            .transformed(Transform {
+                x: 100.0,
+                y: 100.0,
+                sx: 2.0,
+                sy: 2.0,
+                ..Default::default()
+            })
             .with_id("card");
         s.push(card);
         assert_eq!(s.hit(110.0, 110.0).as_deref(), Some("card"));
@@ -247,14 +311,20 @@ mod tests {
     fn clips_and_paths_and_text() {
         let mut s = Scene::new(100.0, 100.0);
         s.push(
-            Op::group(vec![Op::rect(0.0, 0.0, 100.0, 100.0).fill("#000").with_id("big")])
-                .clipped(0.0, 0.0, 10.0, 10.0),
+            Op::group(vec![
+                Op::rect(0.0, 0.0, 100.0, 100.0).fill("#000").with_id("big"),
+            ])
+            .clipped(0.0, 0.0, 10.0, 10.0),
         );
         assert_eq!(s.hit(5.0, 5.0).as_deref(), Some("big"));
         assert_eq!(s.hit(50.0, 50.0), None, "outside the clip");
 
         let mut t = Scene::new(100.0, 100.0);
-        t.push(Op::path("M10 10 L60 10 L60 60 Z").fill("#f00").with_id("tri"));
+        t.push(
+            Op::path("M10 10 L60 10 L60 60 Z")
+                .fill("#f00")
+                .with_id("tri"),
+        );
         t.push(Op::text(70.0, 70.0, "hello", 10.0, "#000").with_id("label"));
         assert_eq!(t.hit(50.0, 20.0).as_deref(), Some("tri"));
         assert_eq!(t.hit(15.0, 50.0), None);

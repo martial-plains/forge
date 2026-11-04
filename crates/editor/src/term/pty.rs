@@ -206,9 +206,11 @@ impl Drop for Pty {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::time::{Duration, Instant};
 
     #[test]
+    #[cfg(unix)]
     fn a_shell_runs_behind_a_pty() {
         let mut p = Pty::spawn("/bin/sh", Path::new("/"), 24, 80, &[]).unwrap();
         p.write(b"echo forge-$((6*7))\n");

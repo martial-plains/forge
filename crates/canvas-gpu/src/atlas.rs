@@ -35,7 +35,15 @@ pub struct Atlas {
 
 impl Default for Atlas {
     fn default() -> Self {
-        Atlas { pixels: vec![0; (SIZE * SIZE) as usize], slots: HashMap::new(), row_y: 0, row_h: 0, x: 0, dirty: true, generation: 0 }
+        Atlas {
+            pixels: vec![0; (SIZE * SIZE) as usize],
+            slots: HashMap::new(),
+            row_y: 0,
+            row_h: 0,
+            x: 0,
+            dirty: true,
+            generation: 0,
+        }
     }
 }
 
@@ -68,7 +76,15 @@ impl Atlas {
         };
         if g.width == 0 || g.height == 0 {
             // Spaces still advance.
-            let slot = Slot { x: 0, y: 0, w: 0, h: 0, xmin: g.xmin, ymin: g.ymin, advance: g.advance };
+            let slot = Slot {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+                xmin: g.xmin,
+                ymin: g.ymin,
+                advance: g.advance,
+            };
             self.slots.insert((c, px, bold), Some(slot));
             return Lookup::Slot(slot);
         }
@@ -83,9 +99,18 @@ impl Atlas {
         }
         for row in 0..g.height {
             let dst = ((self.row_y + row as u32) * SIZE + self.x) as usize;
-            self.pixels[dst..dst + g.width].copy_from_slice(&g.bitmap[row * g.width..(row + 1) * g.width]);
+            self.pixels[dst..dst + g.width]
+                .copy_from_slice(&g.bitmap[row * g.width..(row + 1) * g.width]);
         }
-        let slot = Slot { x: self.x, y: self.row_y, w: g.width as u32, h: g.height as u32, xmin: g.xmin, ymin: g.ymin, advance: g.advance };
+        let slot = Slot {
+            x: self.x,
+            y: self.row_y,
+            w: g.width as u32,
+            h: g.height as u32,
+            xmin: g.xmin,
+            ymin: g.ymin,
+            advance: g.advance,
+        };
         self.x += w;
         self.row_h = self.row_h.max(h);
         self.slots.insert((c, px, bold), Some(slot));

@@ -1073,8 +1073,14 @@ fn use_package_conditions_code_and_modes() {
     assert_eq!(ed.modes.major_for_file("a.yes"), Some("text-mode"));
     let report = rhai.use_package_report().join("\n");
     assert!(report.contains("off: skipped, disabled"), "{report}");
-    assert!(report.contains("needs: skipped, requires ghost"), "{report}");
-    assert!(report.contains("yes: init failed"), "catch logged: {report}");
+    assert!(
+        report.contains("needs: skipped, requires ghost"),
+        "{report}"
+    );
+    assert!(
+        report.contains("yes: init failed"),
+        "catch logged: {report}"
+    );
     assert!(report.contains("base: deferred"), "{report}");
 
     ok(&load(
@@ -1092,14 +1098,26 @@ fn use_package_conditions_code_and_modes() {
         });
         "#,
     ));
-    let u = rhai.plugin_uses().into_iter().find(|u| u.name == "fancy").unwrap();
+    let u = rhai
+        .plugin_uses()
+        .into_iter()
+        .find(|u| u.name == "fancy")
+        .unwrap();
     assert_eq!(u.rev.as_deref(), Some("v1"));
     assert_eq!(u.load_path, ["~/dev/e"]);
     assert!(u.no_require);
     assert_eq!(u.on_commands, ["fancy-go"]);
     assert_eq!(global(&ed, "C-c e").as_deref(), Some("fancy-go"));
-    assert_eq!(ed.modes.major_for_content("#!/usr/bin/env fancy").as_deref(), Some("text-mode"));
-    assert_eq!(ed.modes.major_for_content("%FANCY\nx").as_deref(), Some("text-mode"));
+    assert_eq!(
+        ed.modes
+            .major_for_content("#!/usr/bin/env fancy")
+            .as_deref(),
+        Some("text-mode")
+    );
+    assert_eq!(
+        ed.modes.major_for_content("%FANCY\nx").as_deref(),
+        Some("text-mode")
+    );
     assert_eq!(ed.modes.major_for_content("plain"), None);
     ok(&load(
         &rhai,
@@ -1107,19 +1125,31 @@ fn use_package_conditions_code_and_modes() {
         r#"use_package("built", #{ vc: #{ url: "https://example.com/b", rev: "main",
              make: "cargo build -p b", lisp_dir: "crates/b", features: ["fast"] } });"#,
     ));
-    let b = rhai.plugin_uses().into_iter().find(|u| u.name == "built").unwrap();
+    let b = rhai
+        .plugin_uses()
+        .into_iter()
+        .find(|u| u.name == "built")
+        .unwrap();
     assert_eq!(b.git.as_deref(), Some("https://example.com/b"));
     assert_eq!(b.rev.as_deref(), Some("main"));
     assert_eq!(b.build.as_deref(), Some("cargo build -p b"));
     assert_eq!(b.git_dir.as_deref(), Some("crates/b"));
     assert_eq!(b.features, ["fast"]);
-    let out = load(&rhai, &mut ed, r#"use_package("x", #{ vc: #{ url: "u", bogus: 1 } });"#);
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"use_package("x", #{ vc: #{ url: "u", bogus: 1 } });"#,
+    );
     assert!(out.errors[0].contains("unknown key"), "{:?}", out.errors);
     let out = load(&rhai, &mut ed, r#"use_package("x", #{ defines: ["a"] });"#);
     assert!(out.errors[0].contains("unknown key"), "{:?}", out.errors);
     let out = load(&rhai, &mut ed, r#"use_package("x", #{ bogus: 1 });"#);
     assert!(out.errors[0].contains("unknown key"), "{:?}", out.errors);
-    let out = load(&rhai, &mut ed, r#"use_package("x", #{ init: || { throw "no"; } });"#);
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"use_package("x", #{ init: || { throw "no"; } });"#,
+    );
     assert!(!out.errors.is_empty(), "uncaught init error is an error");
 }
 
@@ -1650,6 +1680,10 @@ fn eval_pretty_prints_values() {
 fn use_package_has_no_on_key() {
     let mut ed = editor();
     let rhai = RhaiConfig::new().unwrap();
-    let out = load(&rhai, &mut ed, r#"use_package("x", #{ on: #{ commands: "x-mode" } });"#);
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"use_package("x", #{ on: #{ commands: "x-mode" } });"#,
+    );
     assert!(out.errors[0].contains("unknown key"), "{:?}", out.errors);
 }

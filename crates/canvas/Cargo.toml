@@ -19,3 +19,6 @@ default = ["raster"]
 # The CPU rasteriser (tiny-skia + fontdue). Plugins that only build scenes
 # turn it off and stay small.
 raster = ["dep:tiny-skia", "dep:fontdue", "dep:image"]
+
+[lints]
+workspace = true

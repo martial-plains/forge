@@ -1555,6 +1555,7 @@ mod clock_tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn saving_can_tidy_the_buffer_and_mark_scripts_executable() {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("forge-save-{}", std::process::id()));

@@ -48,13 +48,20 @@ impl Pixels {
             return None;
         }
         let i = ((y * self.width + x) * 4) as usize;
-        Some([self.rgba[i], self.rgba[i + 1], self.rgba[i + 2], self.rgba[i + 3]])
+        Some([
+            self.rgba[i],
+            self.rgba[i + 1],
+            self.rgba[i + 2],
+            self.rgba[i + 3],
+        ])
     }
 
     pub fn png(&self) -> Result<Vec<u8>, String> {
         let mut out = Vec::new();
-        let img = image::RgbaImage::from_raw(self.width, self.height, self.rgba.clone()).ok_or("pixel buffer has the wrong size")?;
-        img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+        let img = image::RgbaImage::from_raw(self.width, self.height, self.rgba.clone())
+            .ok_or("pixel buffer has the wrong size")?;
+        img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
         Ok(out)
     }
 }
@@ -82,13 +89,17 @@ impl PictureCache {
                     return None;
                 }
                 let mut rgba = img.into_raw();
-                for p in rgba.chunks_exact_mut(4) {
+                for p in rgba.as_chunks_mut::<4>().0 {
                     let a = u16::from(p[3]);
                     for c in &mut p[..3] {
                         *c = ((u16::from(*c) * a + 127) / 255) as u8;
                     }
                 }
-                Some(Arc::new(Decoded { width, height, rgba }))
+                Some(Arc::new(Decoded {
+                    width,
+                    height,
+                    rgba,
+                }))
             })
             .clone()
     }
@@ -133,8 +144,11 @@ impl Renderer {
         }))
         .map_err(|e| format!("no graphics adapter: {e}"))?;
         let info = adapter.get_info();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor { label: Some("forge canvas"), ..Default::default() }))
-            .map_err(|e| format!("can't open the graphics device: {e}"))?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("forge canvas"),
+            ..Default::default()
+        }))
+        .map_err(|e| format!("can't open the graphics device: {e}"))?;
         let mut r = Renderer::new(device, queue, FORMAT)?;
         r.adapter = format!("{} ({:?})", info.name, info.backend);
         Ok(r)
@@ -142,18 +156,37 @@ impl Renderer {
 
     /// Use a device the app already has. `format` is what [`Renderer::draw`]
     /// will draw into; it must not be an sRGB format.
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue, format: wgpu::TextureFormat) -> Result<Renderer, String> {
+    pub fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+    ) -> Result<Renderer, String> {
         if format.is_srgb() {
             return Err("draw into a non-sRGB format (Rgba8Unorm or Bgra8Unorm)".into());
         }
-        let samples = if format.guaranteed_format_features(device.features()).flags.sample_count_supported(SAMPLES) { SAMPLES } else { 1 };
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("forge canvas"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+        let samples = if format
+            .guaranteed_format_features(device.features())
+            .flags
+            .sample_count_supported(SAMPLES)
+        {
+            SAMPLES
+        } else {
+            1
+        };
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("forge canvas"),
+            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+        });
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
                 count: None,
             }],
         });
@@ -161,22 +194,50 @@ impl Renderer {
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             },
-            wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
         ];
-        let atlas_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("atlas"), entries: &texture_entries });
-        let picture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("picture"), entries: &texture_entries });
+        let atlas_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("atlas"),
+            entries: &texture_entries,
+        });
+        let picture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("picture"),
+            entries: &texture_entries,
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("forge canvas"),
-            bind_group_layouts: &[Some(&frame_layout), Some(&atlas_layout), Some(&picture_layout)],
+            bind_group_layouts: &[
+                Some(&frame_layout),
+                Some(&atlas_layout),
+                Some(&picture_layout),
+            ],
             immediate_size: 0,
         });
-        let attrs = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32];
+        let attrs =
+            wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Float32];
         let premultiplied = wgpu::BlendState {
-            color: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
-            alpha: wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha, operation: wgpu::BlendOperation::Add },
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
         };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("forge canvas"),
@@ -185,25 +246,45 @@ impl Renderer {
                 module: &module,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<Vertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &attrs })],
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &attrs,
+                })],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &module,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format, blend: Some(premultiplied), write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(premultiplied),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
-            multisample: wgpu::MultisampleState { count: samples, mask: !0, alpha_to_coverage_enabled: false },
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview_mask: None,
             cache: None,
         });
-        let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("frame"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frame"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame"),
             layout: &frame_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: frame_buffer.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_buffer.as_entire_binding(),
+            }],
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
@@ -214,7 +295,11 @@ impl Renderer {
         });
         let atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("glyphs"),
-            size: wgpu::Extent3d { width: atlas::SIZE, height: atlas::SIZE, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: atlas::SIZE,
+                height: atlas::SIZE,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -226,15 +311,27 @@ impl Renderer {
             label: Some("atlas"),
             layout: &atlas_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&atlas_texture.create_view(&Default::default())) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &atlas_texture.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
             ],
         });
         let blank = device.create_texture_with_data(
             &queue,
             &wgpu::TextureDescriptor {
                 label: Some("blank"),
-                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -249,8 +346,16 @@ impl Renderer {
             label: Some("blank"),
             layout: &picture_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&blank.create_view(&Default::default())) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &blank.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
             ],
         });
         Ok(Renderer {
@@ -286,7 +391,11 @@ impl Renderer {
         let (w, h) = (batch.width, batch.height);
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("canvas"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -305,9 +414,25 @@ impl Renderer {
             mapped_at_creation: false,
         });
         encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo { texture: &target, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-            wgpu::TexelCopyBufferInfo { buffer: &out, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &out,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         self.queue.submit([encoder.finish()]);
         let slice = out.slice(..);
@@ -315,9 +440,15 @@ impl Renderer {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| format!("the GPU did not finish: {e}"))?;
-        rx.recv().map_err(|e| e.to_string())?.map_err(|e| format!("can't read the picture back: {e}"))?;
-        let data = slice.get_mapped_range().map_err(|e| format!("can't read the picture back: {e}"))?;
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|e| format!("the GPU did not finish: {e}"))?;
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("can't read the picture back: {e}"))?;
+        let data = slice
+            .get_mapped_range()
+            .map_err(|e| format!("can't read the picture back: {e}"))?;
         let mut rgba = Vec::with_capacity((w * h * 4) as usize);
         for y in 0..h as usize {
             rgba.extend_from_slice(&data[y * row as usize..y * row as usize + (w * 4) as usize]);
@@ -325,7 +456,7 @@ impl Renderer {
         drop(data);
         out.unmap();
         // The target holds premultiplied colour; hand back straight alpha.
-        for p in rgba.chunks_exact_mut(4) {
+        for p in rgba.as_chunks_mut::<4>().0 {
             let a = u32::from(p[3]);
             if a != 0 && a != 255 {
                 for c in &mut p[..3] {
@@ -333,7 +464,11 @@ impl Renderer {
                 }
             }
         }
-        Ok(Pixels { width: w, height: h, rgba })
+        Ok(Pixels {
+            width: w,
+            height: h,
+            rgba,
+        })
     }
 
     pub fn render_png(&mut self, scene: &Scene, scale: f32) -> Result<Vec<u8>, String> {
@@ -342,7 +477,13 @@ impl Renderer {
 
     /// Draw `scene` into `view`, a `size` texture of this renderer's format
     /// (the scene is placed at the top-left at `scale`).
-    pub fn draw(&mut self, scene: &Scene, scale: f32, view: &wgpu::TextureView, size: (u32, u32)) -> Result<(), String> {
+    pub fn draw(
+        &mut self,
+        scene: &Scene,
+        scale: f32,
+        view: &wgpu::TextureView,
+        size: (u32, u32),
+    ) -> Result<(), String> {
         let mut batch = self.build(scene, scale)?;
         batch.width = size.0.max(1);
         batch.height = size.1.max(1);
@@ -357,7 +498,9 @@ impl Renderer {
             match batch::build(scene, scale, &mut self.atlas, &mut self.pictures) {
                 Ok(b) => return Ok(b),
                 Err(Stop::AtlasFull) if attempt == 0 => self.atlas.clear(),
-                Err(Stop::AtlasFull) => return Err("too many different glyphs for one picture".into()),
+                Err(Stop::AtlasFull) => {
+                    return Err("too many different glyphs for one picture".into());
+                }
             }
         }
         unreachable!()
@@ -370,7 +513,11 @@ impl Renderer {
                 &self.queue,
                 &wgpu::TextureDescriptor {
                     label: Some("picture"),
-                    size: wgpu::Extent3d { width: d.width, height: d.height, depth_or_array_layers: 1 },
+                    size: wgpu::Extent3d {
+                        width: d.width,
+                        height: d.height,
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
@@ -385,8 +532,16 @@ impl Renderer {
                 label: Some("picture"),
                 layout: &self.picture_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&texture.create_view(&Default::default())) },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(
+                            &texture.create_view(&Default::default()),
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
                 ],
             });
             self.picture_groups.insert(path.to_string(), group);
@@ -394,33 +549,78 @@ impl Renderer {
         self.picture_groups.get(path)
     }
 
-    fn record(&mut self, encoder: &mut wgpu::CommandEncoder, batch: &Batch, view: &wgpu::TextureView) {
+    fn record(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        batch: &Batch,
+        view: &wgpu::TextureView,
+    ) {
         if self.atlas.dirty || self.uploaded_generation != self.atlas.generation {
             self.queue.write_texture(
-                wgpu::TexelCopyTextureInfo { texture: &self.atlas_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.atlas_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
                 &self.atlas.pixels,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(atlas::SIZE), rows_per_image: Some(atlas::SIZE) },
-                wgpu::Extent3d { width: atlas::SIZE, height: atlas::SIZE, depth_or_array_layers: 1 },
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(atlas::SIZE),
+                    rows_per_image: Some(atlas::SIZE),
+                },
+                wgpu::Extent3d {
+                    width: atlas::SIZE,
+                    height: atlas::SIZE,
+                    depth_or_array_layers: 1,
+                },
             );
             self.atlas.dirty = false;
             self.uploaded_generation = self.atlas.generation;
         }
         let (w, h) = (batch.width, batch.height);
-        self.queue.write_buffer(&self.frame_buffer, 0, bytemuck_cast(&[w as f32, h as f32, 0.0, 0.0]));
+        self.queue.write_buffer(
+            &self.frame_buffer,
+            0,
+            bytemuck_cast(&[w as f32, h as f32, 0.0, 0.0]),
+        );
         // Make the picture bind groups first; the pass borrows them.
         for d in &batch.draws {
             if let Source::Picture(p) = &d.source {
                 self.picture_group(p);
             }
         }
-        let vertices = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("vertices"), contents: bytemuck::cast_slice(&batch.vertices), usage: wgpu::BufferUsages::VERTEX });
-        let indices = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("indices"), contents: bytemuck::cast_slice(&batch.indices), usage: wgpu::BufferUsages::INDEX });
-        let bg = batch.background.map_or(wgpu::Color::TRANSPARENT, |c| wgpu::Color { r: f64::from(c[0]), g: f64::from(c[1]), b: f64::from(c[2]), a: f64::from(c[3]) });
+        let vertices = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("vertices"),
+                contents: bytemuck::cast_slice(&batch.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let indices = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("indices"),
+                contents: bytemuck::cast_slice(&batch.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+        let bg = batch
+            .background
+            .map_or(wgpu::Color::TRANSPARENT, |c| wgpu::Color {
+                r: f64::from(c[0]),
+                g: f64::from(c[1]),
+                b: f64::from(c[2]),
+                a: f64::from(c[3]),
+            });
         let msaa = (self.samples > 1).then(|| {
             self.device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some("multisample"),
-                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    size: wgpu::Extent3d {
+                        width: w,
+                        height: h,
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: 1,
                     sample_count: self.samples,
                     dimension: wgpu::TextureDimension::D2,
@@ -440,7 +640,10 @@ impl Renderer {
                 view: attachment,
                 depth_slice: None,
                 resolve_target: resolve,
-                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(bg), store: wgpu::StoreOp::Store },
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(bg),
+                    store: wgpu::StoreOp::Store,
+                },
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
@@ -453,7 +656,13 @@ impl Renderer {
             pass.set_bind_group(1, &self.atlas_group, &[]);
             pass.set_vertex_buffer(0, vertices.slice(..));
             pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-            for Draw { source, scissor, first, count } in &batch.draws {
+            for Draw {
+                source,
+                scissor,
+                first,
+                count,
+            } in &batch.draws
+            {
                 let [x0, y0, x1, y1] = *scissor;
                 let (x0, y0, x1, y1) = (x0.min(w), y0.min(h), x1.min(w), y1.min(h));
                 if x1 <= x0 || y1 <= y0 {
@@ -462,7 +671,11 @@ impl Renderer {
                 pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
                 match source {
                     Source::Plain => pass.set_bind_group(2, &self.blank_group, &[]),
-                    Source::Picture(p) => pass.set_bind_group(2, self.picture_groups.get(p).unwrap_or(&self.blank_group), &[]),
+                    Source::Picture(p) => pass.set_bind_group(
+                        2,
+                        self.picture_groups.get(p).unwrap_or(&self.blank_group),
+                        &[],
+                    ),
                 }
                 pass.draw_indexed(*first..*first + *count, 0, 0..1);
             }
@@ -483,7 +696,12 @@ mod tests {
     #[test]
     fn the_shader_is_valid_wgsl() {
         let module = naga::front::wgsl::parse_str(SHADER).expect("parses");
-        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&module).expect("validates");
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("validates");
     }
 
     /// The tests below need an adapter (a GPU, or software Vulkan such as
@@ -499,7 +717,9 @@ mod tests {
     }
 
     fn near(a: [u8; 4], b: [u8; 4], tol: i32) -> bool {
-        a.iter().zip(&b).all(|(x, y)| (i32::from(*x) - i32::from(*y)).abs() <= tol)
+        a.iter()
+            .zip(&b)
+            .all(|(x, y)| (i32::from(*x) - i32::from(*y)).abs() <= tol)
     }
 
     #[test]
@@ -510,7 +730,11 @@ mod tests {
         s.push(Op::ellipse(30.0, 10.0, 8.0, 8.0).fill("#0000ff"));
         let p = r.render_rgba(&s, 1.0).unwrap();
         assert_eq!((p.width, p.height), (40, 20));
-        assert!(near(p.pixel(5, 5).unwrap(), [255, 0, 0, 255], 2), "{:?}", p.pixel(5, 5));
+        assert!(
+            near(p.pixel(5, 5).unwrap(), [255, 0, 0, 255], 2),
+            "{:?}",
+            p.pixel(5, 5)
+        );
         assert!(near(p.pixel(30, 10).unwrap(), [0, 0, 255, 255], 2));
         assert!(near(p.pixel(20, 18).unwrap(), [255, 255, 255, 255], 2));
         assert_eq!(p.pixel(99, 0), None);
@@ -533,10 +757,17 @@ mod tests {
     fn groups_clip_translate_and_fade() {
         let Some(mut r) = renderer() else { return };
         let mut s = Scene::new(40.0, 40.0).background("#ffffff");
-        s.push(Op::group(vec![Op::rect(0.0, 0.0, 40.0, 40.0).fill("#000000")]).transformed(Transform::translate(10.0, 10.0)).clipped(0.0, 0.0, 10.0, 10.0));
+        s.push(
+            Op::group(vec![Op::rect(0.0, 0.0, 40.0, 40.0).fill("#000000")])
+                .transformed(Transform::translate(10.0, 10.0))
+                .clipped(0.0, 0.0, 10.0, 10.0),
+        );
         let p = r.render_rgba(&s, 1.0).unwrap();
         assert!(near(p.pixel(15, 15).unwrap(), [0, 0, 0, 255], 2));
-        assert!(near(p.pixel(25, 25).unwrap(), [255, 255, 255, 255], 2), "outside the clip");
+        assert!(
+            near(p.pixel(25, 25).unwrap(), [255, 255, 255, 255], 2),
+            "outside the clip"
+        );
         assert!(near(p.pixel(5, 5).unwrap(), [255, 255, 255, 255], 2));
         let mut f = Scene::new(10.0, 10.0).background("#ffffff");
         f.push(Op::group(vec![Op::rect(0.0, 0.0, 10.0, 10.0).fill("#000000")]).faded(0.5));
@@ -548,20 +779,41 @@ mod tests {
     fn strokes_dashes_gradients_and_arrows() {
         let Some(mut r) = renderer() else { return };
         let mut d = Scene::new(40.0, 10.0).background("#ffffff");
-        d.push(Op::line(0.0, 5.0, 40.0, 5.0, Stroke::new("#000000", 4.0).dashed(5.0, 5.0)));
+        d.push(Op::line(
+            0.0,
+            5.0,
+            40.0,
+            5.0,
+            Stroke::new("#000000", 4.0).dashed(5.0, 5.0),
+        ));
         let p = r.render_rgba(&d, 1.0).unwrap();
         assert!(p.pixel(2, 5).unwrap()[0] < 10);
         assert!(p.pixel(7, 5).unwrap()[0] > 245, "the gap");
         let mut g = Scene::new(100.0, 10.0);
-        g.push(Op::rect(0.0, 0.0, 100.0, 10.0).fill_linear(0.0, 0.0, 100.0, 0.0, &[(0.0, "#000000"), (1.0, "#ffffff")]));
+        g.push(Op::rect(0.0, 0.0, 100.0, 10.0).fill_linear(
+            0.0,
+            0.0,
+            100.0,
+            0.0,
+            &[(0.0, "#000000"), (1.0, "#ffffff")],
+        ));
         let p = r.render_rgba(&g, 1.0).unwrap();
         assert!(p.pixel(2, 5).unwrap()[0] < 30 && p.pixel(97, 5).unwrap()[0] > 225);
         let mid = p.pixel(50, 5).unwrap()[0];
         assert!((110..146).contains(&mid), "{mid}");
         let mut a = Scene::new(60.0, 20.0).background("#ffffff");
-        a.push(Op::line(0.0, 10.0, 50.0, 10.0, Stroke::new("#000000", 4.0).arrow()));
+        a.push(Op::line(
+            0.0,
+            10.0,
+            50.0,
+            10.0,
+            Stroke::new("#000000", 4.0).arrow(),
+        ));
         let p = r.render_rgba(&a, 1.0).unwrap();
-        assert!(p.pixel(38, 6).unwrap()[0] < 128, "the arrowhead is wider than the shaft");
+        assert!(
+            p.pixel(38, 6).unwrap()[0] < 128,
+            "the arrowhead is wider than the shaft"
+        );
     }
 
     #[test]
@@ -573,7 +825,10 @@ mod tests {
         let mut s = Scene::new(120.0, 40.0).background("#ffffff");
         s.push(Op::text(4.0, 4.0, "Hello", 20.0, "#000000"));
         let p = r.render_rgba(&s, 1.0).unwrap();
-        let dark = (0..120).flat_map(|x| (0..40).map(move |y| (x, y))).filter(|&(x, y)| p.pixel(x, y).unwrap()[0] < 128).count();
+        let dark = (0..120)
+            .flat_map(|x| (0..40).map(move |y| (x, y)))
+            .filter(|&(x, y)| p.pixel(x, y).unwrap()[0] < 128)
+            .count();
         assert!(dark > 60, "ink was drawn: {dark}");
     }
 
@@ -583,11 +838,17 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("forge-gpu-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("red.png");
-        image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255])).save(&path).unwrap();
+        image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))
+            .save(&path)
+            .unwrap();
         let mut s = Scene::new(30.0, 30.0).background("#ffffff");
         s.push(Op::image(path.to_str().unwrap(), 5.0, 5.0, 20.0, 20.0));
         let p = r.render_rgba(&s, 1.0).unwrap();
-        assert!(near(p.pixel(15, 15).unwrap(), [255, 0, 0, 255], 3), "{:?}", p.pixel(15, 15));
+        assert!(
+            near(p.pixel(15, 15).unwrap(), [255, 0, 0, 255], 3),
+            "{:?}",
+            p.pixel(15, 15)
+        );
         assert!(near(p.pixel(2, 2).unwrap(), [255, 255, 255, 255], 2));
         let mut m = Scene::new(30.0, 30.0).background("#ffffff");
         m.push(Op::image("/no/such/file.png", 5.0, 5.0, 20.0, 20.0));
@@ -599,7 +860,12 @@ mod tests {
     fn it_agrees_with_the_cpu_rasteriser() {
         let Some(mut r) = renderer() else { return };
         let mut s = Scene::new(80.0, 60.0).background("#202030");
-        s.push(Op::rect(5.0, 5.0, 40.0, 30.0).fill("#ff8800").stroked(Stroke::new("#ffffff", 2.0)).rounded(6.0));
+        s.push(
+            Op::rect(5.0, 5.0, 40.0, 30.0)
+                .fill("#ff8800")
+                .stroked(Stroke::new("#ffffff", 2.0))
+                .rounded(6.0),
+        );
         s.push(Op::ellipse(60.0, 40.0, 14.0, 10.0).fill("#44ccaa"));
         s.push(Op::path("M5 55 L40 45 L75 55").stroked(Stroke::new("#ff00ff", 3.0)));
         let gpu = r.render_rgba(&s, 1.0).unwrap();

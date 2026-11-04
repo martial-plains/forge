@@ -300,12 +300,8 @@ pub fn sexp_at(buf: &mut Buffer, offset: usize) -> Option<Range<usize>> {
 /// before point. When several end there (an atom and the list or statement
 /// holding it), the outermost one wins.
 pub fn sexp_before(buf: &mut Buffer, offset: usize) -> Option<Range<usize>> {
-    let Some(s) = buf.syntax.0.as_mut() else {
-        return None;
-    };
-    let Some(tree) = s.tree(&buf.text) else {
-        return None;
-    };
+    let s = buf.syntax.0.as_mut()?;
+    let tree = s.tree(&buf.text)?;
     let text = &buf.text;
     let mut best: Option<Range<usize>> = None;
     let mut stack = vec![tree.root_node()];
@@ -343,7 +339,7 @@ fn contains(outer: &Range<usize>, inner: &Range<usize>) -> bool {
     outer.start <= inner.start && outer.end >= inner.end
 }
 
-fn innermost_containing<'a>(ranges: &'a [Range<usize>], offset: usize) -> Option<&'a Range<usize>> {
+fn innermost_containing(ranges: &[Range<usize>], offset: usize) -> Option<&Range<usize>> {
     ranges
         .iter()
         .filter(|r| r.start <= offset && offset <= r.end)
@@ -355,7 +351,7 @@ fn apply_tactic(ranges: &[Range<usize>], offset: usize, tactic: Tactic) -> Vec<R
         Tactic::Nested | Tactic::ParentFirst => ranges.to_vec(),
         Tactic::TopLevel => ranges
             .iter()
-            .filter(|r| !ranges.iter().any(|o| *o != **r && contains(o, *r)))
+            .filter(|r| !ranges.iter().any(|o| *o != **r && contains(o, r)))
             .cloned()
             .collect(),
         Tactic::Restricted => {

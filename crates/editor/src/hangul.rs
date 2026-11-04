@@ -116,11 +116,9 @@ fn compose(l: Option<char>, v: Option<char>, t: Option<char>) -> String {
                 .and_then(|t| FINAL.iter().position(|&c| c == t))
                 .unwrap_or(0);
             match (li, vi) {
-                (Some(li), Some(vi)) => {
-                    char::from_u32(0xAC00 + ((li * 21 + vi) * 28 + ti) as u32)
-                        .map(String::from)
-                        .unwrap_or_default()
-                }
+                (Some(li), Some(vi)) => char::from_u32(0xAC00 + ((li * 21 + vi) * 28 + ti) as u32)
+                    .map(String::from)
+                    .unwrap_or_default(),
                 _ => String::new(),
             }
         }

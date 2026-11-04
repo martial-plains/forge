@@ -380,10 +380,10 @@ pub fn publish(job: &Job, cache: &Path, force: bool, only: Option<&Path>, today:
         let rel = PathBuf::from(name);
         files.retain(|r| *r != rel);
         let text = sitemap(job, &files);
-        if std::fs::read_to_string(job.base.join(&rel)).ok().as_deref() != Some(text.as_str()) {
-            if let Err(e) = std::fs::write(job.base.join(&rel), &text) {
-                rep.errors.push(format!("Cannot write the sitemap: {e}"));
-            }
+        if std::fs::read_to_string(job.base.join(&rel)).ok().as_deref() != Some(text.as_str())
+            && let Err(e) = std::fs::write(job.base.join(&rel), &text)
+        {
+            rep.errors.push(format!("Cannot write the sitemap: {e}"));
         }
         if !files.contains(&rel) {
             files.push(rel);

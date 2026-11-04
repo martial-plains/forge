@@ -250,7 +250,12 @@ fn the_agenda_is_read_only_and_formatted() {
         let x = t.add_days(n);
         format!("{:04}-{:02}-{:02} {}", x.y, x.m, x.d, x.day_name())
     };
-    let text = format!("#+TODO: TODO NEXT | DONE\n* TODO [#A] Write report :work:\nDEADLINE: <{}>\n* NEXT Call bob :phone:\nSCHEDULED: <{}>\n* TODO Repeater\nSCHEDULED: <{} 09:00 +1d>\n", d(2), d(0), d(0));
+    let text = format!(
+        "#+TODO: TODO NEXT | DONE\n* TODO [#A] Write report :work:\nDEADLINE: <{}>\n* NEXT Call bob :phone:\nSCHEDULED: <{}>\n* TODO Repeater\nSCHEDULED: <{} 09:00 +1d>\n",
+        d(2),
+        d(0),
+        d(0)
+    );
     let mut a = agenda_app(&text);
     crate::commands::execute(&mut a, "org-agenda-list");
     let v = agenda_view(&a);
@@ -443,9 +448,17 @@ fn the_dispatcher_is_a_window_that_waits_for_one_key_then_goes() {
     crate::commands::execute(&mut a, "org-agenda");
     assert!(a.one_key.is_some());
     assert_eq!(a.editor.windows.count(), before + 1, "its own window");
-    let menu = a.editor.find_buffer("*Agenda Commands*").expect("the menu buffer");
+    let menu = a
+        .editor
+        .find_buffer("*Agenda Commands*")
+        .expect("the menu buffer");
     assert!(
-        a.editor.state.get_buffer(menu).unwrap().get_contents().contains("Press key for an agenda command:"),
+        a.editor
+            .state
+            .get_buffer(menu)
+            .unwrap()
+            .get_contents()
+            .contains("Press key for an agenda command:"),
     );
     // A key that is no command is refused and the menu stays.
     key(&mut a, "z");
@@ -460,5 +473,9 @@ fn the_dispatcher_is_a_window_that_waits_for_one_key_then_goes() {
     key(&mut a, "t");
     assert!(a.one_key.is_none());
     assert!(a.editor.find_buffer("*Agenda Commands*").is_none());
-    assert!(agenda_view(&a).contains("Global list of TODO items"), "{}", agenda_view(&a));
+    assert!(
+        agenda_view(&a).contains("Global list of TODO items"),
+        "{}",
+        agenda_view(&a)
+    );
 }

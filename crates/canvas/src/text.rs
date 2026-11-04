@@ -30,8 +30,14 @@ pub fn wrap_with(text: &str, max_width: f32, measure_fn: &dyn Fn(&str) -> f32) -
     for para in text.split('\n') {
         let mut line = String::new();
         for word in para.split_whitespace() {
-            let candidate = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
-            if measure_fn(&candidate) <= max_width || line.is_empty() && measure_fn(word) <= max_width {
+            let candidate = if line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{line} {word}")
+            };
+            if measure_fn(&candidate) <= max_width
+                || line.is_empty() && measure_fn(word) <= max_width
+            {
                 line = candidate;
                 continue;
             }
@@ -66,10 +72,21 @@ mod tests {
 
     #[test]
     fn wrapping_keeps_lines_inside_the_width() {
-        let lines = wrap("the quick brown fox jumps over the lazy dog", 10.0, false, 80.0);
+        let lines = wrap(
+            "the quick brown fox jumps over the lazy dog",
+            10.0,
+            false,
+            80.0,
+        );
         assert!(lines.len() > 1);
-        assert!(lines.iter().all(|l| measure(l, 10.0, false).0 <= 80.0), "{lines:?}");
-        assert_eq!(lines.join(" "), "the quick brown fox jumps over the lazy dog");
+        assert!(
+            lines.iter().all(|l| measure(l, 10.0, false).0 <= 80.0),
+            "{lines:?}"
+        );
+        assert_eq!(
+            lines.join(" "),
+            "the quick brown fox jumps over the lazy dog"
+        );
     }
 
     #[test]

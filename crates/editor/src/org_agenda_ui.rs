@@ -757,8 +757,12 @@ fn dispatcher_menu(custom: &[(char, String)]) -> (String, Vec<char>) {
     out.push_str(&"-".repeat(32));
     out.push('\n');
     for i in 0..left.len().max(right.len()) {
-        let l = left.get(i).map_or(String::new(), |(k, d)| format!("{k}   {d}"));
-        let r = right.get(i).map_or(String::new(), |(k, d)| format!("{k}   {d}"));
+        let l = left
+            .get(i)
+            .map_or(String::new(), |(k, d)| format!("{k}   {d}"));
+        let r = right
+            .get(i)
+            .map_or(String::new(), |(k, d)| format!("{k}   {d}"));
         if r.is_empty() {
             out.push_str(&l);
         } else {
@@ -772,7 +776,12 @@ fn dispatcher_menu(custom: &[(char, String)]) -> (String, Vec<char>) {
             out.push_str(&format!("{k}   {spec}\n"));
         }
     }
-    let valid = left.iter().chain(right.iter()).map(|(k, _)| *k).chain(custom.iter().map(|(k, _)| *k)).collect();
+    let valid = left
+        .iter()
+        .chain(right.iter())
+        .map(|(k, _)| *k)
+        .chain(custom.iter().map(|(k, _)| *k))
+        .collect();
     (out, valid)
 }
 
@@ -792,11 +801,20 @@ pub fn command(app: &mut App, cmd: &str) -> bool {
     let back = app.has_arg();
     match cmd {
         "org-agenda" => {
-            let restricted = app.org.agenda.as_ref().and_then(|s| s.restriction.as_ref()).is_some();
+            let restricted = app
+                .org
+                .agenda
+                .as_ref()
+                .and_then(|s| s.restriction.as_ref())
+                .is_some();
             let (text, valid) = dispatcher_menu(&app.org.custom_agenda);
             let prompt = format!(
                 "Press key for agenda command ({}): ",
-                if restricted { "restricted" } else { "unrestricted" }
+                if restricted {
+                    "restricted"
+                } else {
+                    "unrestricted"
+                }
             );
             crate::one_key::open(app, "*Agenda Commands*", &text, &prompt, valid, |app, c| {
                 answer(app, &Ask::AgendaKey, &c.to_string());

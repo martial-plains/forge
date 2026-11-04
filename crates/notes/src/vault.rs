@@ -68,9 +68,15 @@ mod relative_tests {
 
     #[test]
     fn a_listing_with_the_home_directory_expanded_is_still_relative() {
-        assert_eq!(relative_to("~/org", "/Users/me/org/areas/a.org"), "areas/a.org");
+        assert_eq!(
+            relative_to("~/org", "/Users/me/org/areas/a.org"),
+            "areas/a.org"
+        );
         assert_eq!(relative_to("/Users/me/org", "/Users/me/org/a.org"), "a.org");
-        assert_eq!(relative_to("~/org/", "/Users/me/org/org/b.org"), "org/b.org");
+        assert_eq!(
+            relative_to("~/org/", "/Users/me/org/org/b.org"),
+            "org/b.org"
+        );
         assert_eq!(relative_to("/v", "/elsewhere/a.org"), "/elsewhere/a.org");
     }
 }
@@ -82,7 +88,10 @@ pub fn is_note_file(path: &str) -> bool {
 
 /// Split `---` front matter from the body: (yaml, body).
 pub fn front_matter(text: &str) -> (Option<&str>, &str) {
-    let Some(rest) = text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) else {
+    let Some(rest) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
         return (None, text);
     };
     let mut at = 0;
@@ -103,7 +112,11 @@ pub fn set_property(text: &str, key: &str, value: &str) -> String {
     let line = |v: &str| format!("{key}: {v}\n");
     let (fm, body) = front_matter(text);
     let Some(fm) = fm else {
-        return if value.is_empty() { text.to_string() } else { format!("---\n{}---\n{text}", line(value)) };
+        return if value.is_empty() {
+            text.to_string()
+        } else {
+            format!("---\n{}---\n{text}", line(value))
+        };
     };
     let mut out = String::new();
     let mut done = false;
@@ -160,18 +173,28 @@ pub fn set_property_in(path: &str, text: &str, key: &str, value: &str) -> String
             .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case(key))
     });
     // The drawers Note::parse reads: the top of the file, and the first heading's.
-    let first_heading = lines.iter().position(|l| l.starts_with('*') && l.trim_start_matches('*').starts_with(' '));
+    let first_heading = lines
+        .iter()
+        .position(|l| l.starts_with('*') && l.trim_start_matches('*').starts_with(' '));
     let drawers: Vec<usize> = std::iter::once(0)
         .chain(first_heading.map(|h| h + 1))
-        .filter(|&i| lines.get(i).is_some_and(|l| l.trim().eq_ignore_ascii_case(":properties:")))
+        .filter(|&i| {
+            lines
+                .get(i)
+                .is_some_and(|l| l.trim().eq_ignore_ascii_case(":properties:"))
+        })
         .collect();
     let end_of = |lines: &[String], open: usize| {
         (open + 1..lines.len()).find(|&j| lines[j].trim().eq_ignore_ascii_case(":end:"))
     };
     // A property the note already has, in a drawer: change it where it is.
     for &open in &drawers {
-        let Some(end) = end_of(&lines, open) else { continue };
-        if let Some(at) = (open + 1..end).find(|&j| drawer_line(&lines[j]).is_some_and(|(k, _)| k.eq_ignore_ascii_case(key))) {
+        let Some(end) = end_of(&lines, open) else {
+            continue;
+        };
+        if let Some(at) = (open + 1..end)
+            .find(|&j| drawer_line(&lines[j]).is_some_and(|(k, _)| k.eq_ignore_ascii_case(key)))
+        {
             if value.is_empty() {
                 // Org leaves the empty property in place (`:RATING:`), as its own commands do.
                 lines[at] = format!(":{}:", drawer_line(&lines[at]).map_or(key, |(k, _)| k));
@@ -191,13 +214,18 @@ pub fn set_property_in(path: &str, text: &str, key: &str, value: &str) -> String
         (None, false) => {
             // A note about one thing keeps its properties in the first
             // heading's drawer; add the new one there.
-            if let Some(&open) = drawers.last().filter(|&&o| first_heading.is_some_and(|h| o == h + 1))
+            if let Some(&open) = drawers
+                .last()
+                .filter(|&&o| first_heading.is_some_and(|h| o == h + 1))
                 && let Some(end) = end_of(&lines, open)
             {
                 lines.insert(end, format!(":{}: {value}", key.to_uppercase()));
             } else {
                 // After the last keyword line, before any blank line that ends the header.
-                let last = lines[..header].iter().rposition(|l| l.starts_with("#+")).map_or(0, |i| i + 1);
+                let last = lines[..header]
+                    .iter()
+                    .rposition(|l| l.starts_with("#+"))
+                    .map_or(0, |i| i + 1);
                 lines.insert(last, format!("#+{key}: {value}"));
             }
         }
@@ -228,7 +256,10 @@ pub fn inline_tags(body: &str) -> Vec<String> {
             if c == '`' {
                 in_code = !in_code;
             }
-            if c != '#' || in_code || (i > 0 && !chars[i - 1].is_whitespace() && chars[i - 1] != '(') {
+            if c != '#'
+                || in_code
+                || (i > 0 && !chars[i - 1].is_whitespace() && chars[i - 1] != '(')
+            {
                 continue;
             }
             let word: String = chars[i + 1..]
@@ -256,21 +287,34 @@ pub fn links_in(body: &str) -> Vec<String> {
                 let target = target.split('|').next().unwrap_or("");
                 let target = target.split('#').next().unwrap_or("").trim();
                 let target = target.strip_prefix("file:").unwrap_or(target);
-                if !target.is_empty() && !target.starts_with("id:") && !target.contains("://") && !inner.contains('\n') {
+                if !target.is_empty()
+                    && !target.starts_with("id:")
+                    && !target.contains("://")
+                    && !inner.contains('\n')
+                {
                     out.push(target.to_string());
                 }
                 i += end + 4;
                 continue;
             }
-        } else if b[i] == b']' && b.get(i + 1) == Some(&b'(') {
-            if let Some(end) = body[i + 2..].find(')') {
-                let url = body[i + 2..i + 2 + end].split('#').next().unwrap_or("").trim();
-                if !url.is_empty() && !url.contains("://") && !url.starts_with("mailto:") && is_note_file(url) {
-                    out.push(url.replace("%20", " "));
-                }
-                i += end + 3;
-                continue;
+        } else if b[i] == b']'
+            && b.get(i + 1) == Some(&b'(')
+            && let Some(end) = body[i + 2..].find(')')
+        {
+            let url = body[i + 2..i + 2 + end]
+                .split('#')
+                .next()
+                .unwrap_or("")
+                .trim();
+            if !url.is_empty()
+                && !url.contains("://")
+                && !url.starts_with("mailto:")
+                && is_note_file(url)
+            {
+                out.push(url.replace("%20", " "));
             }
+            i += end + 3;
+            continue;
         }
         i += 1;
     }
@@ -288,9 +332,16 @@ fn tag_list(v: &Value) -> Vec<String> {
 fn org_meta(text: &str) -> (BTreeMap<String, Value>, Vec<String>) {
     let mut props = BTreeMap::new();
     let mut tags = Vec::new();
-    for line in text.lines().take_while(|l| l.starts_with("#+") || l.trim().is_empty() || l.starts_with(':')) {
-        let Some(rest) = line.strip_prefix("#+") else { continue };
-        let Some((k, v)) = rest.split_once(':') else { continue };
+    for line in text
+        .lines()
+        .take_while(|l| l.starts_with("#+") || l.trim().is_empty() || l.starts_with(':'))
+    {
+        let Some(rest) = line.strip_prefix("#+") else {
+            continue;
+        };
+        let Some((k, v)) = rest.split_once(':') else {
+            continue;
+        };
         let (k, v) = (k.trim().to_lowercase(), v.trim());
         if k == "filetags" {
             tags.extend(v.split(':').filter_map(clean_tag));
@@ -310,7 +361,8 @@ fn drawer_line(l: &str) -> Option<(&str, &str)> {
     (!k.is_empty()
         && !k.eq_ignore_ascii_case("properties")
         && !k.eq_ignore_ascii_case("end")
-        && k.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-'))
+        && k.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-'))
     .then_some((k, v.trim()))
 }
 
@@ -318,11 +370,16 @@ fn drawer_line(l: &str) -> Option<(&str, &str)> {
 /// a list for the ones that list things, otherwise as [`Value::from_text`].
 fn drawer_value(key: &str, v: &str) -> Value {
     match key {
-        "rating" | "year" | "hours" | "pages" | "series_number" => {
-            v.parse::<f64>().map(Value::Num).unwrap_or_else(|_| Value::from_text(v))
-        }
+        "rating" | "year" | "hours" | "pages" | "series_number" => v
+            .parse::<f64>()
+            .map(Value::Num)
+            .unwrap_or_else(|_| Value::from_text(v)),
         "genres" | "recommend_to" | "recommended_by" | "aliases" | "cssclasses" => Value::List(
-            v.split([',', ';']).map(str::trim).filter(|x| !x.is_empty()).map(|x| Value::Str(x.to_string())).collect(),
+            v.split([',', ';'])
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(|x| Value::Str(x.to_string()))
+                .collect(),
         ),
         _ => Value::from_text(v),
     }
@@ -337,7 +394,10 @@ pub fn org_drawers(text: &str) -> (BTreeMap<String, Value>, Vec<String>) {
     let mut tags = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
     let mut read_drawer = |from: usize| {
-        if lines.get(from).is_some_and(|l| l.trim().eq_ignore_ascii_case(":properties:")) {
+        if lines
+            .get(from)
+            .is_some_and(|l| l.trim().eq_ignore_ascii_case(":properties:"))
+        {
             for l in &lines[from + 1..] {
                 if l.trim().eq_ignore_ascii_case(":end:") {
                     break;
@@ -346,13 +406,18 @@ pub fn org_drawers(text: &str) -> (BTreeMap<String, Value>, Vec<String>) {
                     && !v.is_empty()
                 {
                     let k = k.to_lowercase();
-                    props.entry(k.clone()).or_insert_with(|| drawer_value(&k, v));
+                    props
+                        .entry(k.clone())
+                        .or_insert_with(|| drawer_value(&k, v));
                 }
             }
         }
     };
     read_drawer(0);
-    if let Some(h) = lines.iter().position(|l| l.starts_with('*') && l.trim_start_matches('*').starts_with(' ')) {
+    if let Some(h) = lines
+        .iter()
+        .position(|l| l.starts_with('*') && l.trim_start_matches('*').starts_with(' '))
+    {
         if let Some(last) = lines[h].split_whitespace().last()
             && last.len() > 2
             && last.starts_with(':')
@@ -381,7 +446,13 @@ impl Note {
     /// index: its name, folder and kind follow from the path.
     pub fn at(path: &str) -> Note {
         let (folder, name, ext) = split_path(path);
-        Note { path: path.to_string(), name, ext, folder, ..Default::default() }
+        Note {
+            path: path.to_string(),
+            name,
+            ext,
+            folder,
+            ..Default::default()
+        }
     }
 
     fn parse_with(raw: &RawNote, light: bool) -> Note {
@@ -413,7 +484,9 @@ impl Note {
         tags.extend(inline_tags(body));
         let mut seen = BTreeSet::new();
         tags.retain(|t| seen.insert(t.clone()));
-        props.entry("tags".into()).or_insert_with(|| Value::List(tags.iter().cloned().map(Value::Str).collect()));
+        props
+            .entry("tags".into())
+            .or_insert_with(|| Value::List(tags.iter().cloned().map(Value::Str).collect()));
         let mut links = links_in(body);
         // Links written in properties count too.
         for v in props.values() {
@@ -422,22 +495,44 @@ impl Note {
         if light {
             props.clear();
         }
-        let excerpt: String = if light { String::new() } else { body
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("---") && !l.starts_with(':'))
-            .take(3)
-            .collect::<Vec<_>>()
-            .join(" ")
-            .chars()
-            .take(200)
-            .collect() };
-        Note { path, name, ext, folder, size: raw.size, ctime: raw.ctime, mtime: raw.mtime, props, tags, links, excerpt }
+        let excerpt: String = if light {
+            String::new()
+        } else {
+            body.lines()
+                .map(str::trim)
+                .filter(|l| {
+                    !l.is_empty()
+                        && !l.starts_with('#')
+                        && !l.starts_with("---")
+                        && !l.starts_with(':')
+                })
+                .take(3)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(200)
+                .collect()
+        };
+        Note {
+            path,
+            name,
+            ext,
+            folder,
+            size: raw.size,
+            ctime: raw.ctime,
+            mtime: raw.mtime,
+            props,
+            tags,
+            links,
+            excerpt,
+        }
     }
 
     pub fn has_tag(&self, tag: &str) -> bool {
         let tag = tag.trim_start_matches('#');
-        self.tags.iter().any(|t| t == tag || t.starts_with(&format!("{tag}/")))
+        self.tags
+            .iter()
+            .any(|t| t == tag || t.starts_with(&format!("{tag}/")))
     }
 }
 
@@ -474,13 +569,24 @@ pub struct Index {
 
 impl Index {
     pub fn build(raws: &[RawNote]) -> Index {
-        Index::from_notes(raws.iter().filter(|r| is_note_file(&r.path)).map(Note::parse).collect())
+        Index::from_notes(
+            raws.iter()
+                .filter(|r| is_note_file(&r.path))
+                .map(Note::parse)
+                .collect(),
+        )
     }
 
     /// An index of notes already parsed (one at a time as they were read, so
     /// the text of a huge vault is never all in memory at once).
     pub fn from_notes(notes: Vec<Note>) -> Index {
-        let mut idx = Index { out: vec![Vec::new(); notes.len()], unresolved: vec![Vec::new(); notes.len()], back: vec![Vec::new(); notes.len()], by_name: Default::default(), notes };
+        let mut idx = Index {
+            out: vec![Vec::new(); notes.len()],
+            unresolved: vec![Vec::new(); notes.len()],
+            back: vec![Vec::new(); notes.len()],
+            by_name: Default::default(),
+            notes,
+        };
         for i in 0..idx.notes.len() {
             idx.link(i);
         }
@@ -513,7 +619,11 @@ impl Index {
     /// An index restored from what [`crate::cache`] saved: the notes (without
     /// their link text), who each links to, and the links that went nowhere.
     /// Targets out of range are dropped.
-    pub fn from_parts(notes: Vec<Note>, out: Vec<Vec<usize>>, unresolved: Vec<Vec<String>>) -> Index {
+    pub fn from_parts(
+        notes: Vec<Note>,
+        out: Vec<Vec<usize>>,
+        unresolved: Vec<Vec<String>>,
+    ) -> Index {
         let n = notes.len();
         let mut back = vec![Vec::new(); n];
         let mut clean: Vec<Vec<usize>> = Vec::with_capacity(n);
@@ -527,7 +637,13 @@ impl Index {
         clean.resize(n, Vec::new());
         let mut unresolved = unresolved;
         unresolved.resize(n, Vec::new());
-        Index { by_name: Default::default(), notes, out: clean, unresolved, back }
+        Index {
+            by_name: Default::default(),
+            notes,
+            out: clean,
+            unresolved,
+            back,
+        }
     }
 
     /// A note was saved: replace it (or add it) and work out its links
@@ -561,7 +677,10 @@ impl Index {
             }
             None => {
                 if let Some(names) = self.by_name.get_mut() {
-                    names.entry(note.name.to_lowercase()).or_default().push(self.notes.len());
+                    names
+                        .entry(note.name.to_lowercase())
+                        .or_default()
+                        .push(self.notes.len());
                 }
                 self.notes.push(note);
                 self.out.push(Vec::new());
@@ -581,7 +700,8 @@ impl Index {
         let mut notes: Vec<Note> = kept.iter().map(|&i| self.notes[i].clone()).collect();
         let n_kept = notes.len();
         notes.extend(fresh);
-        let mut by_path: std::collections::HashMap<&str, usize> = std::collections::HashMap::with_capacity(notes.len());
+        let mut by_path: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::with_capacity(notes.len());
         for (i, n) in notes.iter().enumerate() {
             by_path.insert(n.path.as_str(), i);
         }
@@ -594,7 +714,11 @@ impl Index {
         let mut out = vec![Vec::new(); notes.len()];
         let mut unresolved = vec![Vec::new(); notes.len()];
         for (new, &old) in kept.iter().enumerate() {
-            out[new] = self.out[old].iter().map(|&j| new_of_old[j]).filter(|&j| j != usize::MAX && j != new).collect();
+            out[new] = self.out[old]
+                .iter()
+                .map(|&j| new_of_old[j])
+                .filter(|&j| j != usize::MAX && j != new)
+                .collect();
             unresolved[new] = self.unresolved[old].clone();
         }
         drop(by_path);
@@ -604,7 +728,13 @@ impl Index {
                 back[j].push(i);
             }
         }
-        let mut idx = Index { by_name: Default::default(), notes, out, unresolved, back };
+        let mut idx = Index {
+            by_name: Default::default(),
+            notes,
+            out,
+            unresolved,
+            back,
+        };
         // Fresh notes are linked from their text; a kept note retries only
         // the links that had nowhere to go (a new note may be their target).
         for i in n_kept..idx.notes.len() {
@@ -639,14 +769,22 @@ impl Index {
             }
         }
         let name = t.rsplit('/').next().unwrap_or(t);
-        let candidates = self.by_name.get_or_init(|| names_of(&self.notes)).get(name)?;
+        let candidates = self
+            .by_name
+            .get_or_init(|| names_of(&self.notes))
+            .get(name)?;
         let slashed = t.contains('/');
         if !slashed && candidates.len() == 1 {
             return Some(candidates[0]);
         }
         let suffix = format!("/{t}");
         let from_folder = self.notes.get(from).map_or("", |n| n.folder.as_str());
-        let rank = |i: usize| (self.notes[i].folder != from_folder, self.notes[i].path.matches('/').count());
+        let rank = |i: usize| {
+            (
+                self.notes[i].folder != from_folder,
+                self.notes[i].path.matches('/').count(),
+            )
+        };
         candidates
             .iter()
             .copied()
@@ -657,13 +795,21 @@ impl Index {
                     stem == t || stem.ends_with(&suffix)
                 }
             })
-            .min_by(|&a, &b| rank(a).cmp(&rank(b)).then_with(|| self.notes[a].path.cmp(&self.notes[b].path)))
+            .min_by(|&a, &b| {
+                rank(a)
+                    .cmp(&rank(b))
+                    .then_with(|| self.notes[a].path.cmp(&self.notes[b].path))
+            })
     }
 
     /// The index of each of `paths`, in one pass over the notes (where
     /// `find_path` for each would be a pass apiece).
     pub fn positions_of(&self, paths: &[String]) -> Vec<Option<usize>> {
-        let want: std::collections::HashMap<&str, usize> = paths.iter().enumerate().map(|(k, p)| (p.as_str(), k)).collect();
+        let want: std::collections::HashMap<&str, usize> = paths
+            .iter()
+            .enumerate()
+            .map(|(k, p)| (p.as_str(), k))
+            .collect();
         let mut out = vec![None; paths.len()];
         for (i, n) in self.notes.iter().enumerate() {
             if let Some(&k) = want.get(n.path.as_str()) {
@@ -700,9 +846,28 @@ impl Index {
         m.insert("size".into(), Value::Num(n.size as f64));
         m.insert("ctime".into(), Value::Date(n.ctime));
         m.insert("mtime".into(), Value::Date(n.mtime));
-        m.insert("tags".into(), Value::List(n.tags.iter().cloned().map(Value::Str).collect()));
-        m.insert("links".into(), Value::List(self.out[i].iter().map(|&j| Value::Link(self.notes[j].name.clone())).collect()));
-        m.insert("backlinks".into(), Value::List(self.back[i].iter().map(|&j| Value::Link(self.notes[j].name.clone())).collect()));
+        m.insert(
+            "tags".into(),
+            Value::List(n.tags.iter().cloned().map(Value::Str).collect()),
+        );
+        m.insert(
+            "links".into(),
+            Value::List(
+                self.out[i]
+                    .iter()
+                    .map(|&j| Value::Link(self.notes[j].name.clone()))
+                    .collect(),
+            ),
+        );
+        m.insert(
+            "backlinks".into(),
+            Value::List(
+                self.back[i]
+                    .iter()
+                    .map(|&j| Value::Link(self.notes[j].name.clone()))
+                    .collect(),
+            ),
+        );
         Value::Obj(m)
     }
 }
@@ -712,7 +877,12 @@ mod tests {
     use super::*;
 
     fn raw(path: &str, text: &str) -> RawNote {
-        RawNote { path: path.into(), text: text.into(), size: text.len() as u64, ..Default::default() }
+        RawNote {
+            path: path.into(),
+            text: text.into(),
+            size: text.len() as u64,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -721,7 +891,10 @@ mod tests {
             "projects/Alpha.md",
             "---\nstatus: active\ndue: 2024-05-01\ntags: [work, p1]\nowner: \"[[Alice]]\"\n---\n# Alpha\nSee [[Beta|the beta]] and [x](Gamma.md). #idea and #a/b\n```\n#notatag\n```\n",
         ));
-        assert_eq!((n.name.as_str(), n.folder.as_str(), n.ext.as_str()), ("Alpha", "projects", "md"));
+        assert_eq!(
+            (n.name.as_str(), n.folder.as_str(), n.ext.as_str()),
+            ("Alpha", "projects", "md")
+        );
         assert_eq!(n.props["status"], Value::Str("active".into()));
         assert!(matches!(n.props["due"], Value::Date(_)));
         assert_eq!(n.tags, ["work", "p1", "idea", "a/b"]);
@@ -732,7 +905,10 @@ mod tests {
 
     #[test]
     fn org_files_have_keywords_and_filetags() {
-        let n = Note::parse(&raw("n.org", "#+TITLE: Hi\n#+FILETAGS: :a:b:\n\nSee [[file:other.org][other]] and [[Third]]."));
+        let n = Note::parse(&raw(
+            "n.org",
+            "#+TITLE: Hi\n#+FILETAGS: :a:b:\n\nSee [[file:other.org][other]] and [[Third]].",
+        ));
         assert_eq!(n.tags, ["a", "b"]);
         assert_eq!(n.props["title"], Value::Str("Hi".into()));
         assert_eq!(n.links, ["other.org", "Third"]);
@@ -749,11 +925,23 @@ mod tests {
         ]);
         assert_eq!(idx.notes.len(), 4, "images aren't notes");
         let a = idx.find_path("A.md").unwrap();
-        let names: Vec<&str> = idx.outgoing(a).iter().map(|&i| idx.notes[i].path.as_str()).collect();
-        assert_eq!(names, ["B.md", "docs/C.md"], "the nearer B wins, duplicates fold");
+        let names: Vec<&str> = idx
+            .outgoing(a)
+            .iter()
+            .map(|&i| idx.notes[i].path.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["B.md", "docs/C.md"],
+            "the nearer B wins, duplicates fold"
+        );
         assert_eq!(idx.unresolved(a), ["Missing"]);
         let b = idx.find_path("B.md").unwrap();
-        let backs: Vec<&str> = idx.backlinks(b).iter().map(|&i| idx.notes[i].path.as_str()).collect();
+        let backs: Vec<&str> = idx
+            .backlinks(b)
+            .iter()
+            .map(|&i| idx.notes[i].path.as_str())
+            .collect();
         assert_eq!(backs, ["A.md", "docs/C.md"]);
         let c = idx.find_path("docs/C.md").unwrap();
         assert_eq!(idx.resolve("c", a), Some(c), "case-insensitive");
@@ -767,7 +955,9 @@ mod tests {
         let mut r = raw("A.md", "[[B]]");
         r.mtime = 5000;
         let idx = Index::build(&[r, raw("B.md", "")]);
-        let Value::Obj(f) = idx.file_value(0) else { panic!() };
+        let Value::Obj(f) = idx.file_value(0) else {
+            panic!()
+        };
         assert_eq!(f["name"], Value::Str("A".into()));
         assert_eq!(f["mtime"], Value::Date(5000));
         assert_eq!(f["links"], Value::List(vec![Value::Link("B".into())]));
@@ -779,16 +969,33 @@ mod set_property_tests {
     use super::*;
 
     fn raw(path: &str, text: &str) -> RawNote {
-        RawNote { path: path.into(), text: text.into(), size: text.len() as u64, ..Default::default() }
+        RawNote {
+            path: path.into(),
+            text: text.into(),
+            size: text.len() as u64,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn replaces_adds_and_removes() {
         let t = "---\ntitle: A\nstatus: todo\ntags:\n  - x\n---\nBody\n";
-        assert_eq!(set_property(t, "status", "done"), "---\ntitle: A\nstatus: done\ntags:\n  - x\n---\nBody\n");
-        assert_eq!(set_property(t, "owner", "me"), "---\ntitle: A\nstatus: todo\ntags:\n  - x\nowner: me\n---\nBody\n");
-        assert_eq!(set_property(t, "tags", ""), "---\ntitle: A\nstatus: todo\n---\nBody\n");
-        assert_eq!(set_property("Body\n", "status", "todo"), "---\nstatus: todo\n---\nBody\n");
+        assert_eq!(
+            set_property(t, "status", "done"),
+            "---\ntitle: A\nstatus: done\ntags:\n  - x\n---\nBody\n"
+        );
+        assert_eq!(
+            set_property(t, "owner", "me"),
+            "---\ntitle: A\nstatus: todo\ntags:\n  - x\nowner: me\n---\nBody\n"
+        );
+        assert_eq!(
+            set_property(t, "tags", ""),
+            "---\ntitle: A\nstatus: todo\n---\nBody\n"
+        );
+        assert_eq!(
+            set_property("Body\n", "status", "todo"),
+            "---\nstatus: todo\n---\nBody\n"
+        );
         assert_eq!(set_property("Body\n", "status", ""), "Body\n");
     }
 
@@ -799,8 +1006,14 @@ mod set_property_tests {
         assert_eq!(moved, "#+TITLE: Hi\n#+status: done\n\nBody\n");
         let added = set_property_in("a.org", t, "owner", "Ann");
         assert_eq!(added, "#+TITLE: Hi\n#+STATUS: todo\n#+owner: Ann\n\nBody\n");
-        assert_eq!(set_property_in("a.org", t, "status", ""), "#+TITLE: Hi\n\nBody\n");
-        assert_eq!(set_property_in("a.org", "Body\n", "status", "done"), "#+status: done\nBody\n");
+        assert_eq!(
+            set_property_in("a.org", t, "status", ""),
+            "#+TITLE: Hi\n\nBody\n"
+        );
+        assert_eq!(
+            set_property_in("a.org", "Body\n", "status", "done"),
+            "#+status: done\nBody\n"
+        );
         assert!(!added.contains("---"));
         // Markdown is unchanged.
         assert!(set_property_in("a.md", "x\n", "k", "v").starts_with("---\nk: v\n---\n"));
@@ -814,11 +1027,29 @@ mod set_property_tests {
         assert_eq!(n.props["type"], Value::Str("movie".into()));
         assert_eq!(n.props["year"], Value::Num(2021.0));
         assert_eq!(n.props["status"], Value::Str("plan-to-watch".into()));
-        assert!(!n.props.contains_key("rating"), "an empty property is no property");
-        assert_eq!(n.props["genres"], Value::List(vec![Value::Str("Sci-Fi".into()), Value::Str("Adventure".into())]));
-        assert!(n.tags.contains(&"movie".to_string()) && n.tags.contains(&"scifi".to_string()) && n.tags.contains(&"media".to_string()), "{:?}", n.tags);
+        assert!(
+            !n.props.contains_key("rating"),
+            "an empty property is no property"
+        );
+        assert_eq!(
+            n.props["genres"],
+            Value::List(vec![
+                Value::Str("Sci-Fi".into()),
+                Value::Str("Adventure".into())
+            ])
+        );
+        assert!(
+            n.tags.contains(&"movie".to_string())
+                && n.tags.contains(&"scifi".to_string())
+                && n.tags.contains(&"media".to_string()),
+            "{:?}",
+            n.tags
+        );
         // The drawer at the top of a note (a game's guide) counts too.
-        let g = Note::parse(&raw("g.org", ":PROPERTIES:\n:ID: guide-x\n:END:\n#+title: Guide\n\n* Overview\n"));
+        let g = Note::parse(&raw(
+            "g.org",
+            ":PROPERTIES:\n:ID: guide-x\n:END:\n#+title: Guide\n\n* Overview\n",
+        ));
         assert_eq!(g.props["id"], Value::Str("guide-x".into()));
     }
 
@@ -826,7 +1057,10 @@ mod set_property_tests {
     fn setting_a_property_in_an_org_drawer_keeps_the_drawer() {
         // An existing property changes where it is, an empty one is filled.
         let a = set_property_in("m.org", MOVIE, "status", "watched");
-        assert!(a.contains(":STATUS: watched\n") && !a.contains("plan-to-watch"), "{a}");
+        assert!(
+            a.contains(":STATUS: watched\n") && !a.contains("plan-to-watch"),
+            "{a}"
+        );
         let b = set_property_in("m.org", MOVIE, "rating", "9");
         assert!(b.contains(":RATING: 9\n"), "{b}");
         // A property the drawer lacks is added to it, before :END:.

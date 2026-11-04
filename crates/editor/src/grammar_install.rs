@@ -9,7 +9,7 @@ pub const BUFFER: &str = "*Grammar Build*";
 
 enum Event {
     Output(String),
-    Done(Result<InstalledGrammar, String>),
+    Done(Box<Result<InstalledGrammar, String>>),
 }
 
 struct Job {
@@ -81,7 +81,7 @@ pub fn install_named(app: &mut App, name: &str) {
         let result = grammar_install::install(&recipe, &mut |line| {
             let _ = tx.send(Event::Output(line.to_string()));
         });
-        let _ = tx.send(Event::Done(result));
+        let _ = tx.send(Event::Done(Box::new(result)));
     });
     app.packages.grammar.job = Some(Job { recipe, buffer });
     app.packages.grammar.rx = Some(rx);
@@ -99,7 +99,7 @@ pub fn poll(app: &mut App) {
             match rx.try_recv() {
                 Ok(Event::Output(text)) => output.push(text),
                 Ok(Event::Done(result)) => {
-                    done = Some(result);
+                    done = Some(*result);
                     break;
                 }
                 Err(TryRecvError::Empty) => break,

@@ -1318,7 +1318,10 @@ mod tests {
             let key = KeyEvent::new(KeyCode::BackTab, mods);
             assert_eq!(describe_key(&key, false).as_deref(), Some("<backtab>"));
         }
-        let ctrl = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT | KeyModifiers::CONTROL);
+        let ctrl = KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        );
         assert_eq!(describe_key(&ctrl, false).as_deref(), Some("C-<backtab>"));
         let left = KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT);
         assert_eq!(describe_key(&left, false).as_deref(), Some("S-<left>"));

@@ -2064,13 +2064,13 @@ impl forge::editor::canvas::Host for PluginState {
             Err(e) => return Ok(Err(e.to_string())),
         };
         let shown = self.show(name.clone(), json)?;
-        if shown.is_ok() {
-            if let Ok(c) = self.canvas_of(&name) {
-                c.scroll = true;
-                c.scroll_w = page;
-                c.frame = None;
-                c.dirty = true;
-            }
+        if shown.is_ok()
+            && let Ok(c) = self.canvas_of(&name)
+        {
+            c.scroll = true;
+            c.scroll_w = page;
+            c.frame = None;
+            c.dirty = true;
         }
         Ok(shown)
     }

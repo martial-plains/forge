@@ -136,7 +136,11 @@ fn main() -> anyhow::Result<()> {
         // SAFETY: still single-threaded; nothing has started yet.
         unsafe { std::env::set_var("FORGE_CONFIG_DIR", dir) };
     } else if let Some(user) = &opts.user {
-        let home = if cfg!(target_os = "macos") { "/Users" } else { "/home" };
+        let home = if cfg!(target_os = "macos") {
+            "/Users"
+        } else {
+            "/home"
+        };
         unsafe { std::env::set_var("FORGE_CONFIG_DIR", format!("{home}/{user}/.config/forge")) };
     }
     if let Some(Daemon::Background(name)) = &opts.daemon {
@@ -479,39 +483,6 @@ fn pbcopy(text: &str) {
 #[cfg(not(target_os = "macos"))]
 fn pbcopy(_text: &str) {}
 
-#[cfg(test)]
-mod cli_tests {
-    use forge_terminal::cli::parse as parse_cli;
-
-    #[test]
-    fn parses_file_aliases_and_location() {
-        let args = [
-            "+12:4",
-            "--find-file",
-            "src/main.rs",
-            "--visit",
-            "README.md",
-        ]
-        .map(str::to_string);
-        let parsed = parse_cli(&args).unwrap();
-        assert_eq!(parsed.files, ["src/main.rs", "README.md"]);
-        assert_eq!(
-            parsed.position, None,
-            "a location applies only to the next file"
-        );
-
-        let args = ["+12:4", "--file", "src/main.rs"].map(str::to_string);
-        let parsed = parse_cli(&args).unwrap();
-        assert_eq!(parsed.position, Some((12, 4)));
-    }
-
-    #[test]
-    fn rejects_bad_or_unattached_locations() {
-        assert!(parse_cli(&["+0".into(), "file".into()]).is_err());
-        assert!(parse_cli(&["+12".into()]).is_err());
-    }
-}
-
 /// `--daemon`: start this program again as `--fg-daemon`, detached from
 /// the terminal, and return once its server file exists.
 fn spawn_daemon(args: &[String], name: &str) -> anyhow::Result<()> {
@@ -576,4 +547,37 @@ fn run_daemon(app: &mut App) {
         std::thread::sleep(wait);
     }
     app.auto_save_all();
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use forge_terminal::cli::parse as parse_cli;
+
+    #[test]
+    fn parses_file_aliases_and_location() {
+        let args = [
+            "+12:4",
+            "--find-file",
+            "src/main.rs",
+            "--visit",
+            "README.md",
+        ]
+        .map(str::to_string);
+        let parsed = parse_cli(&args).unwrap();
+        assert_eq!(parsed.files, ["src/main.rs", "README.md"]);
+        assert_eq!(
+            parsed.position, None,
+            "a location applies only to the next file"
+        );
+
+        let args = ["+12:4", "--file", "src/main.rs"].map(str::to_string);
+        let parsed = parse_cli(&args).unwrap();
+        assert_eq!(parsed.position, Some((12, 4)));
+    }
+
+    #[test]
+    fn rejects_bad_or_unattached_locations() {
+        assert!(parse_cli(&["+0".into(), "file".into()]).is_err());
+        assert!(parse_cli(&["+12".into()]).is_err());
+    }
 }

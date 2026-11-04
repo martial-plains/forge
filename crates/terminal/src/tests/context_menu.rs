@@ -303,10 +303,18 @@ fn directory_commands_make_copy_list_and_delete() {
     press(&mut app, "M-x copy-directory RET");
     answer(&mut app, &dir.join("a").display().to_string());
     answer(&mut app, &dir.join("c").display().to_string());
-    assert!(dir.join("c/a/b/f.txt").is_file(), "copied into the existing directory");
+    assert!(
+        dir.join("c/a/b/f.txt").is_file(),
+        "copied into the existing directory"
+    );
     press(&mut app, "M-x insert-directory RET");
     answer(&mut app, &dir.display().to_string());
-    let text = format!("{}{}{}", app.buf_ref().line(1), app.buf_ref().line(2), app.buf_ref().line(3));
+    let text = format!(
+        "{}{}{}",
+        app.buf_ref().line(1),
+        app.buf_ref().line(2),
+        app.buf_ref().line(3)
+    );
     assert!(text.contains("total") || text.contains('a'), "{text}");
     press(&mut app, "M-x delete-directory RET");
     answer(&mut app, &dir.join("c").display().to_string());

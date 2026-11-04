@@ -4,7 +4,7 @@
 //! The file lives at the repository root and is bundled into the binary the
 //! same way the manual is, so `view-news` works without an install step. Each
 //! top-level Org heading is one release; the body is parsed with the manual's
-//! markup pipeline, so =keys=, [[file:forge.org][links]] and =M-x command=
+//! markup pipeline, so =keys=, `[[file:forge.org][links]]` and =M-x command=
 //! references render with live links in the help buffer.
 
 use std::sync::OnceLock;

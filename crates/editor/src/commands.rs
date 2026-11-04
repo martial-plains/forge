@@ -2753,11 +2753,22 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         }
         "goto-char" => app.prompt("Goto char: ", Purpose::GotoChar),
         "insert-file" => app.prompt("Insert file: ", Purpose::InsertFile),
-        "make-directory" | "mkdir" => app.prompt("Make directory: ", Purpose::FileOp(FileOp::MakeDirectory)),
-        "make-empty-file" => app.prompt("Create empty file: ", Purpose::FileOp(FileOp::MakeEmptyFile)),
+        "make-directory" | "mkdir" => {
+            app.prompt("Make directory: ", Purpose::FileOp(FileOp::MakeDirectory))
+        }
+        "make-empty-file" => app.prompt(
+            "Create empty file: ",
+            Purpose::FileOp(FileOp::MakeEmptyFile),
+        ),
         "copy-directory" => app.prompt("Copy directory: ", Purpose::FileOp(FileOp::CopyFrom)),
-        "delete-directory" => app.prompt("Delete directory: ", Purpose::FileOp(FileOp::DeleteDirectory)),
-        "insert-directory" => app.prompt("Insert directory listing of: ", Purpose::FileOp(FileOp::InsertDirectory)),
+        "delete-directory" => app.prompt(
+            "Delete directory: ",
+            Purpose::FileOp(FileOp::DeleteDirectory),
+        ),
+        "insert-directory" => app.prompt(
+            "Insert directory listing of: ",
+            Purpose::FileOp(FileOp::InsertDirectory),
+        ),
         "apropos-command" => app.prompt(
             "Apropos command (word list or regexp): ",
             Purpose::Apropos { docs: false },
@@ -3005,22 +3016,25 @@ fn tidy_before_save(app: &mut App) {
 
 /// `executable-make-buffer-file-executable-if-script-p`: after a save,
 /// a file that starts with `#!` gets its execute bits.
-fn make_script_executable(app: &App) {
-    use std::os::unix::fs::PermissionsExt;
-    if !crate::org_flow::setting_flag(app, "make_scripts_executable_on_save")
-        || !app.buf_ref().line(0).starts_with("#!")
+fn make_script_executable(_app: &App) {
+    #[cfg(unix)]
     {
-        return;
-    }
-    if let Some(p) = app.buf_ref().path()
-        && let Ok(meta) = std::fs::metadata(p)
-    {
-        let mode = meta.permissions().mode();
-        if mode & 0o111 == 0 {
-            let _ = std::fs::set_permissions(
-                p,
-                std::fs::Permissions::from_mode(mode | ((mode & 0o444) >> 2)),
-            );
+        use std::os::unix::fs::PermissionsExt;
+        if !crate::org_flow::setting_flag(_app, "make_scripts_executable_on_save")
+            || !_app.buf_ref().line(0).starts_with("#!")
+        {
+            return;
+        }
+        if let Some(p) = _app.buf_ref().path()
+            && let Ok(meta) = std::fs::metadata(p)
+        {
+            let mode = meta.permissions().mode();
+            if mode & 0o111 == 0 {
+                let _ = std::fs::set_permissions(
+                    p,
+                    std::fs::Permissions::from_mode(mode | ((mode & 0o444) >> 2)),
+                );
+            }
         }
     }
 }

@@ -77,7 +77,11 @@ fn filter_of(y: &Y) -> Result<Filter, String> {
         Y::Mapping(m) => {
             let (k, v) = m.iter().next().ok_or("an empty filter")?;
             let list = |v: &Y| -> Result<Vec<Filter>, String> {
-                v.as_sequence().ok_or("and / or / not take a list")?.iter().map(filter_of).collect()
+                v.as_sequence()
+                    .ok_or("and / or / not take a list")?
+                    .iter()
+                    .map(filter_of)
+                    .collect()
             };
             match k.as_str() {
                 Some("and") => Ok(Filter::And(list(v)?)),
@@ -92,7 +96,10 @@ fn filter_of(y: &Y) -> Result<Filter, String> {
 
 fn sort_key(y: &Y) -> Option<SortKey> {
     let prop = y.get("property")?.as_str()?.to_string();
-    let desc = y.get("direction").and_then(Y::as_str).is_some_and(|d| d.eq_ignore_ascii_case("desc"));
+    let desc = y
+        .get("direction")
+        .and_then(Y::as_str)
+        .is_some_and(|d| d.eq_ignore_ascii_case("desc"));
     Some(SortKey { prop, desc })
 }
 
@@ -109,7 +116,18 @@ impl Base {
         if let Some(m) = y.get("formulas").and_then(Y::as_mapping) {
             for (k, v) in m {
                 if let Some(k) = k.as_str() {
-                    b.formulas.insert(k.to_string(), v.as_str().map_or_else(|| serde_yaml::to_string(v).unwrap_or_default().trim().to_string(), str::to_string));
+                    b.formulas.insert(
+                        k.to_string(),
+                        v.as_str().map_or_else(
+                            || {
+                                serde_yaml::to_string(v)
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string()
+                            },
+                            str::to_string,
+                        ),
+                    );
                 }
             }
         }
@@ -120,7 +138,14 @@ impl Base {
                 }
             }
         }
-        for (i, v) in y.get("views").and_then(Y::as_sequence).map(Vec::as_slice).unwrap_or_default().iter().enumerate() {
+        for (i, v) in y
+            .get("views")
+            .and_then(Y::as_sequence)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
             let kind = match v.get("type").and_then(Y::as_str).unwrap_or("table") {
                 "table" => Kind::Table,
                 "cards" => Kind::Cards,
@@ -131,19 +156,45 @@ impl Base {
             };
             b.views.push(View {
                 kind,
-                name: v.get("name").and_then(Y::as_str).map_or_else(|| format!("View {}", i + 1), str::to_string),
+                name: v
+                    .get("name")
+                    .and_then(Y::as_str)
+                    .map_or_else(|| format!("View {}", i + 1), str::to_string),
                 filters: v.get("filters").map(filter_of).transpose()?,
-                order: v.get("order").and_then(Y::as_sequence).map(|s| s.iter().filter_map(|p| p.as_str().map(str::to_string)).collect()).unwrap_or_default(),
-                sort: v.get("sort").and_then(Y::as_sequence).map(|s| s.iter().filter_map(sort_key).collect()).unwrap_or_default(),
+                order: v
+                    .get("order")
+                    .and_then(Y::as_sequence)
+                    .map(|s| {
+                        s.iter()
+                            .filter_map(|p| p.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                sort: v
+                    .get("sort")
+                    .and_then(Y::as_sequence)
+                    .map(|s| s.iter().filter_map(sort_key).collect())
+                    .unwrap_or_default(),
                 group_by: v.get("groupBy").and_then(sort_key),
                 limit: v.get("limit").and_then(Y::as_u64).map(|n| n as usize),
                 image: v.get("image").and_then(Y::as_str).map(str::to_string),
-                image_ratio: v.get("imageAspectRatio").and_then(Y::as_f64).map_or(1.0, |r| (r as f32).clamp(0.2, 3.0)),
+                image_ratio: v
+                    .get("imageAspectRatio")
+                    .and_then(Y::as_f64)
+                    .map_or(1.0, |r| (r as f32).clamp(0.2, 3.0)),
                 image_fit: match v.get("imageFit").and_then(Y::as_str) {
                     Some("contain") => ImageFit::Contain,
                     _ => ImageFit::Cover,
                 },
-                columns: v.get("columns").and_then(Y::as_sequence).map(|s| s.iter().filter_map(|p| p.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+                columns: v
+                    .get("columns")
+                    .and_then(Y::as_sequence)
+                    .map(|s| {
+                        s.iter()
+                            .filter_map(|p| p.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 map: crate::geo::MapOpts::from_yaml(v),
             });
         }
@@ -152,7 +203,9 @@ impl Base {
 
     /// A starting point for a new `.base` file.
     pub fn template(tag: Option<&str>) -> String {
-        let filter = tag.map_or(String::new(), |t| format!("filters:\n  and:\n    - file.hasTag(\"{t}\")\n"));
+        let filter = tag.map_or(String::new(), |t| {
+            format!("filters:\n  and:\n    - file.hasTag(\"{t}\")\n")
+        });
         format!(
             "{filter}formulas:\n  age: \"(now() - file.ctime).days\"\nproperties:\n  formula.age:\n    displayName: Age (days)\nviews:\n  - type: table\n    name: Notes\n    order:\n      - file.name\n      - file.folder\n      - formula.age\n      - file.mtime\n    sort:\n      - property: file.mtime\n        direction: DESC\n  - type: cards\n    name: Cards\n    order:\n      - file.name\n      - file.folder\n  - type: kanban\n    name: Board\n    groupBy:\n      property: status\n    order:\n      - file.name\n      - file.folder\n"
         )
@@ -213,7 +266,13 @@ fn passes(f: &Filter, ctx: &Ctx, errors: &mut Vec<String>) -> bool {
 }
 
 pub fn prop_value(prop: &str, ctx: &Ctx, errors: &mut Vec<String>) -> Value {
-    let direct = |name: &str| ctx.index.notes[ctx.note].props.get(name).cloned().unwrap_or(Value::Null);
+    let direct = |name: &str| {
+        ctx.index.notes[ctx.note]
+            .props
+            .get(name)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
     if prop.starts_with("file.") || prop.starts_with("formula.") {
         return eval_str(prop, ctx).unwrap_or_else(|e| {
             let msg = format!("{prop}: {e}");
@@ -233,13 +292,28 @@ pub fn run(index: &Index, base: &Base, view: usize, now: i64, extra: Option<&str
         t.errors.push("no such view".into());
         return t;
     };
-    let order: Vec<String> = if v.order.is_empty() { vec!["file.name".into()] } else { v.order.clone() };
-    t.columns = order.iter().map(|p| Column { prop: p.clone(), title: title_of(base, p) }).collect();
+    let order: Vec<String> = if v.order.is_empty() {
+        vec!["file.name".into()]
+    } else {
+        v.order.clone()
+    };
+    t.columns = order
+        .iter()
+        .map(|p| Column {
+            prop: p.clone(),
+            title: title_of(base, p),
+        })
+        .collect();
     let mut matched: Vec<usize> = Vec::new();
     for i in 0..index.notes.len() {
         let ctx = Ctx::new(index, i, &base.formulas, now);
-        let ok = base.filters.as_ref().is_none_or(|f| passes(f, &ctx, &mut t.errors))
-            && v.filters.as_ref().is_none_or(|f| passes(f, &ctx, &mut t.errors))
+        let ok = base
+            .filters
+            .as_ref()
+            .is_none_or(|f| passes(f, &ctx, &mut t.errors))
+            && v.filters
+                .as_ref()
+                .is_none_or(|f| passes(f, &ctx, &mut t.errors))
             && extra.is_none_or(|e| passes(&Filter::Expr(e.to_string()), &ctx, &mut t.errors));
         if ok {
             matched.push(i);
@@ -249,15 +323,24 @@ pub fn run(index: &Index, base: &Base, view: usize, now: i64, extra: Option<&str
     // group key.
     let mut keys: Vec<SortKey> = v.sort.clone();
     if keys.is_empty() {
-        keys.push(SortKey { prop: "file.name".into(), desc: false });
+        keys.push(SortKey {
+            prop: "file.name".into(),
+            desc: false,
+        });
     }
     let mut errors = std::mem::take(&mut t.errors);
     let mut sorted: Vec<(usize, Vec<Value>, Value)> = matched
         .iter()
         .map(|&i| {
             let ctx = Ctx::new(index, i, &base.formulas, now);
-            let ks = keys.iter().map(|k| prop_value(&k.prop, &ctx, &mut errors)).collect();
-            let g = v.group_by.as_ref().map_or(Value::Null, |g| prop_value(&g.prop, &ctx, &mut errors));
+            let ks = keys
+                .iter()
+                .map(|k| prop_value(&k.prop, &ctx, &mut errors))
+                .collect();
+            let g = v
+                .group_by
+                .as_ref()
+                .map_or(Value::Null, |g| prop_value(&g.prop, &ctx, &mut errors));
             (i, ks, g)
         })
         .collect();
@@ -271,7 +354,11 @@ pub fn run(index: &Index, base: &Base, view: usize, now: i64, extra: Option<&str
         }
         for (n, k) in keys.iter().enumerate() {
             let o = a.1[n].compare(&b.1[n]);
-            let o = if k.desc && !matches!(a.1[n], Value::Null) && !matches!(b.1[n], Value::Null) { o.reverse() } else { o };
+            let o = if k.desc && !matches!(a.1[n], Value::Null) && !matches!(b.1[n], Value::Null) {
+                o.reverse()
+            } else {
+                o
+            };
             if o.is_ne() {
                 return o;
             }
@@ -284,11 +371,17 @@ pub fn run(index: &Index, base: &Base, view: usize, now: i64, extra: Option<&str
     }
     for (i, _, g) in sorted {
         let ctx = Ctx::new(index, i, &base.formulas, now);
-        let cells = order.iter().map(|p| prop_value(p, &ctx, &mut errors)).collect();
+        let cells = order
+            .iter()
+            .map(|p| prop_value(p, &ctx, &mut errors))
+            .collect();
         let key = v.group_by.is_some().then_some(g);
         match t.groups.last_mut() {
             Some(last) if last.key == key => last.rows.push(Row { note: i, cells }),
-            _ => t.groups.push(Group { key, rows: vec![Row { note: i, cells }] }),
+            _ => t.groups.push(Group {
+                key,
+                rows: vec![Row { note: i, cells }],
+            }),
         }
     }
     t.errors = errors;
@@ -327,7 +420,11 @@ pub fn render_table_fit(t: &Table, max_col: usize, budget: Option<usize>) -> Ren
     let all = t.columns.len();
     let mut n = all;
     let cell = |v: &Value| clip(&v.to_string(), max_col);
-    let mut widths: Vec<usize> = t.columns.iter().map(|c| clip(&c.title, max_col).chars().count()).collect();
+    let mut widths: Vec<usize> = t
+        .columns
+        .iter()
+        .map(|c| clip(&c.title, max_col).chars().count())
+        .collect();
     for g in &t.groups {
         for r in &g.rows {
             for (i, c) in r.cells.iter().enumerate() {
@@ -354,7 +451,12 @@ pub fn render_table_fit(t: &Table, max_col: usize, budget: Option<usize>) -> Ren
         starts.push(at);
         at += w + 2;
     }
-    let header: Vec<String> = t.columns.iter().zip(&widths).map(|(c, w)| pad(&clip(&c.title, (*w).min(max_col)), *w)).collect();
+    let header: Vec<String> = t
+        .columns
+        .iter()
+        .zip(&widths)
+        .map(|(c, w)| pad(&clip(&c.title, (*w).min(max_col)), *w))
+        .collect();
     text.push_str(header.join("  ").trim_end());
     text.push('\n');
     line_notes.push(None);
@@ -364,12 +466,21 @@ pub fn render_table_fit(t: &Table, max_col: usize, budget: Option<usize>) -> Ren
     line_notes.push(None);
     for g in &t.groups {
         if let Some(k) = &g.key {
-            let label = if k.is_empty() { "(none)".to_string() } else { k.to_string() };
+            let label = if k.is_empty() {
+                "(none)".to_string()
+            } else {
+                k.to_string()
+            };
             text.push_str(&format!("▸ {label}  ({})\n", g.rows.len()));
             line_notes.push(None);
         }
         for r in &g.rows {
-            let cells: Vec<String> = r.cells.iter().zip(&widths).map(|(c, w)| pad(&clip(&c.to_string(), *w), *w)).collect();
+            let cells: Vec<String> = r
+                .cells
+                .iter()
+                .zip(&widths)
+                .map(|(c, w)| pad(&clip(&c.to_string(), *w), *w))
+                .collect();
             text.push_str(cells.join("  ").trim_end());
             text.push('\n');
             line_notes.push(Some(r.note));
@@ -378,13 +489,22 @@ pub fn render_table_fit(t: &Table, max_col: usize, budget: Option<usize>) -> Ren
     let shown: usize = t.groups.iter().map(|g| g.rows.len()).sum();
     text.push('\n');
     line_notes.push(None);
-    text.push_str(&if shown < t.total { format!("{shown} of {} notes\n", t.total) } else { format!("{shown} notes\n") });
+    text.push_str(&if shown < t.total {
+        format!("{shown} of {} notes\n", t.total)
+    } else {
+        format!("{shown} notes\n")
+    });
     line_notes.push(None);
     for e in &t.errors {
         text.push_str(&format!("! {e}\n"));
         line_notes.push(None);
     }
-    Rendered { text, line_notes, column_starts: starts, hidden: all - n }
+    Rendered {
+        text,
+        line_notes,
+        column_starts: starts,
+        hidden: all - n,
+    }
 }
 
 pub fn render_list(t: &Table) -> Rendered {
@@ -392,25 +512,68 @@ pub fn render_list(t: &Table) -> Rendered {
     let mut line_notes = Vec::new();
     for g in &t.groups {
         if let Some(k) = &g.key {
-            text.push_str(&format!("▸ {}\n", if k.is_empty() { "(none)".to_string() } else { k.to_string() }));
+            text.push_str(&format!(
+                "▸ {}\n",
+                if k.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    k.to_string()
+                }
+            ));
             line_notes.push(None);
         }
         for r in &g.rows {
-            let rest: Vec<String> = r.cells.iter().skip(1).filter(|c| !c.is_empty()).map(ToString::to_string).collect();
-            text.push_str(&format!("• {}{}\n", r.cells.first().map(ToString::to_string).unwrap_or_default(), if rest.is_empty() { String::new() } else { format!(" — {}", rest.join(" · ")) }));
+            let rest: Vec<String> = r
+                .cells
+                .iter()
+                .skip(1)
+                .filter(|c| !c.is_empty())
+                .map(ToString::to_string)
+                .collect();
+            text.push_str(&format!(
+                "• {}{}\n",
+                r.cells.first().map(ToString::to_string).unwrap_or_default(),
+                if rest.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", rest.join(" · "))
+                }
+            ));
             line_notes.push(Some(r.note));
         }
     }
-    Rendered { text, line_notes, column_starts: Vec::new(), hidden: 0 }
+    Rendered {
+        text,
+        line_notes,
+        column_starts: Vec::new(),
+        hidden: 0,
+    }
 }
 
 pub fn to_csv(t: &Table) -> String {
-    let q = |s: &str| if s.contains([',', '"', '\n']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s.to_string() };
-    let mut out = t.columns.iter().map(|c| q(&c.title)).collect::<Vec<_>>().join(",");
+    let q = |s: &str| {
+        if s.contains([',', '"', '\n']) {
+            format!("\"{}\"", s.replace('"', "\"\""))
+        } else {
+            s.to_string()
+        }
+    };
+    let mut out = t
+        .columns
+        .iter()
+        .map(|c| q(&c.title))
+        .collect::<Vec<_>>()
+        .join(",");
     out.push('\n');
     for g in &t.groups {
         for r in &g.rows {
-            out.push_str(&r.cells.iter().map(|c| q(&c.to_string())).collect::<Vec<_>>().join(","));
+            out.push_str(
+                &r.cells
+                    .iter()
+                    .map(|c| q(&c.to_string()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
             out.push('\n');
         }
     }
@@ -421,7 +584,21 @@ pub const CARD_W: f32 = 240.0;
 pub const CARD_H: f32 = 170.0;
 
 /// Property names that usually hold a cover picture, in the order tried.
-const COVER_NAMES: &[&str] = &["image", "cover", "poster", "thumbnail", "banner", "photo", "picture", "img", "cover_image", "cover-image", "coverimage", "preview", "header"];
+const COVER_NAMES: &[&str] = &[
+    "image",
+    "cover",
+    "poster",
+    "thumbnail",
+    "banner",
+    "photo",
+    "picture",
+    "img",
+    "cover_image",
+    "cover-image",
+    "coverimage",
+    "preview",
+    "header",
+];
 
 /// The property to take a card's picture from: the view's `image`, else a
 /// column or note property named like a cover (Obsidian shows one too).
@@ -436,7 +613,17 @@ pub fn guess_image_prop(index: &Index, t: &Table, v: &View) -> Option<String> {
         }
     }
     for name in COVER_NAMES {
-        let has = t.groups.iter().flat_map(|g| g.rows.iter()).take(50).any(|r| index.notes[r.note].props.get(*name).is_some_and(|v| !v.to_string().is_empty()));
+        let has = t
+            .groups
+            .iter()
+            .flat_map(|g| g.rows.iter())
+            .take(50)
+            .any(|r| {
+                index.notes[r.note]
+                    .props
+                    .get(*name)
+                    .is_some_and(|v| !v.to_string().is_empty())
+            });
         if has {
             return Some((*name).to_string());
         }
@@ -453,7 +640,13 @@ const LINE: f32 = LABEL * 1.3 + 5.0;
 /// bold title, then the properties as a label and its value. Text is
 /// measured, so nothing overlaps. `image_of` turns a cover property's value
 /// into a picture file (or web address).
-pub fn cards_scene(index: &Index, t: &Table, v: &View, width: f32, image_of: &dyn Fn(&str, &str) -> Option<String>) -> Scene {
+pub fn cards_scene(
+    index: &Index,
+    t: &Table,
+    v: &View,
+    width: f32,
+    image_of: &dyn Fn(&str, &str) -> Option<String>,
+) -> Scene {
     let gap = 16.0;
     let cols = (((width - gap) / (CARD_W + gap)).floor() as usize).max(1);
     // Cards share the row's width, so a wide window isn't left half empty.
@@ -462,7 +655,13 @@ pub fn cards_scene(index: &Index, t: &Table, v: &View, width: f32, image_of: &dy
     let pic_of = |r: &Row| -> Option<String> {
         let p = image_prop.as_deref()?;
         let note = &index.notes[r.note];
-        let val = t.columns.iter().position(|c| c.prop == p).map(|i| r.cells[i].to_string()).filter(|s| !s.is_empty()).or_else(|| note.props.get(p).map(ToString::to_string))?;
+        let val = t
+            .columns
+            .iter()
+            .position(|c| c.prop == p)
+            .map(|i| r.cells[i].to_string())
+            .filter(|s| !s.is_empty())
+            .or_else(|| note.props.get(p).map(ToString::to_string))?;
         image_of(&note.path, &val)
     };
     let pic_h = (cw * v.image_ratio).round();
@@ -481,20 +680,37 @@ pub fn cards_scene(index: &Index, t: &Table, v: &View, width: f32, image_of: &dy
         let mut cards = Vec::new();
         for r in &g.rows {
             let pic = pic_of(r);
-            let mut title = forge_canvas::wrap(&index.notes[r.note].name, TITLE, true, cw - 2.0 * pad);
+            let mut title =
+                forge_canvas::wrap(&index.notes[r.note].name, TITLE, true, cw - 2.0 * pad);
             title.truncate(2);
             let props: Vec<(String, String)> = t
                 .columns
                 .iter()
                 .enumerate()
                 .skip(1)
-                .filter(|(c, col)| !r.cells[*c].to_string().is_empty() && image_prop.as_deref() != Some(col.prop.as_str()))
+                .filter(|(c, col)| {
+                    !r.cells[*c].to_string().is_empty()
+                        && image_prop.as_deref() != Some(col.prop.as_str())
+                })
                 .map(|(c, col)| (col.title.clone(), r.cells[c].to_string()))
                 .take(5)
                 .collect();
-            let h = if pic.is_some() { pic_h } else { 0.0 } + pad + title.len().max(1) as f32 * TITLE * 1.3 + if props.is_empty() { 0.0 } else { 8.0 + props.len() as f32 * LINE } + pad;
+            let h = if pic.is_some() { pic_h } else { 0.0 }
+                + pad
+                + title.len().max(1) as f32 * TITLE * 1.3
+                + if props.is_empty() {
+                    0.0
+                } else {
+                    8.0 + props.len() as f32 * LINE
+                }
+                + pad;
             card_h = card_h.max(h);
-            cards.push(Card { row: r, pic, title, props });
+            cards.push(Card {
+                row: r,
+                pic,
+                title,
+                props,
+            });
         }
         groups.push(cards);
     }
@@ -503,12 +719,30 @@ pub fn cards_scene(index: &Index, t: &Table, v: &View, width: f32, image_of: &dy
     let mut ops = Vec::new();
     for (g, cards) in t.groups.iter().zip(&groups) {
         if let Some(k) = &g.key {
-            ops.push(Op::text(gap, y, &if k.is_empty() { "(none)".to_string() } else { k.to_string() }, 20.0, pal.accent(1)));
+            ops.push(Op::text(
+                gap,
+                y,
+                &if k.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    k.to_string()
+                },
+                20.0,
+                pal.accent(1),
+            ));
             y += 34.0;
         }
         for (n, c) in cards.iter().enumerate() {
-            let (cx, cy) = (gap + (n % cols) as f32 * (cw + gap), y + (n / cols) as f32 * (card_h + gap));
-            let mut inner = vec![Op::rect(0.0, 0.0, cw, card_h).fill(&pal.card).stroked(Stroke::new(&pal.line, 1.0)).rounded(10.0)];
+            let (cx, cy) = (
+                gap + (n % cols) as f32 * (cw + gap),
+                y + (n / cols) as f32 * (card_h + gap),
+            );
+            let mut inner = vec![
+                Op::rect(0.0, 0.0, cw, card_h)
+                    .fill(&pal.card)
+                    .stroked(Stroke::new(&pal.line, 1.0))
+                    .rounded(10.0),
+            ];
             let mut ty = pad;
             if let Some(pic) = &c.pic {
                 // Across the top, the card's rounded corners clipping it.
@@ -516,22 +750,37 @@ pub fn cards_scene(index: &Index, t: &Table, v: &View, width: f32, image_of: &dy
                 if let Op::Image { fit, .. } = &mut img {
                     *fit = v.image_fit;
                 }
-                inner.push(Op::rect(0.0, 0.0, cw, pic_h).fill(&pal.sunken).rounded(10.0));
+                inner.push(
+                    Op::rect(0.0, 0.0, cw, pic_h)
+                        .fill(&pal.sunken)
+                        .rounded(10.0),
+                );
                 inner.push(Op::group(vec![img]).clipped(0.0, 0.0, cw, pic_h));
                 ty = pic_h + pad;
             }
             let lines = c.title.len().max(1) as f32;
-            let mut title = Op::text(pad, ty, &c.title.join(" "), TITLE, &pal.strong).wrapped(cw - 2.0 * pad);
-            if let Op::Text { bold, max_lines, .. } = &mut title {
+            let mut title =
+                Op::text(pad, ty, &c.title.join(" "), TITLE, &pal.strong).wrapped(cw - 2.0 * pad);
+            if let Op::Text {
+                bold, max_lines, ..
+            } = &mut title
+            {
                 *bold = true;
                 *max_lines = Some(2);
             }
             inner.push(title);
             ty += lines * TITLE * 1.3 + 8.0;
-            let lw = c.props.iter().map(|(l, _)| forge_canvas::measure(l, LABEL, false).0).fold(0.0, f32::max).min((cw - 2.0 * pad) * 0.4) + 10.0;
+            let lw = c
+                .props
+                .iter()
+                .map(|(l, _)| forge_canvas::measure(l, LABEL, false).0)
+                .fold(0.0, f32::max)
+                .min((cw - 2.0 * pad) * 0.4)
+                + 10.0;
             for (label, val) in &c.props {
                 let mut l = Op::text(pad, ty, label, LABEL, &pal.dim).wrapped(lw);
-                let mut line = Op::text(pad + lw, ty, val, LABEL, &pal.soft).wrapped((cw - 2.0 * pad - lw).max(40.0));
+                let mut line = Op::text(pad + lw, ty, val, LABEL, &pal.soft)
+                    .wrapped((cw - 2.0 * pad - lw).max(40.0));
                 for op in [&mut l, &mut line] {
                     if let Op::Text { max_lines, .. } = op {
                         *max_lines = Some(1);
@@ -541,7 +790,11 @@ pub fn cards_scene(index: &Index, t: &Table, v: &View, width: f32, image_of: &dy
                 inner.push(line);
                 ty += LINE;
             }
-            ops.push(Op::group(inner).transformed(Transform::translate(cx, cy)).with_id(&format!("note:{}", c.row.note)));
+            ops.push(
+                Op::group(inner)
+                    .transformed(Transform::translate(cx, cy))
+                    .with_id(&format!("note:{}", c.row.note)),
+            );
         }
         y += cards.len().div_ceil(cols) as f32 * (card_h + gap) + 8.0;
     }
@@ -554,9 +807,19 @@ pub fn cards_scene(index: &Index, t: &Table, v: &View, width: f32, image_of: &dy
 /// order, then the rest as they sorted. Each holds the table's rows (as
 /// `(group, row)` pairs). A view with no `groupBy` is one column.
 pub fn kanban_columns(t: &Table, v: &View) -> Vec<(String, Vec<(usize, usize)>)> {
-    let mut cols: Vec<(String, Vec<(usize, usize)>)> = v.columns.iter().map(|c| (c.clone(), Vec::new())).collect();
+    let mut cols: Vec<(String, Vec<(usize, usize)>)> =
+        v.columns.iter().map(|c| (c.clone(), Vec::new())).collect();
     for (gi, g) in t.groups.iter().enumerate() {
-        let key = g.key.as_ref().map_or_else(|| "All".to_string(), |k| if k.is_empty() { String::new() } else { k.to_string() });
+        let key = g.key.as_ref().map_or_else(
+            || "All".to_string(),
+            |k| {
+                if k.is_empty() {
+                    String::new()
+                } else {
+                    k.to_string()
+                }
+            },
+        );
         let at = match cols.iter().position(|c| c.0 == key) {
             Some(i) => i,
             None => {
@@ -570,7 +833,7 @@ pub fn kanban_columns(t: &Table, v: &View) -> Vec<(String, Vec<(usize, usize)>)>
 }
 
 /// Lane colours, one per column in turn.
-
+///
 /// The gap between lanes and the width of each, for `n` lanes on a page
 /// `width` wide: they share a wide page, and stay a readable width on a
 /// narrow one (the page then scrolls sideways).
@@ -617,9 +880,15 @@ pub fn kanban_scene(index: &Index, t: &Table, v: &View, width: f32, height: f32)
             let note = &index.notes[r.note];
             let mut inner = Vec::new();
             // Title: up to two lines.
-            let lines = forge_canvas::wrap(&note.name, 15.0, true, card_w - 28.0).len().clamp(1, 2) as f32;
-            let mut title = Op::text(14.0, 12.0, &note.name, 15.0, &pal.strong).wrapped(card_w - 28.0);
-            if let Op::Text { bold, max_lines, .. } = &mut title {
+            let lines = forge_canvas::wrap(&note.name, 15.0, true, card_w - 28.0)
+                .len()
+                .clamp(1, 2) as f32;
+            let mut title =
+                Op::text(14.0, 12.0, &note.name, 15.0, &pal.strong).wrapped(card_w - 28.0);
+            if let Op::Text {
+                bold, max_lines, ..
+            } = &mut title
+            {
                 *bold = true;
                 *max_lines = Some(2);
             }
@@ -646,12 +915,16 @@ pub fn kanban_scene(index: &Index, t: &Table, v: &View, width: f32, height: f32)
             let mut shown = 0;
             for (c, col) in t.columns.iter().enumerate().skip(1) {
                 let val = r.cells[c].to_string();
-                if val.is_empty() || shown >= 3 || v.group_by.as_ref().is_some_and(|g| g.prop == col.prop) {
+                if val.is_empty()
+                    || shown >= 3
+                    || v.group_by.as_ref().is_some_and(|g| g.prop == col.prop)
+                {
                     continue;
                 }
                 let lw = text_w(&col.title, 11.0) + 8.0;
                 inner.push(Op::text(14.0, ty, &col.title, 11.0, &pal.dim));
-                let mut line = Op::text(14.0 + lw, ty, &val, 11.0, &pal.soft).wrapped((card_w - 28.0 - lw).max(40.0));
+                let mut line = Op::text(14.0 + lw, ty, &val, 11.0, &pal.soft)
+                    .wrapped((card_w - 28.0 - lw).max(40.0));
                 if let Op::Text { max_lines, .. } = &mut line {
                     *max_lines = Some(1);
                 }
@@ -660,29 +933,59 @@ pub fn kanban_scene(index: &Index, t: &Table, v: &View, width: f32, height: f32)
                 shown += 1;
             }
             let card_h = ty + 10.0;
-            let mut card = vec![Op::rect(0.0, 0.0, card_w, card_h).fill(&pal.card).stroked(Stroke::new(&pal.chip, 1.0)).rounded(10.0)];
-            card.push(Op::rect(0.0, 10.0, 3.0, (card_h - 20.0).max(4.0)).fill(accent).rounded(1.5));
+            let mut card = vec![
+                Op::rect(0.0, 0.0, card_w, card_h)
+                    .fill(&pal.card)
+                    .stroked(Stroke::new(&pal.chip, 1.0))
+                    .rounded(10.0),
+            ];
+            card.push(
+                Op::rect(0.0, 10.0, 3.0, (card_h - 20.0).max(4.0))
+                    .fill(accent)
+                    .rounded(1.5),
+            );
             card.extend(inner);
-            body.push(Op::group(card).transformed(Transform::translate(10.0, y)).with_id(&format!("note:{}", r.note)));
+            body.push(
+                Op::group(card)
+                    .transformed(Transform::translate(10.0, y))
+                    .with_id(&format!("note:{}", r.note)),
+            );
             y += card_h + 10.0;
         }
         if rows.is_empty() {
-            body.push(Op::text(lane_w / 2.0 - 40.0, y + 14.0, "Drop cards here", 12.0, &pal.dim));
+            body.push(Op::text(
+                lane_w / 2.0 - 40.0,
+                y + 14.0,
+                "Drop cards here",
+                12.0,
+                &pal.dim,
+            ));
             y += 48.0;
         }
         // The header: a coloured dot, the name, and the count in a pill.
-        let title = if key.is_empty() { "(none)" } else { key.as_str() };
+        let title = if key.is_empty() {
+            "(none)"
+        } else {
+            key.as_str()
+        };
         let count = rows.len().to_string();
         let mut head = vec![
             Op::ellipse(20.0, 23.0, 5.0, 5.0).fill(accent),
             Op::text(34.0, 14.0, title, 15.0, &pal.fg).wrapped(lane_w - 90.0),
         ];
-        if let Op::Text { bold, max_lines, .. } = &mut head[1] {
+        if let Op::Text {
+            bold, max_lines, ..
+        } = &mut head[1]
+        {
             *bold = true;
             *max_lines = Some(1);
         }
         let pw = text_w(&count, 11.0) + 14.0;
-        head.push(Op::rect(lane_w - pw - 12.0, 13.0, pw, 20.0).fill(&pal.card).rounded(10.0));
+        head.push(
+            Op::rect(lane_w - pw - 12.0, 13.0, pw, 20.0)
+                .fill(&pal.card)
+                .rounded(10.0),
+        );
         head.push(Op::text(lane_w - pw - 5.0, 17.0, &count, 11.0, &pal.soft));
         body.extend(head);
         lanes.push((body, y + 10.0));
@@ -691,9 +994,19 @@ pub fn kanban_scene(index: &Index, t: &Table, v: &View, width: f32, height: f32)
     let lane_h = lanes.iter().map(|l| l.1).fold(height - 2.0 * gap, f32::max);
     for (n, (body, _)) in lanes.into_iter().enumerate() {
         let x = gap + n as f32 * (lane_w + gap);
-        ops.push(Op::rect(x, gap, lane_w, lane_h).fill(&pal.sunken).stroked(Stroke::new(&pal.card, 1.0)).rounded(14.0).with_id(&format!("col:{n}")));
+        ops.push(
+            Op::rect(x, gap, lane_w, lane_h)
+                .fill(&pal.sunken)
+                .stroked(Stroke::new(&pal.card, 1.0))
+                .rounded(14.0)
+                .with_id(&format!("col:{n}")),
+        );
         // A thin colour bar along the top of the lane.
-        ops.push(Op::rect(x + 14.0, gap, lane_w - 28.0, 3.0).fill(pal.accent(n)).rounded(1.5));
+        ops.push(
+            Op::rect(x + 14.0, gap, lane_w - 28.0, 3.0)
+                .fill(pal.accent(n))
+                .rounded(1.5),
+        );
         // One group per shape, so a long lane can be drawn a card at a time.
         for op in body {
             ops.push(Op::group(vec![op]).transformed(Transform::translate(x, gap)));
@@ -761,8 +1074,20 @@ views:
         let b = Base::parse(BASE).unwrap();
         assert_eq!(b.views.len(), 3);
         assert_eq!(b.views[0].kind, Kind::Table);
-        assert_eq!(b.views[0].sort, [SortKey { prop: "price".into(), desc: true }]);
-        assert_eq!(b.views[1].group_by, Some(SortKey { prop: "status".into(), desc: false }));
+        assert_eq!(
+            b.views[0].sort,
+            [SortKey {
+                prop: "price".into(),
+                desc: true
+            }]
+        );
+        assert_eq!(
+            b.views[1].group_by,
+            Some(SortKey {
+                prop: "status".into(),
+                desc: false
+            })
+        );
         assert_eq!(b.views[1].limit, Some(2));
         assert_eq!(b.names["formula.age"], "Age");
         assert_eq!(b.formulas["big"], "price > 10");
@@ -776,8 +1101,16 @@ views:
     fn filters_sort_and_formulas_run() {
         let (idx, b) = (index(), Base::parse(BASE).unwrap());
         let t = run(&idx, &b, 0, 1_717_977_600_000, None);
-        let names: Vec<String> = t.groups[0].rows.iter().map(|r| idx.notes[r.note].name.clone()).collect();
-        assert_eq!(names, ["Alpha", "Gamma", "Beta"], "tagged, not dropped, dearest first");
+        let names: Vec<String> = t.groups[0]
+            .rows
+            .iter()
+            .map(|r| idx.notes[r.note].name.clone())
+            .collect();
+        assert_eq!(
+            names,
+            ["Alpha", "Gamma", "Beta"],
+            "tagged, not dropped, dearest first"
+        );
         assert_eq!(t.columns[3].title, "Age");
         assert_eq!(t.groups[0].rows[0].cells[3], Value::Num(3.0));
         assert!(t.errors.is_empty(), "{:?}", t.errors);
@@ -790,7 +1123,11 @@ views:
         let (idx, b) = (index(), Base::parse(BASE).unwrap());
         let t = run(&idx, &b, 1, 0, None);
         assert_eq!(t.total, 3, "price >= 5 among the base's own matches");
-        assert_eq!(t.groups.iter().map(|g| g.rows.len()).sum::<usize>(), 2, "limit 2");
+        assert_eq!(
+            t.groups.iter().map(|g| g.rows.len()).sum::<usize>(),
+            2,
+            "limit 2"
+        );
         assert_eq!(t.groups[0].key, Some(Value::Str("active".into())));
     }
 
@@ -810,9 +1147,18 @@ views:
         let t = run(&idx, &b, 0, 1_717_977_600_000, None);
         let r = render_table(&t, 20);
         let lines: Vec<&str> = r.text.lines().collect();
-        assert!(lines[0].starts_with("name") || lines[0].starts_with("Name") || lines[0].contains("status"), "{}", lines[0]);
+        assert!(
+            lines[0].starts_with("name")
+                || lines[0].starts_with("Name")
+                || lines[0].contains("status"),
+            "{}",
+            lines[0]
+        );
         assert_eq!(r.line_notes.len(), r.text.lines().count());
-        assert_eq!(r.line_notes[2].map(|i| idx.notes[i].name.as_str()), Some("Alpha"));
+        assert_eq!(
+            r.line_notes[2].map(|i| idx.notes[i].name.as_str()),
+            Some("Alpha")
+        );
         assert!(r.text.contains("3 notes"));
         assert_eq!(to_csv(&t).lines().count(), 4);
         let list = render_list(&t);
@@ -829,9 +1175,27 @@ views:
     #[test]
     fn kanban_lanes_follow_the_columns_setting() {
         let raws = vec![
-            RawNote { path: "a.md".into(), text: "---\nstatus: done\n---\n".into(), size: 1, ctime: 0, mtime: 0 },
-            RawNote { path: "b.md".into(), text: "---\nstatus: todo\n---\n".into(), size: 1, ctime: 0, mtime: 0 },
-            RawNote { path: "c.md".into(), text: "---\nstatus: todo\n---\n".into(), size: 1, ctime: 0, mtime: 0 },
+            RawNote {
+                path: "a.md".into(),
+                text: "---\nstatus: done\n---\n".into(),
+                size: 1,
+                ctime: 0,
+                mtime: 0,
+            },
+            RawNote {
+                path: "b.md".into(),
+                text: "---\nstatus: todo\n---\n".into(),
+                size: 1,
+                ctime: 0,
+                mtime: 0,
+            },
+            RawNote {
+                path: "c.md".into(),
+                text: "---\nstatus: todo\n---\n".into(),
+                size: 1,
+                ctime: 0,
+                mtime: 0,
+            },
         ];
         let idx = Index::build(&raws);
         let b = Base::parse("views:\n  - type: kanban\n    name: K\n    groupBy:\n      property: status\n    columns: [todo, doing, done]\n    order: [file.name, status]\n").unwrap();
@@ -845,12 +1209,18 @@ views:
         let s = kanban_scene(&idx, &t, &b.views[0], 900.0, 600.0);
         let (gap, lw) = kanban_layout(3, 900.0);
         // The middle lane's empty body is the second drop target.
-        assert_eq!(s.hit(gap + (lw + gap) + lw / 2.0, 300.0).as_deref(), Some("col:1"));
+        assert_eq!(
+            s.hit(gap + (lw + gap) + lw / 2.0, 300.0).as_deref(),
+            Some("col:1")
+        );
         assert!(s.bounds_of("note:0").is_some());
         // A narrow page keeps lanes readable and grows sideways instead.
         let narrow = kanban_scene(&idx, &t, &b.views[0], 300.0, 600.0);
         let (_, lw) = kanban_layout(3, 300.0);
-        assert!(lw < 300.0 && lw > 200.0 - 1.0, "one lane fills most of the screen: {lw}");
+        assert!(
+            lw < 300.0 && lw > 200.0 - 1.0,
+            "one lane fills most of the screen: {lw}"
+        );
         assert!(narrow.width > 300.0 * 2.0, "the rest is a swipe away");
     }
 
@@ -868,11 +1238,19 @@ views:
         assert_eq!(b.views[0].image_ratio, 1.5);
         assert_eq!(b.views[0].image_fit, ImageFit::Contain);
         let t = run(&idx, &b, 0, 0, None);
-        assert_eq!(guess_image_prop(&idx, &t, &b.views[0]).as_deref(), Some("cover"));
-        let with = cards_scene(&idx, &t, &b.views[0], 400.0, &|_, v| Some(format!("/v/{v}")));
+        assert_eq!(
+            guess_image_prop(&idx, &t, &b.views[0]).as_deref(),
+            Some("cover")
+        );
+        let with = cards_scene(&idx, &t, &b.views[0], 400.0, &|_, v| {
+            Some(format!("/v/{v}"))
+        });
         let without = cards_scene(&idx, &t, &b.views[0], 400.0, &|_, _| None);
         let svg = with.to_svg();
-        assert!(svg.contains("/v/poster.jpg") && svg.contains("meet"), "{svg}");
+        assert!(
+            svg.contains("/v/poster.jpg") && svg.contains("meet"),
+            "{svg}"
+        );
         assert!(!without.to_svg().contains("<image"));
         // The picture adds its height, and the cover is not listed as a property.
         assert!(with.height > without.height + 300.0);
@@ -880,14 +1258,25 @@ views:
         // The long title takes two lines and the properties start below it.
         let title_y: Vec<f32> = text_ys(&without, "A very");
         let year_y: Vec<f32> = text_ys(&without, "year");
-        assert!(year_y[0] >= title_y[0] + 2.0 * 16.0 * 1.3, "{title_y:?} {year_y:?}");
+        assert!(
+            year_y[0] >= title_y[0] + 2.0 * 16.0 * 1.3,
+            "{title_y:?} {year_y:?}"
+        );
     }
 
     #[test]
     fn scenes_name_colour_roles_so_a_theme_change_needs_no_redraw_by_the_plugin() {
-        let raws = vec![RawNote { path: "A.md".into(), text: "---\nstatus: x\n---\n".into(), size: 1, ctime: 0, mtime: 0 }];
+        let raws = vec![RawNote {
+            path: "A.md".into(),
+            text: "---\nstatus: x\n---\n".into(),
+            size: 1,
+            ctime: 0,
+            mtime: 0,
+        }];
         let idx = Index::build(&raws);
-        let b = Base::parse("views:\n  - type: cards\n    name: C\n    order: [file.name, status]\n").unwrap();
+        let b =
+            Base::parse("views:\n  - type: cards\n    name: C\n    order: [file.name, status]\n")
+                .unwrap();
         let t = run(&idx, &b, 0, 0, None);
         let s = cards_scene(&idx, &t, &b.views[0], 400.0, &|_, _| None);
         assert!(s.has_roles(), "nothing in a card scene is a fixed colour");
@@ -905,7 +1294,12 @@ views:
             for op in ops {
                 match op {
                     Op::Text { y, text, .. } if text.starts_with(starts) => out.push(y + dy),
-                    Op::Group { ops, transform, .. } => walk(ops, dy + transform.as_ref().map_or(0.0, |t| t.y), starts, out),
+                    Op::Group { ops, transform, .. } => walk(
+                        ops,
+                        dy + transform.as_ref().map_or(0.0, |t| t.y),
+                        starts,
+                        out,
+                    ),
                     _ => {}
                 }
             }
@@ -940,10 +1334,18 @@ views:
             ..Default::default()
         };
         let index = Index::build(&[
-            note("Alpha.md", "---\nstatus: doing\ndue: 2024-06-20\ntags: [work]\ncoordinates: [10.66, -61.51]\n---\nSee [[Beta]]", 2),
+            note(
+                "Alpha.md",
+                "---\nstatus: doing\ndue: 2024-06-20\ntags: [work]\ncoordinates: [10.66, -61.51]\n---\nSee [[Beta]]",
+                2,
+            ),
             note("Beta.md", "---\nstatus: todo\n---\nback", 120),
             note("projects/Gamma.md", "no properties at all", 400),
-            note("church.org", "#+TITLE: Church\n#+FILETAGS: :church:\n#+status: done\n\n* TODO thing", 1),
+            note(
+                "church.org",
+                "#+TITLE: Church\n#+FILETAGS: :church:\n#+status: done\n\n* TODO thing",
+                1,
+            ),
         ]);
         let mut seen = 0;
         for entry in std::fs::read_dir(&dir).expect("the examples folder") {
@@ -956,64 +1358,129 @@ views:
             assert!(!base.views.is_empty(), "{} has no views", path.display());
             for v in 0..base.views.len() {
                 let t = run(&index, &base, v, now, None);
-                assert!(t.errors.is_empty(), "{} view {}: {:?}", path.display(), base.views[v].name, t.errors);
-                assert!(!matches!(base.views[v].kind, Kind::Other(_)), "{}: unknown view type", path.display());
+                assert!(
+                    t.errors.is_empty(),
+                    "{} view {}: {:?}",
+                    path.display(),
+                    base.views[v].name,
+                    t.errors
+                );
+                assert!(
+                    !matches!(base.views[v].kind, Kind::Other(_)),
+                    "{}: unknown view type",
+                    path.display()
+                );
             }
             seen += 1;
         }
         assert!(seen >= 8, "found {seen} example Bases");
         // A few answers worth checking by hand.
-        let task = Base::parse(&std::fs::read_to_string(dir.join("Task Board.base")).unwrap()).unwrap();
+        let task =
+            Base::parse(&std::fs::read_to_string(dir.join("Task Board.base")).unwrap()).unwrap();
         let t = run(&index, &task, 0, now, None);
-        let names: Vec<_> = t.groups.iter().flat_map(|g| g.rows.iter()).map(|r| index.notes[r.note].name.clone()).collect();
+        let names: Vec<_> = t
+            .groups
+            .iter()
+            .flat_map(|g| g.rows.iter())
+            .map(|r| index.notes[r.note].name.clone())
+            .collect();
         assert_eq!(names.len(), 3, "{names:?}");
         let tags = Base::parse(&std::fs::read_to_string(dir.join("Tags.base")).unwrap()).unwrap();
         let t = run(&index, &tags, 0, now, None);
-        let keys: Vec<String> = t.groups.iter().filter_map(|g| g.key.as_ref().map(|k| k.to_string())).collect();
-        assert!(keys.contains(&"work".to_string()) && keys.contains(&"church".to_string()) && keys.contains(&"(untagged)".to_string()), "{keys:?}");
-        let kinds = Base::parse(&std::fs::read_to_string(dir.join("Org Files.base")).unwrap()).unwrap();
+        let keys: Vec<String> = t
+            .groups
+            .iter()
+            .filter_map(|g| g.key.as_ref().map(|k| k.to_string()))
+            .collect();
+        assert!(
+            keys.contains(&"work".to_string())
+                && keys.contains(&"church".to_string())
+                && keys.contains(&"(untagged)".to_string()),
+            "{keys:?}"
+        );
+        let kinds =
+            Base::parse(&std::fs::read_to_string(dir.join("Org Files.base")).unwrap()).unwrap();
         let t = run(&index, &kinds, 0, now, None);
-        let keys: Vec<String> = t.groups.iter().filter_map(|g| g.key.as_ref().map(|k| k.to_string())).collect();
+        let keys: Vec<String> = t
+            .groups
+            .iter()
+            .filter_map(|g| g.key.as_ref().map(|k| k.to_string()))
+            .collect();
         assert_eq!(keys, ["Markdown", "Org"], "{keys:?}");
-        let stale = Base::parse(&std::fs::read_to_string(dir.join("Stale Notes.base")).unwrap()).unwrap();
+        let stale =
+            Base::parse(&std::fs::read_to_string(dir.join("Stale Notes.base")).unwrap()).unwrap();
         let t = run(&index, &stale, 0, now, None);
         assert_eq!(t.groups.iter().map(|g| g.rows.len()).sum::<usize>(), 2);
     }
 
     #[test]
     fn a_narrow_window_drops_columns_instead_of_running_off() {
-        let index = Index::build(&[RawNote { path: "a.md".into(), text: "---\nauthor: Someone Long Named\nyear: 1999\n---\n".into(), ..Default::default() }]);
-        let base = Base::parse("views:\n  - type: table\n    name: T\n    order: [file.name, author, year]\n").unwrap();
+        let index = Index::build(&[RawNote {
+            path: "a.md".into(),
+            text: "---\nauthor: Someone Long Named\nyear: 1999\n---\n".into(),
+            ..Default::default()
+        }]);
+        let base = Base::parse(
+            "views:\n  - type: table\n    name: T\n    order: [file.name, author, year]\n",
+        )
+        .unwrap();
         let t = run(&index, &base, 0, 0, None);
         let wide = render_table_fit(&t, 32, Some(80));
         assert_eq!(wide.hidden, 0);
         let narrow = render_table_fit(&t, 32, Some(14));
         assert!(narrow.hidden >= 1, "{}", narrow.text);
-        assert!(narrow.text.lines().all(|l| l.chars().count() <= 14), "{}", narrow.text);
+        assert!(
+            narrow.text.lines().all(|l| l.chars().count() <= 14),
+            "{}",
+            narrow.text
+        );
     }
 
     /// The media Bases read the property drawers of media
     /// notes (movies, shows, books, games) and answer sensibly.
     #[test]
     fn the_media_bases_work() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bases/media");
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        let dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bases/media");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         let year = crate::value::civil_from_days(now.div_euclid(crate::value::DAY)).0;
         let note = |path: &str, kind: &str, props: &str| RawNote {
             path: path.into(),
-            text: format!("#+title: T\n\n* T :{kind}:\n:PROPERTIES:\n:TYPE: {kind}\n{props}:END:\n\n** Review\n"),
+            text: format!(
+                "#+title: T\n\n* T :{kind}:\n:PROPERTIES:\n:TYPE: {kind}\n{props}:END:\n\n** Review\n"
+            ),
             ..Default::default()
         };
         let index = Index::build(&[
-            note("movies/a.org", "movie", ":STATUS: watched\n:RATING: 9\n:YEAR: 2021\n:GENRES: Sci-Fi, Drama\n:RECOMMEND_TO: Sam\n"),
+            note(
+                "movies/a.org",
+                "movie",
+                ":STATUS: watched\n:RATING: 9\n:YEAR: 2021\n:GENRES: Sci-Fi, Drama\n:RECOMMEND_TO: Sam\n",
+            ),
             note("movies/b.org", "movie", ":STATUS: watched\n:RATING:\n"),
             note("shows/c.org", "show", ":STATUS: watching\n"),
-            note("books/d.org", "book", &format!(":STATUS: read\n:RATING: 7\n:AUTHOR: Ann\n:FINISHED: {year}-02-01\n")),
-            note("games/e/e.org", "game", ":STATUS: backlog\n:HOURS: 0\n:ADDED: 2025-01-01\n"),
-            RawNote { path: "games/e/guide.org".into(), text: ":PROPERTIES:\n:ID: g\n:END:\n#+title: Guide\n".into(), ..Default::default() },
+            note(
+                "books/d.org",
+                "book",
+                &format!(":STATUS: read\n:RATING: 7\n:AUTHOR: Ann\n:FINISHED: {year}-02-01\n"),
+            ),
+            note(
+                "games/e/e.org",
+                "game",
+                ":STATUS: backlog\n:HOURS: 0\n:ADDED: 2025-01-01\n",
+            ),
+            RawNote {
+                path: "games/e/guide.org".into(),
+                text: ":PROPERTIES:\n:ID: g\n:END:\n#+title: Guide\n".into(),
+                ..Default::default()
+            },
         ]);
         let count = |file: &str, view: usize| {
-            let base = Base::parse(&std::fs::read_to_string(dir.join(file)).unwrap()).unwrap_or_else(|e| panic!("{file}: {e}"));
+            let base = Base::parse(&std::fs::read_to_string(dir.join(file)).unwrap())
+                .unwrap_or_else(|e| panic!("{file}: {e}"));
             let t = run(&index, &base, view, now, None);
             assert!(t.errors.is_empty(), "{file} view {view}: {:?}", t.errors);
             t.groups.iter().map(|g| g.rows.len()).sum::<usize>()
@@ -1041,18 +1508,38 @@ views:
     /// Writes preview SVGs when FORGE_PREVIEW_DIR is set (not a check).
     #[test]
     fn preview_scenes() {
-        let Ok(dir) = std::env::var("FORGE_PREVIEW_DIR") else { return };
+        let Ok(dir) = std::env::var("FORGE_PREVIEW_DIR") else {
+            return;
+        };
         let mut raws = Vec::new();
-        for (i, (n, st, tags)) in [("Dune", "todo", "[scifi, classic]"), ("The Left Hand of Darkness", "todo", "[scifi]"), ("A Pattern Language", "doing", "[architecture]"), ("Invisible Cities", "done", "[fiction, italy, classic]"), ("Kitchen Confidential", "done", "[food]"), ("Exhalation", "todo", "[scifi]")].iter().enumerate() {
+        for (i, (n, st, tags)) in [
+            ("Dune", "todo", "[scifi, classic]"),
+            ("The Left Hand of Darkness", "todo", "[scifi]"),
+            ("A Pattern Language", "doing", "[architecture]"),
+            ("Invisible Cities", "done", "[fiction, italy, classic]"),
+            ("Kitchen Confidential", "done", "[food]"),
+            ("Exhalation", "todo", "[scifi]"),
+        ]
+        .iter()
+        .enumerate()
+        {
             raws.push(RawNote { path: format!("{n}.md"), text: format!("---\nstatus: {st}\ntags: {tags}\nauthor: Author {i}\nyear: {}\npages: {}\n---\n", 1960 + i * 11, 200 + i * 40), size: 1, ctime: 0, mtime: 0 });
         }
         let idx = Index::build(&raws);
         let b = Base::parse("views:\n  - type: kanban\n    name: K\n    groupBy:\n      property: status\n    columns: [todo, doing, done]\n    order: [file.name, status, author, year, pages]\n  - type: cards\n    name: C\n    order: [file.name, author, year, pages]\n").unwrap();
         for (name, w) in [("desktop", 1200.0f32), ("phone", 390.0)] {
             let t = run(&idx, &b, 0, 0, None);
-            std::fs::write(format!("{dir}/kanban-{name}.svg"), kanban_scene(&idx, &t, &b.views[0], w, 500.0).to_svg()).unwrap();
+            std::fs::write(
+                format!("{dir}/kanban-{name}.svg"),
+                kanban_scene(&idx, &t, &b.views[0], w, 500.0).to_svg(),
+            )
+            .unwrap();
             let t = run(&idx, &b, 1, 0, None);
-            std::fs::write(format!("{dir}/cards-{name}.svg"), cards_scene(&idx, &t, &b.views[1], w, &|_, _| None).to_svg()).unwrap();
+            std::fs::write(
+                format!("{dir}/cards-{name}.svg"),
+                cards_scene(&idx, &t, &b.views[1], w, &|_, _| None).to_svg(),
+            )
+            .unwrap();
         }
     }
 }

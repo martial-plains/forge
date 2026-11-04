@@ -1247,7 +1247,7 @@ impl Forge {
     /// What to draw now. If the editor is busy (a plugin running long),
     /// the last frame, with `busy` set. Async so the app awaits it off
     /// the main thread: the wait is the editor thread's answer, up to
-    /// [`FRAME_WAIT`].
+    /// `FRAME_WAIT`.
     pub async fn frame(&self, width: u16, height: u16) -> Frame {
         if let Some(message) = self.crashed.lock().expect("crash lock").clone() {
             let mut f = self

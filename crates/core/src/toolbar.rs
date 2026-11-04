@@ -531,9 +531,8 @@ pub fn modifier_view(state: ToolBar, pending: &[Modifier], frame: u16) -> Modifi
         if used.saturating_add(width) > frame {
             break;
         }
-        let face = if pending.contains(&modifier) {
-            Face::ToolBarSelected
-        } else if state.modifier_hover == Some(modifier.index()) {
+        let face = if pending.contains(&modifier) || state.modifier_hover == Some(modifier.index())
+        {
             Face::ToolBarSelected
         } else {
             Face::ToolBar

@@ -675,10 +675,10 @@ pub fn run(
     let mut out = child.stdout.take().expect("piped");
     let mut err = child.stderr.take().expect("piped");
     let writer = std::thread::spawn(move || {
-        if let Some(mut s) = stdin {
-            if let Some(d) = input {
-                let _ = s.write_all(&d);
-            }
+        if let Some(mut s) = stdin
+            && let Some(d) = input
+        {
+            let _ = s.write_all(&d);
         }
     });
     let ot = std::thread::spawn(move || {
@@ -1178,7 +1178,7 @@ fn show_dir(app: &mut App, dir: &Remote) {
     let b = app.buf();
     b.set_read_only(true);
     b.set_point(forge_core::Pos::new(
-        names.is_empty().then_some(0).unwrap_or(1),
+        if names.is_empty() { 0 } else { 1 },
         0,
     ));
     app.msg(format!("{} entries; RET opens, ^ goes up", names.len()));
