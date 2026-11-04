@@ -1,4 +1,0 @@
-[package]
-name = "vertico"
-version = "0.1.0"
-description = "Vertical minibuffer completion with orderless matching and marginalia-style annotations"

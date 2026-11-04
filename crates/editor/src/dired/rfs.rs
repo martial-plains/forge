@@ -155,7 +155,7 @@ pub(super) fn chmod(p: &Path, mode: &str) -> io::Result<()> {
     {
         return Err(io_err(format!("bad mode: {mode}")));
     }
-    run(&r, &format!("chmod {mode} -- {}", quoted(&r))).map(|_| ())
+    run(&r, &format!("chmod {mode} {}", quoted(&r))).map(|_| ())
 }
 
 // ---------------------------------------------------------------- listing

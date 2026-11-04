@@ -1362,6 +1362,9 @@ pub fn publish_selection(app: &mut App) {
     app.editor.completion_session = session_info(app);
     if selection_changed(&before, &app.editor.selection) {
         queue_selection_commands(app);
+        if app.minibuffer.is_some() {
+            queue_minibuffer_selection_commands(app);
+        }
     }
 }
 
@@ -1381,6 +1384,39 @@ fn queue_selection_commands(app: &mut App) {
         .editor
         .completion
         .selection_commands
+        .iter()
+        .map(|(_, c)| c.clone())
+        .collect();
+    for cmd in cmds {
+        if app.editor.commands.contains(&cmd) {
+            app.deferred_commands.push((cmd, None));
+        }
+    }
+}
+
+fn queue_minibuffer_selection_commands(app: &mut App) {
+    let cmds: Vec<String> = app
+        .editor
+        .completion
+        .minibuffer_selection_commands
+        .iter()
+        .map(|(_, c)| c.clone())
+        .collect();
+    for cmd in cmds {
+        if app.editor.commands.contains(&cmd) {
+            app.deferred_commands.push((cmd, None));
+        }
+    }
+}
+
+pub(crate) fn minibuffer_input_changed(app: &mut App, before: Option<&str>, after: Option<&str>) {
+    if after.is_none() || before == after {
+        return;
+    }
+    let cmds: Vec<String> = app
+        .editor
+        .completion
+        .minibuffer_input_commands
         .iter()
         .map(|(_, c)| c.clone())
         .collect();
@@ -1732,6 +1768,60 @@ mod tests {
 
     fn candidate(text: &str) -> Candidate {
         Candidate::new(text, None)
+    }
+
+    #[test]
+    fn minibuffer_input_hook_runs_only_for_an_open_changed_input() {
+        let mut app = app_with("");
+        app.editor
+            .completion
+            .minibuffer_input_commands
+            .push(("test".into(), "forward-char".into()));
+
+        minibuffer_input_changed(&mut app, Some("a"), Some("ab"));
+        assert_eq!(app.deferred_commands, vec![("forward-char".into(), None)]);
+        app.deferred_commands.clear();
+
+        minibuffer_input_changed(&mut app, Some("ab"), Some("ab"));
+        minibuffer_input_changed(&mut app, Some("ab"), None);
+        assert!(app.deferred_commands.is_empty());
+    }
+
+    #[test]
+    fn minibuffer_selection_hook_runs_only_while_a_prompt_is_open() {
+        let mut app = app_with("");
+        app.editor
+            .completion
+            .minibuffer_selection_commands
+            .push(("test".into(), "forward-char".into()));
+        app.editor.selection = Some(forge_core::completion::Selection {
+            text: "before".into(),
+            annotation: None,
+            category: "test".into(),
+            index: 1,
+            total: 1,
+            documentation: None,
+            location: None,
+        });
+
+        publish_selection(&mut app);
+        assert!(app.deferred_commands.is_empty());
+
+        app.editor.selection = Some(forge_core::completion::Selection {
+            text: "before".into(),
+            annotation: None,
+            category: "test".into(),
+            index: 1,
+            total: 1,
+            documentation: None,
+            location: None,
+        });
+        app.minibuffer = Some(crate::minibuffer::Minibuffer::new(
+            "Prompt: ",
+            crate::minibuffer::Purpose::ExtendedCommand(None),
+        ));
+        publish_selection(&mut app);
+        assert_eq!(app.deferred_commands, vec![("forward-char".into(), None)]);
     }
 
     /// The candidates of the session, in the order they are in.

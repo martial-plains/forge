@@ -12,8 +12,17 @@
 /// of the editor - prompts, echo-area messages, running another command -
 /// happens after the plugin's call returns. Buffer and keymap changes
 /// happen immediately.
-package forge:editor@0.1.19;
+///
+/// 0.1.28 removes the synchronous `http.get` / `http.request` first added in
+/// 0.1.26: they blocked the editor, and the asynchronous `get-async` /
+/// `http-request-async` (0.1.27) replace them. Still within 0.1.x, a plugin
+/// that used the synchronous form must move to the asynchronous one.
+///
+/// 0.1.29 adds `menus.define-for-mode`, so a mode's menu only shows while
+/// that major mode (or one deriving from it) is on.
+package forge:editor@0.1.30;
 
+/// Values shared by several interfaces.
 interface types {
     /// A place in a buffer: 0-based line and column. Columns count Unicode
     /// scalar values (Rust `char`s), not bytes or screen cells.
@@ -32,6 +41,8 @@ interface types {
 /// Messages for the user. Forge keeps them in the *Messages* buffer and
 /// shows warnings and errors in the echo area.
 interface log {
+    /// How serious a message is; Forge may show warnings and errors more
+    /// prominently than debug and info.
     enum level {
         debug,
         info,
@@ -39,11 +50,24 @@ interface log {
         error,
     }
 
+    /// Write a message at `level`.
     log: func(level: level, message: string);
 }
 
+/// The buffers Forge has open: the text a plugin reads and edits. A plugin
+/// reaches them through this interface; buffer ids are stable handles that
+/// also appear in events and keymap scopes.
 interface buffers {
     use types.{position, span};
+
+    /// A definition in a buffer, for imenu: what it is called, its kind
+    /// ("function", "method", "type", ...) and where it starts. Since
+    /// 0.1.21.
+    record definition {
+        name: string,
+        kind: string,
+        position: position,
+    }
 
     /// A buffer: text, point, mark, maybe a file. A handle stays valid
     /// after the buffer is killed, but using a killed buffer traps, so
@@ -54,7 +78,9 @@ interface buffers {
         current: static func() -> buffer;
         /// Every buffer, oldest first.
         all: static func() -> list<buffer>;
+        /// The buffer with this exact name, if any.
         find: static func(name: string) -> option<buffer>;
+        /// The live buffer with this id, if it still exists.
         from-id: static func(id: u32) -> option<buffer>;
         /// A new, empty buffer. The name gets <2>, <3>, ... if it's taken.
         /// It isn't shown until `show` is called.
@@ -62,7 +88,9 @@ interface buffers {
 
         /// Stable for the buffer's life; events refer to buffers by id.
         id: func() -> u32;
+        /// The buffer hasn't been killed (using a killed buffer traps).
         alive: func() -> bool;
+        /// The buffer's name, as shown in the mode line.
         name: func() -> string;
         /// The file the buffer visits, if any.
         path: func() -> option<string>;
@@ -71,14 +99,20 @@ interface buffers {
         /// Grows by at least one with every change to the text.
         version: func() -> u64;
 
+        /// The whole buffer as a string.
         text: func() -> string;
+        /// The text in `span`.
         text-in: func(span: span) -> string;
+        /// How many lines the buffer has.
         line-count: func() -> u32;
         /// One line without its newline ("" past the end).
         line: func(line: u32) -> string;
 
+        /// Where point (the cursor) is.
         point: func() -> position;
+        /// Move point. out-of-range positions are clamped.
         set-point: func(position: position);
+        /// The mark position, if one is set.
         mark: func() -> option<position>;
         /// Set (and highlight) or clear the mark.
         set-mark: func(position: option<position>);
@@ -87,25 +121,31 @@ interface buffers {
 
         /// Insert at point; point ends up after the text.
         insert: func(text: string);
+        /// Replace the text in `span` with `text`.
         replace: func(span: span, text: string);
         /// Delete a span and return what was there.
         delete: func(span: span) -> string;
 
         /// Literal search, case-insensitive unless `query` has capitals
-        /// (like C-s). Forward finds the first match at or after `start`;
-        /// backward the last one ending at or before it.
+        /// (like C-s). Finds the first match at or after `start`.
         search-forward: func(query: string, start: position) -> option<span>;
+        /// Literal search; finds the last match ending at or before
+        /// `start`.
         search-backward: func(query: string, start: position) -> option<span>;
         /// First match of a regular expression (Rust regex syntax) at or
         /// after `start`. Err if the pattern is invalid.
         search-regexp: func(pattern: string, start: position) -> result<option<span>, string>;
 
+        /// The name of the buffer's major mode.
         major-mode: func() -> string;
+        /// Switch the buffer to another major mode.
         set-major-mode: func(mode: string) -> result<_, string>;
         /// Enabled minor modes, highest keymap priority first. Set a mode's
         /// priority with `keymap.set-priority` to change where it sits.
         minor-modes: func() -> list<string>;
+        /// Turn a minor mode on in this buffer.
         enable-minor-mode: func(mode: string) -> result<_, string>;
+        /// Turn a minor mode off in this buffer.
         disable-minor-mode: func(mode: string);
 
         /// Show this buffer in the selected window.
@@ -118,10 +158,14 @@ interface buffers {
         /// Set a buffer option. An empty
         /// value goes back to the default. Options: "line-numbers" (off,
         /// absolute, relative), "indent-width" (1-16), "indent-tabs"
-        /// (true, false), "fill-column", and since 0.1.9 "read-only"
-        /// (true, false): commands may not change the text (typing says
-        /// "Buffer is read-only"), but this API still can, so a plugin
-        /// keeps rewriting a listing it owns.
+        /// (true, false), "fill-column",
+        /// "display-fill-column-indicator" (true, false),
+        /// "display-fill-column-indicator-column" ("t", a number, or
+        /// "nil"), "display-fill-column-indicator-character" (one
+        /// character, or "nil"), and since 0.1.9 "read-only" (true,
+        /// false): commands may not change the text (typing says "Buffer
+        /// is read-only"), but this API still can, so a plugin keeps
+        /// rewriting a listing it owns.
         set-option: func(name: string, value: string) -> result<_, string>;
         /// An option's value; none if it's unknown or unset.
         get-option: func(name: string) -> option<string>;
@@ -136,6 +180,12 @@ interface buffers {
         /// file, or the processes permission (which trusts the plugin
         /// with more than that anyway).
         visit: static func(path: string) -> result<buffer, string>;
+        /// Open something the *user* chose (a dashboard entry they pressed
+        /// Enter on) without a directory grant. A file is opened and its
+        /// buffer returned; a folder is opened in Dired for the user and
+        /// none is returned. Only a call made while handling the user's own
+        /// command works. Since 0.1.29.
+        open-path: static func(path: string) -> result<option<buffer>, string>;
 
         // ---- 0.1.10
 
@@ -145,6 +195,14 @@ interface buffers {
         set-mode-line-info: func(text: option<string>);
         /// What this plugin set with `set-mode-line-info`.
         mode-line-info: func() -> option<string>;
+
+        // ---- 0.1.21
+
+        /// Definitions in the buffer, from the grammar's tags query
+        /// (functions, types, methods, headings, ...), in buffer order.
+        /// Empty when the buffer has no grammar or no tags query for it.
+        /// The same list `M-g i` (imenu) offers.
+        definitions: func() -> list<definition>;
     }
 }
 
@@ -226,6 +284,13 @@ interface decorations {
     /// the real text. Spans that overlap are not combined: the first one
     /// wins. Fails (setting nothing) on an unknown face. Since 0.1.11.
     set-display: func(buffer: borrow<buffer>, replacements: list<replacement>) -> result<_, string>;
+
+    // ---- 0.1.22
+
+    /// Every decoration on the buffer, from every owner: the editor's own
+    /// diagnostics (the "error", "warning" and "info" faces) and any
+    /// plugin's highlights. In buffer order. Since 0.1.22.
+    get: func(buffer: borrow<buffer>) -> list<decoration>;
 }
 
 /// The menu bar and its menus, so a plugin can add its own commands to
@@ -266,6 +331,18 @@ interface menus {
     /// has one, or if the title is taken.
     define: func(title: string, items: list<item>) -> result<_, string>;
 
+    /// Pop a menu up at the pointer (a right-click menu for what was
+    /// clicked). Bind a command that calls it to `<mouse-3>` in a mode and
+    /// the right button runs it, even with `context-menu-mode` off. Since
+    /// 0.1.29.
+    popup: func(items: list<item>) -> result<_, string>;
+
+    /// Add a menu that only shows while `mode` is the buffer's major mode
+    /// or one it derives from, the way a mode's own menu does.
+    /// Fails if this plugin already has a menu, or if the title is taken.
+    /// Since 0.1.29.
+    define-for-mode: func(title: string, items: list<item>, mode: string) -> result<_, string>;
+
     /// Add items to a menu someone else defined — a built-in one, or
     /// another plugin's — after the ones already there.
     extend: func(title: string, items: list<item>) -> result<_, string>;
@@ -301,6 +378,8 @@ interface menus {
     selection: func() -> option<item-selection>;
 }
 
+/// Named commands: the unit a plugin offers for the user to run by name
+/// (M-x) or from a key. Forge calls `handler.run-command` when one runs.
 interface commands {
     /// Offer a command. M-x NAME runs it and keys can be bound to it;
     /// Forge calls `handler.run-command` with the name. Fails if a
@@ -309,6 +388,8 @@ interface commands {
     /// Run any command, built-in or from a plugin, once the current call
     /// returns. Fails if no command has that name.
     run: func(name: string) -> result<_, string>;
+    /// Whether a command with this name is registered (built-in or from any
+    /// plugin).
     exists: func(name: string) -> bool;
 
     // ---- 0.1.2
@@ -336,8 +417,17 @@ interface commands {
     /// like showing documentation for what's at point. 0 (or less) stops
     /// it. Fails if the plugin doesn't own the command.
     run-when-idle: func(name: string, seconds: f64) -> result<_, string>;
+
+    // ---- 0.1.21
+
+    /// Every registered command name, built-in and from every loaded
+    /// plugin, in registration order. What `M-x` completes from.
+    names: func() -> list<string>;
 }
 
+/// Keys to commands. A key sequence is looked up from the most specific
+/// map (a buffer's, a minor mode's, a project's) down to the global one, so
+/// plugins add behaviour without the user rebinding anything.
 interface keymap {
     /// Which keymap a binding goes in. Buffer-local maps beat minor modes,
     /// which beat the major mode, which beats global.
@@ -457,7 +547,7 @@ interface keymap {
     /// rather than `bind(scope.prompt(name), ...)`.
     bind-prompt: func(name: string, keys: string, command: string) -> result<_, string>;
 
-/// Bind `keys` to `command` in the conditional layer `name`, and set the
+    /// Bind `keys` to `command` in the conditional layer `name`, and set the
     /// condition that layer applies while, written the way Forge writes a
     /// condition (the same text it prints for one):
     ///
@@ -485,6 +575,13 @@ interface keymap {
     pop-transient: func(name: string) -> result<_, string>;
     /// The transient maps that are up, outermost first.
     transients: func() -> list<string>;
+
+    // ---- 0.1.21
+
+    /// The (keys, command) pairs bound directly in `scope`, in binding
+    /// order. Keys are notation, as `bind` took them. A scope
+    /// with no map is empty.
+    bindings: func(scope: scope) -> list<tuple<string, string>>;
 }
 
 /// Things that happen, for plugins that asked. Events arrive through
@@ -492,6 +589,7 @@ interface keymap {
 /// buffer-changed is held back until the editor has been idle briefly and
 /// then sent once per buffer, so plugins never run on every keystroke.
 interface events {
+    /// The kinds of event a plugin can subscribe to.
     enum kind {
         buffer-opened,
         buffer-killed,
@@ -510,7 +608,9 @@ interface events {
         mode-changed(u32),
     }
 
+    /// Ask to be told about events of this kind.
     subscribe: func(kind: kind);
+    /// Stop being told about events of this kind.
     unsubscribe: func(kind: kind);
 
     // ---- 0.1.2
@@ -526,6 +626,7 @@ interface events {
 interface minibuffer {
     type request = u32;
 
+    /// Ask the user for a line of text, starting from `initial`.
     read-string: func(prompt: string, initial: string) -> request;
     /// TAB completes from `candidates`. With `require-match`, only a
     /// candidate is accepted.
@@ -546,17 +647,53 @@ interface minibuffer {
     /// What the echo area shows right now, if anything: so documentation shown when idle doesn't cover
     /// "Wrote file" and the like.
     current-message: func() -> option<string>;
+
+    // ---- 0.1.24
+
+    /// Whether a prompt is open right now (a plugin's own included).
+    active: func() -> bool;
+    /// The open prompt's history kind ("file", "command", ...), or none
+    /// when none is open or it keeps no history. Feed it to
+    /// `session.history` to offer the prompt's own past answers.
+    history-kind: func() -> option<string>;
+    /// What the user has typed into the open prompt so far ("" when none).
+    input: func() -> string;
+    /// Run `command` whenever the input of an open prompt changes. The
+    /// command may read the new text with `input`. Since 0.1.30.
+    on-input-changed: func(command: string);
+    /// Run `command` whenever the selected candidate in an open prompt list
+    /// changes. The command may read it with `completion.selected`. Since 0.1.30.
+    on-selection-changed: func(command: string);
+    /// Like `completing-read`, but takes over the prompt that is open: it
+    /// is hidden while this one runs, and the answer replaces its input
+    /// (C-g leaves it as it was). Use it to offer a prompt's own history
+    /// (`consult-history`). With no prompt open, it acts like
+    /// `completing-read`.
+    completing-read-over: func(prompt: string, candidates: list<string>, require-match: bool) -> request;
 }
 
+/// Major and minor modes: a major mode gives a buffer its syntax and
+/// keymap, minor modes add behaviour on top. A plugin defines both and on
+/// which file extensions the major mode is chosen.
 interface modes {
     /// Define a major mode (the name must end in "-mode"). The parent's
     /// keymap applies under this mode's. Files whose names end in
     /// ".EXT" for one of `extensions` open in this mode.
     define-major-mode: func(name: string, parent: option<string>, extensions: list<string>) -> result<_, string>;
+    /// Define a minor mode (the name must end in "-mode"). It is off until
+    /// enabled in a buffer.
     define-minor-mode: func(name: string) -> result<_, string>;
-    /// Known major and minor mode names.
+    /// Known major mode names.
     major-modes: func() -> list<string>;
+    /// Known minor mode names.
     minor-modes: func() -> list<string>;
+
+    // ---- 0.1.29
+
+    /// The major mode `mode` derives from, if any. Derived modes inherit
+    /// their parent's keymap, and a plugin can walk the chain to decide how
+    /// a buffer should behave.
+    major-mode-parent: func(mode: string) -> option<string>;
 
     // ---- 0.1.3
 
@@ -584,6 +721,7 @@ interface processes {
     write: func(process: process, data: list<u8>) -> result<_, string>;
     /// Close its stdin.
     close-input: func(process: process);
+    /// Stop the process (its `on-exit` still arrives).
     kill: func(process: process);
     /// The project a file is in: the nearest directory above it with
     /// .git (.hg, .jj, .project), else with a build file (Cargo.toml,
@@ -611,6 +749,16 @@ interface processes {
 /// visiting a renamed file follow it; a deleted file's buffer stays, with
 /// its text, as a buffer visiting a file that is gone.
 interface files {
+    /// What `stat` says about a file or directory. Times are milliseconds
+    /// since 1970-01-01 UTC (0 when the system doesn't keep one).
+    record file-info {
+        size: u64,
+        modified: s64,
+        created: s64,
+        directory: bool,
+    }
+
+    /// Whether a file or directory exists at `path`.
     exists: func(path: string) -> bool;
     /// A text file's contents (`~` is the home directory): a plugin's
     /// configuration, say. Allowed in granted directories (read or write)
@@ -619,10 +767,115 @@ interface files {
     /// Make an empty file (and its directory). With `overwrite`, an
     /// existing file is emptied; without, it is left alone.
     create: func(path: string, overwrite: bool) -> result<_, string>;
+    /// Write `data` (bytes) to a file, making it and its directory. The
+    /// same rules as `create`: a granted directory (write), or the
+    /// processes permission. Since 0.1.26.
+    write: func(path: string, data: list<u8>) -> result<_, string>;
     /// Move a file or directory. Fails if `target` exists, unless `overwrite`.
     rename: func(source: string, target: string, overwrite: bool) -> result<_, string>;
     /// Remove a file, or a directory (with `recursive`, and its contents).
     delete: func(path: string, recursive: bool) -> result<_, string>;
+    /// Size, times and kind of a file or directory, or none if it isn't
+    /// there. Allowed where `read` is. Since 0.1.29.
+    stat: func(path: string) -> option<file-info>;
+    /// The files under a directory, as paths (directories end in `/`),
+    /// sorted. With `recursive`, everything below it too; hidden entries
+    /// (a leading `.`) and symlinked directories are skipped, and at most
+    /// a million entries come back. Allowed where `read` is. Since 0.1.29.
+    list-dir: func(dir: string, recursive: bool) -> result<list<string>, string>;
+
+    /// A path and what `stat` says about it.
+    record entry {
+        path: string,
+        info: file-info,
+    }
+    /// `list-dir` with each entry's size and times, in one call: a folder of
+    /// a few hundred thousand notes can be checked for changes without a
+    /// `stat` per file. Since 0.1.29.
+    list-dir-info: func(dir: string, recursive: bool) -> result<list<entry>, string>;
+    /// A folder of the plugin's own for files it can rebuild (an index of a
+    /// vault, a saved layout): `~/.cache/forge/plugin-data/NAME`. The plugin
+    /// can read and write there without a grant, and nothing else of the
+    /// user's is touched. Forge or the user may delete it at any time, so
+    /// the plugin must cope with it being empty. Since 0.1.29.
+    cache-dir: func() -> string;
+
+    // --- directory functions. Since 0.1.29. Reads need a granted
+    // directory, changes need `write`, as for the calls above.
+
+    /// `make-directory`: make a directory. With `parents`, missing parents
+    /// are made too and an existing directory is not an error. True when
+    /// one was made.
+    make-directory: func(path: string, parents: bool) -> result<bool, string>;
+    /// `copy-directory`: copy a directory with everything in it. When
+    /// `target` is a directory that exists the copy goes inside it (as
+    /// `target/NAME`), unless `copy-contents`, which puts what is in
+    /// `source` into `target`. Returns the directory written.
+    copy-directory: func(source: string, target: string, parents: bool, copy-contents: bool) -> result<string, string>;
+    /// `directory-files`: the names in a directory, `.` and `..` included,
+    /// sorted. `full` gives absolute names; `matching` (a regular
+    /// expression) keeps names that contain a match; `count` stops after
+    /// that many. `[^.]|\.\.\.` as `matching` leaves out `.` and `..`
+    /// (`directory-files-no-dot-files-regexp`).
+    directory-files: func(dir: string, full: bool, matching: option<string>, count: option<u32>) -> result<list<string>, string>;
+    /// `directory-files-and-attributes`: `directory-files` with what `stat`
+    /// says about each one.
+    directory-files-and-attributes: func(dir: string, full: bool, matching: option<string>, count: option<u32>) -> result<list<entry>, string>;
+    /// `directory-empty-p`: an accessible directory with nothing in it.
+    directory-empty: func(dir: string) -> bool;
+    /// `directory-files-recursively`: absolute names under `dir` whose own
+    /// name matches the regular expression, depth first, each directory's
+    /// entries sorted. With `include-dirs` matching directories are listed
+    /// (after their contents). Symbolic links to directories aren't
+    /// followed.
+    directory-files-recursively: func(dir: string, regexp: string, include-dirs: bool) -> result<list<string>, string>;
+    /// `locate-dominating-file`: from `file` (or its directory) up through
+    /// the parents, the first directory holding something called `name`,
+    /// as a directory name ending in `/`.
+    locate-dominating-file: func(file: string, name: string) -> option<string>;
+    /// `file-in-directory-p`: `file` is in `dir`, below it, or is it, by
+    /// true name. False when `dir` isn't a directory.
+    in-directory: func(file: string, dir: string) -> bool;
+    /// `file-expand-wildcards`: the files a wildcard (`*`, `?`, `[a-z]`)
+    /// names, sorted; matched a directory at a time. With `regexp` the last
+    /// component is a regular expression instead. Relative names are
+    /// relative to the current directory; `full` makes them absolute.
+    expand-wildcards: func(pattern: string, full: bool, regexp: bool) -> result<list<string>, string>;
+
+    // --- File names, as text (no permission needed). The Forge functions
+    // of the same names.
+
+    /// `file-name-directory`: up to and including the last `/`.
+    name-directory: func(name: string) -> option<string>;
+    /// `file-name-nondirectory`.
+    name-nondirectory: func(name: string) -> string;
+    /// `file-name-as-directory`: with a trailing `/`.
+    name-as-directory: func(name: string) -> string;
+    /// `directory-file-name`: without the trailing `/`.
+    directory-name: func(name: string) -> string;
+    /// `file-name-extension`; `period` keeps the dot.
+    name-extension: func(name: string, period: bool) -> option<string>;
+    /// `file-name-sans-extension`.
+    name-sans-extension: func(name: string) -> string;
+    /// `file-name-base`: the last component without its extension.
+    name-base: func(name: string) -> string;
+    /// `file-name-with-extension`.
+    name-with-extension: func(name: string, extension: string) -> result<string, string>;
+    /// `file-name-concat`: joined with one `/` between parts.
+    name-concat: func(parts: list<string>) -> string;
+    /// `file-name-absolute-p`.
+    name-absolute: func(name: string) -> bool;
+    /// `file-name-split`.
+    name-split: func(name: string) -> list<string>;
+    /// `file-name-parent-directory`.
+    name-parent-directory: func(name: string) -> option<string>;
+    /// `expand-file-name`: absolute, `~` expanded, `.` and `..` settled;
+    /// a relative name is taken from `dir` (default: the current directory).
+    expand-name: func(name: string, dir: option<string>) -> string;
+    /// `file-relative-name`: `name` as seen from `dir`.
+    relative-name: func(name: string, dir: option<string>) -> string;
+    /// `abbreviate-file-name`: the home directory as `~`.
+    abbreviate-name: func(name: string) -> string;
 }
 
 /// The settings the user gave this plugin in init.rhai with
@@ -661,6 +914,12 @@ interface environment {
     /// The kind of system Forge was built for: "gnu/linux", "darwin",
     /// "windows-nt", "gnu", or the target's OS as a fallback.
     system-type: func() -> string;
+    /// Whether the frontend is a graphical window that draws pictures (the
+    /// apps), not a terminal: `display-graphic-p`. Since 0.1.29.
+    display-graphic: func() -> bool;
+    /// The width in columns of the selected window, for a plugin that
+    /// centres its page. Since 0.1.29.
+    frame-width: func() -> u32;
     /// The canonical name Forge was built for, e.g.
     /// "x86_64-unknown-linux-gnu".
     system-configuration: func() -> string;
@@ -678,6 +937,413 @@ interface environment {
     /// empty component, meaning the current directory, comes back as a
     /// path of "".
     parse-path: func(path: string) -> list<string>;
+}
+
+/// The kill ring: the clipboard history C-k, M-w and C-y work on, for a
+/// plugin offering to yank or insert an older kill (consult's
+/// yank-from-kill-ring). Since 0.1.21.
+///
+/// Entries are newest first. The "current" entry is the one a yank would
+/// insert; M-y (`rotate`) steps to the next-older one.
+interface kill-ring {
+    /// How many entries it holds.
+    length: func() -> u32;
+    /// Every entry, newest first.
+    entries: func() -> list<string>;
+    /// What a yank would insert now, if the ring isn't empty.
+    current: func() -> option<string>;
+    /// The entry `index` positions behind the current one, without moving
+    /// (wrapping). None when the ring is empty.
+    get: func(index: u32) -> option<string>;
+    /// Step to the next-older entry (what M-y does) and return it. None
+    /// when the ring is empty.
+    rotate: func() -> option<string>;
+    /// Make the entry `index` steps behind the current one the current
+    /// one, so a later M-y rotates from there. Does nothing when the ring
+    /// is empty.
+    select: func(index: u32);
+    /// Put text on the kill ring (and the clipboard), as M-w does. Since
+    /// 0.1.29.
+    push: func(text: string);
+}
+
+/// What Forge remembers between sessions (savehist, bookmark and
+/// recentf): minibuffer history, named file bookmarks and recently
+/// opened files. Since 0.1.21. Read-only: the editor records these as
+/// the user works; a plugin offers to jump to one.
+interface session {
+    /// Minibuffer history of `kind` ("command", "file", "buffer", ...),
+    /// most recent first.
+    history: func(kind: string) -> list<string>;
+
+    /// A named place: a file and a char offset of point in it.
+    record bookmark-info {
+        name: string,
+        path: string,
+        offset: u32,
+    }
+
+    /// Bookmark names, most recently set first.
+    bookmark-names: func() -> list<string>;
+    /// The bookmark called `name`, if there is one.
+    bookmark: func(name: string) -> option<bookmark-info>;
+
+    /// Recently opened files, most recent first.
+    recent-files: func() -> list<string>;
+}
+
+/// C-x r: registers the user saved, each named by a character. Since
+/// 0.1.22. Read-only: the editor fills them as the user copies text and
+/// positions; a plugin offers to insert one or jump to it.
+interface registers {
+    use marks.{position-mark};
+
+    /// How many registers are set.
+    length: func() -> u32;
+    /// The set register names, sorted.
+    names: func() -> list<string>;
+    /// What register `name` holds, as one line ("text: ...", "position 12",
+    /// "number 3", "rectangle, 2 lines: ..."). None when it isn't set.
+    describe: func(name: string) -> option<string>;
+    /// Register `name`'s value as text to insert. None when it isn't set or
+    /// holds a position.
+    text: func(name: string) -> option<string>;
+
+    // ---- 0.1.23
+
+    /// Where a position register (C-x r SPC) points, so a plugin can jump
+    /// to it. None when `name` isn't set or holds something else.
+    position: func(name: string) -> option<position-mark>;
+}
+
+/// Keyboard macros (C-x ( ... C-x )). Since 0.1.22.
+interface kmacro {
+    /// How many macros are remembered: the last one plus the ring.
+    length: func() -> u32;
+    /// The last-defined macro's keys, as key descriptions ("C-x", "f",
+    /// "RET"), or none when none has been defined.
+    last: func() -> option<list<string>>;
+    /// Every remembered macro's keys, the last one first.
+    entries: func() -> list<list<string>>;
+    /// Make entry `index` (0: the last one, then the ring) the last macro,
+    /// so `call-last-kbd-macro` runs it. Does nothing if there is no such
+    /// entry.
+    select: func(index: u32);
+}
+
+/// Marks the user set. Since 0.1.22.
+interface marks {
+    use types.{position};
+
+    /// A mark: the buffer it is in, its char offset there, and where that
+    /// is as a line and column.
+    record position-mark {
+        buffer: u32,
+        offset: u32,
+        position: position,
+    }
+
+    /// Marks on the current buffer's mark ring, newest first.
+    buffer-marks: func() -> list<position-mark>;
+    /// Marks on the global ring, across buffers, newest first.
+    global-marks: func() -> list<position-mark>;
+    /// Take the newest entry on the current buffer's mark ring as the
+    /// mark, and put the mark we had at the end of the ring, so the
+    /// positions we walk through are not lost. Point does not move and
+    /// the mark is not activated.
+    pop-mark: func();
+}
+
+/// Cross-references (definitions and references) a plugin found, for
+/// consult-xref. Since 0.1.22. A language plugin publishes them once a
+/// query comes back; any plugin can read them back.
+interface xref {
+    /// Where one cross-reference is and what it is called.
+    record reference {
+        /// The symbol's name.
+        name: string,
+        /// What it is: "definition", "reference", ...
+        kind: string,
+        /// The file it is in.
+        path: string,
+        /// 1-based line and column, as compilers count.
+        line: u32,
+        column: u32,
+    }
+
+    /// Replace the references this plugin published before.
+    publish: func(items: list<reference>);
+    /// Every reference any plugin has published, in the order published.
+    all: func() -> list<reference>;
+}
+
+/// Named themes: what the editor can switch between, and which one is
+/// applied. Since 0.1.24. A plugin defines and applies its own themes;
+/// init.rhai and the theme files use the same registry through Rhai.
+interface theme {
+    /// A face's restyle. Unset (none) fields keep the frontend's style.
+    record face-style {
+        /// A `#rrggbb` color, or a name (black .. bright-white, plus the
+        /// usual vivid names).
+        fg: option<string>,
+        bg: option<string>,
+        bold: option<bool>,
+        italic: option<bool>,
+        underline: option<bool>,
+    }
+
+    /// Define (or redefine) a named theme, owned by this plugin. Its faces
+    /// and colors are checked now, so a typo is an error here, not on load.
+    define: func(name: string, description: string, faces: list<tuple<string, face-style>>) -> result<_, string>;
+    /// Forget a theme this plugin defined. Errors when there isn't one.
+    undefine: func(name: string) -> result<_, string>;
+    /// Every defined theme's name, sorted.
+    names: func() -> list<string>;
+    /// A theme's description, or none when it isn't defined.
+    describe: func(name: string) -> option<string>;
+    /// The applied theme's name, or none.
+    current: func() -> option<string>;
+    /// Apply a theme: its faces restyle the palette. Errors when the name
+    /// isn't defined.
+    load: func(name: string) -> result<_, string>;
+    /// Drop the applied theme's restyles (the built-in palette shows).
+    disable: func();
+
+    /// The colours a canvas should be drawn in so that it looks like the
+    /// rest of Forge, as (role, `#rrggbb`) pairs: `mode` is `dark` or
+    /// `light`; `bg`, `sunken`, `card`, `chip`, `line`, `faint`, `fainter`,
+    /// `fg`, `strong`, `soft`, `dim` and `tag` are the page, a well set into
+    /// it, a card, a chip, outlines, quiet links, quieter ones, main text,
+    /// the strongest contrast, secondary text, faint text and a tag; and
+    /// `accent0` .. `accent7` tell things apart. They follow the user's
+    /// theme and the system's dark or light mode. Ask again each time a
+    /// scene is drawn; `events` says when to (a theme change). Since 0.1.29.
+    palette: func() -> list<tuple<string, string>>;
+}
+
+/// The Org agenda engine: collect agenda entries from the configured
+/// agenda files (or the open Org buffers) so a plugin can list and jump
+/// to them (`consult-org-agenda`). Since 0.1.24.
+interface org {
+    /// What an entry is: which agenda view it came from.
+    enum agenda-kind {
+        scheduled,
+        deadline,
+        timestamp,
+        closed,
+        clocked,
+        todo,
+        match,
+        search,
+        stuck,
+    }
+
+    /// One heading an agenda view selected, and where it lives.
+    record agenda-entry {
+        /// The buffer holding the entry.
+        buffer: u32,
+        /// The source's display name (its file, or the buffer's name).
+        file: string,
+        /// The heading's 0-based line in the buffer.
+        line: u32,
+        /// The raw heading line.
+        heading: string,
+        /// The heading without keyword, priority cookie or tags.
+        title: string,
+        category: string,
+        keyword: option<string>,
+        done: bool,
+        tags: list<string>,
+        /// The priority cookie's letter, if any.
+        priority: option<string>,
+        /// Planned effort, in minutes.
+        effort: option<s64>,
+        kind: agenda-kind,
+        /// The day it falls on, `YYYY-MM-DD`.
+        date: option<string>,
+        /// Its start time, `HH:MM`.
+        time: option<string>,
+        /// The view's label for it ("Scheduled:", "In  3 d.:", ...).
+        label: string,
+    }
+
+    /// The agenda files' paths, as configured. Empty means the open Org
+    /// buffers are used instead.
+    files: func() -> list<string>;
+    /// The day/week agenda over `days` days from today (`start`,
+    /// `YYYY-MM-DD`, overrides today). `log` includes closed entries and
+    /// clock lines.
+    span: func(days: u32, start: option<string>, log: bool) -> result<list<agenda-entry>, string>;
+    /// The global TODO list, newest first; `keyword` narrows it to one.
+    todos: func(keyword: option<string>) -> result<list<agenda-entry>, string>;
+    /// Headings matching the tag/property matcher `matcher` (`todo_only`
+    /// keeps only headings with a TODO keyword).
+    matching: func(matcher: string, todo-only: bool) -> result<list<agenda-entry>, string>;
+    /// `org-search-view`: every word must appear (`+word` / `-word` to
+    /// require or forbid, `{regexp}` for a regexp).
+    search: func(query: string) -> result<list<agenda-entry>, string>;
+    /// Stuck projects: a TODO entry with sub-entries, none NEXT or STARTED.
+    stuck: func() -> result<list<agenda-entry>, string>;
+}
+
+/// Pictures a plugin shows under buffer lines, for frontends that draw
+/// them (the macOS app does; the terminal shows Org image links as
+/// badges). Since 0.1.25.
+///
+/// A plugin downloads or finds a picture and says which line it belongs
+/// under; Forge reserves blank rows under that line (not point's own) and
+/// the frontend draws the file there. This is how org-remoteimg shows a
+/// remote image inline: it fetches the URL to a file in its cache and
+/// pins that file to the link's line.
+interface images {
+    use buffers.{buffer};
+
+    /// A picture to draw under `line` (0-based). `path` is a file the
+    /// plugin may read; a path the frontend can't load is ignored.
+    record image {
+        line: u32,
+        path: string,
+    }
+
+    /// Show pictures under these lines, replacing the ones this plugin set
+    /// before. Lines are buffer lines; a line that also has an Org image
+    /// link keeps the link's picture. The frontend only draws them when it
+    /// can draw pictures at all, so this is safe to call everywhere.
+    /// Since 0.1.25.
+    set: func(buffer: borrow<buffer>, images: list<image>);
+    /// Remove this plugin's pictures from a buffer. Since 0.1.25.
+    clear: func(buffer: borrow<buffer>);
+    /// The path of a picture Forge ships ("logo": the Forge logo), ready
+    /// to pass to `set`, or none for a name it doesn't have. Since 0.1.29.
+    builtin: func(name: string) -> option<string>;
+    /// [`set`], with each picture centred in the window instead of at its
+    /// left edge. Since 0.1.29.
+    set-centered: func(buffer: borrow<buffer>, images: list<image>);
+}
+
+/// Canvases: a drawing a plugin describes and Forge shows and answers for.
+/// Since 0.1.29.
+///
+/// canvas leaves the pixels to the program that owns them. Forge's
+/// canvas is the drawing itself: a plugin sends a *scene* (JSON: shapes,
+/// paths, wrapped text, pictures, groups with a transform, clip and
+/// opacity -- see the `forge-canvas` crate, which a Rust plugin uses to
+/// build one), and Forge draws it in a `canvas-mode` buffer. Because Forge
+/// has the shapes, it can say which one is under the pointer, so a plugin
+/// never has to do its own pixel hit testing: it registers a command, and
+/// that command reads the event with `last-event`.
+///
+/// A canvas also has a view (pan and zoom). The wheel zooms and a drag with
+/// the middle button pans unless the plugin handles those events itself;
+/// either way the plugin can read and set the view.
+interface canvas {
+    use buffers.{buffer};
+
+    /// Show a scene (JSON) in the canvas `name`, replacing what it showed.
+    /// The first call makes the canvas and its buffer (`*Canvas: name*`);
+    /// it does not select the buffer: see `display`.
+    show: func(name: string, scene: string) -> result<buffer, string>;
+    /// Show an interface in the canvas `name`: a tree of widgets (JSON:
+    /// columns, rows, text, cards, lists, boards, buttons; see the
+    /// `forge-canvas` crate's `Widget`, or "Widgets" in docs/plugin-api.md)
+    /// that Forge lays out in a page `page-width` units wide and draws.
+    /// The canvas scrolls like a page. A widget with an `id` is what
+    /// `last-event` reports under the pointer. Colours follow the theme
+    /// without the plugin doing anything.
+    show-widgets: func(name: string, tree: string, page-width: f32) -> result<buffer, string>;
+    /// Select the canvas's window, showing it if need be.
+    display: func(name: string) -> result<_, string>;
+    /// Run `command` when the pointer is used on the canvas. The command
+    /// reads what happened with `last-event`.
+    on-event: func(name: string, command: string) -> result<_, string>;
+    /// The last pointer event as JSON: `kind` (press, release, drag, move,
+    /// double, scroll), `button` (1 left, 2 middle, 3 right), `x` and `y`
+    /// in scene coordinates, `frame-x` and `frame-y` in the frame's own,
+    /// `id` of the shape under the pointer (or null), `dy` for the wheel,
+    /// the `shift`, `ctrl` and `alt` keys, and the view's `zoom`.
+    last-event: func(name: string) -> option<string>;
+    /// Pan and zoom: the scene point at the frame's top-left, and the zoom.
+    set-view: func(name: string, x: f32, y: f32, zoom: f32) -> result<_, string>;
+    /// The view as `[x, y, zoom]`.
+    get-view: func(name: string) -> option<tuple<f32, f32, f32>>;
+    /// Whether the plugin handles the wheel and middle-drag itself (true)
+    /// or leaves them to the built-in pan and zoom (false, the default).
+    handle-view-events: func(name: string, yes: bool) -> result<_, string>;
+    /// Make the canvas a page that scrolls: it is as wide as the window
+    /// and the wheel and a drag move it up and down (ctrl-wheel zooms),
+    /// instead of fitting the whole scene in the window. For long lists
+    /// of cards. Since 0.1.29.
+    /// `page-width` is how wide the visible page is in scene units: a
+    /// scene wider than that (a kanban board) scrolls sideways; 0 means
+    /// the scene's own width.
+    set-scroll: func(name: string, yes: bool, page-width: f32) -> result<_, string>;
+    /// Stop showing a canvas and kill its buffer.
+    close: func(name: string);
+    /// The canvases that exist, by name.
+    names: func() -> list<string>;
+    /// Draw a scene (JSON) to a PNG file at `scale` (1.0 is one pixel per
+    /// unit), without showing it. Needs write access to the path.
+    render-png: func(scene: string, path: string, scale: f32) -> result<_, string>;
+}
+
+/// HTTP requests to the network, for a plugin that fetches something
+/// (a remote image, an API answer, a package). Since 0.1.26.
+///
+/// The request is made by Forge itself, not by the plugin, so the plugin
+/// needs no network access of its own and no program (curl) to run: it
+/// just needs the `http` permission, asked on its own because a request
+/// (with a body, and to a host the user may not know) can send data out.
+/// A request runs on its own thread and, since 0.1.27, is asynchronous:
+/// `get-async` / `http-request-async` return at once with a request id and
+/// deliver the answer through `http-handler.on-response` when the editor
+/// is idle, so a request never holds up the plugin's other work.
+interface http {
+    /// A server's answer: the status code, its headers as (name, value)
+    /// pairs in the order they were sent (repeated names kept), and the
+    /// body as bytes (a plugin that expects text decodes it itself).
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    /// An in-flight request started by `get-async` / `http-request-async`.
+    /// Since 0.1.27.
+    type http-request = u32;
+
+    /// GET `url`, following redirects, returning at once with a request id
+    /// instead of waiting. `headers` are sent as given (a `User-Agent` is
+    /// added if none is there). Err if the request can't be started. The
+    /// answer arrives through `http-handler.on-response(id, answer)` when
+    /// the editor is idle, never during another call (so a picture can be
+    /// fetched without holding up anything). Needs the plugin to export
+    /// `http-handler` (world `plugin-with-http`). Times out after 30
+    /// seconds; 4xx/5xx arrives as the error side of the answer.
+    get-async: func(url: string, headers: list<tuple<string, string>>) -> result<http-request, string>;
+
+    /// Any method ("GET", "POST", "PUT", "DELETE", ...) with an optional
+    /// body, asynchronous like `get-async`.
+    http-request-async: func(
+        method: string,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+    ) -> result<http-request, string>;
+
+    /// Give up on `id`: its answer is dropped and its `on-response` never
+    /// comes. A request whose plugin unloads is dropped the same way.
+    cancel: func(request: http-request);
+}
+
+/// What a plugin that makes asynchronous requests exports (world
+/// plugin-with-http). Since 0.1.27.
+interface http-handler {
+    use http.{http-request, response};
+
+    /// The answer to a `get-async` / `http-request-async`: the response, or the
+    /// reason it failed (a connection or TLS failure, or 4xx/5xx). Comes
+    /// once, in the order requests finished, and never for a cancelled one.
+    on-response: func(request: http-request, answer: result<response, string>);
 }
 
 /// What a plugin that runs processes exports (world plugin-with-processes).
@@ -900,9 +1566,11 @@ interface completion {
     set-options: func(options: options);
     /// Move the selection `n` candidates (negative: back). Since 0.1.14.
     next: func(n: s32);
+    /// Move the selection `n` candidates back (negative: forward).
     previous: func(n: s32);
-    /// Select the first or last candidate. Since 0.1.14.
+    /// Select the first candidate. Since 0.1.14.
     first: func();
+    /// Select the last candidate. Since 0.1.14.
     last: func();
     /// Move a page down (or up). Since 0.1.14.
     scroll: func(down: bool);
@@ -950,6 +1618,16 @@ interface completion {
     /// Scroll the auxiliary popup to its last line (corfu-popupinfo-end).
     /// Since 0.1.18.
     popup-info-end: func();
+
+    // ---- 0.1.20
+
+    /// Run `command` whenever the selection in an open list changes (C-n,
+    /// C-p, typing that filters, the list opening or closing), so a
+    /// command can preview candidates as the cursor moves over them
+    /// (consult's live preview). The command runs like any other: it can
+    /// call `selected` to see the new selection, and should only move
+    /// point or show a buffer, never ask a question. Since 0.1.20.
+    on-selection-changed: func(command: string);
 }
 
 /// What a plugin that provides completion exports (world
@@ -986,7 +1664,9 @@ interface handler {
     /// One of the plugin's registered commands was run. `prefix-arg` is
     /// the numeric value of C-u / M-5 etc. (plain C-u is 4), if given.
     run-command: func(name: string, prefix-arg: option<s64>) -> result<_, string>;
+    /// An event the plugin subscribed to happened.
     on-event: func(event: event);
+    /// The user answered a question (none if they cancelled with C-g).
     on-answer: func(request: request, answer: option<string>);
 }
 
@@ -1009,6 +1689,17 @@ world plugin {
     import files;
     import config;
     import environment;
+    import kill-ring;
+    import session;
+    import registers;
+    import kmacro;
+    import marks;
+    import xref;
+    import theme;
+    import org;
+    import images;
+    import canvas;
+    import http;
 
     export handler;
 
@@ -1029,9 +1720,17 @@ world plugin-with-completion {
     export completion-handler;
 }
 
+/// A plugin that makes asynchronous HTTP requests and wants their answers
+/// (since 0.1.27).
+world plugin-with-http {
+    include plugin;
+    export http-handler;
+}
+
 /// Everything a plugin can export (the Lua SDK's world).
 world plugin-full {
     include plugin;
     export process-handler;
     export completion-handler;
+    export http-handler;
 }

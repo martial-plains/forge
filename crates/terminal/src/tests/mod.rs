@@ -25,6 +25,7 @@ mod mouse;
 mod packaging;
 mod plugins;
 mod rhai;
+mod term;
 mod vc;
 mod windows;
 

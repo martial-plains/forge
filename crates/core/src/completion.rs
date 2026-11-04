@@ -981,6 +981,11 @@ pub struct Settings {
     /// Commands to run when the list's selection changes (consult live
     /// preview): (plugin, command) pairs.
     pub selection_commands: Vec<(String, String)>,
+    /// Commands to run when the minibuffer input changes: (plugin, command).
+    pub minibuffer_input_commands: Vec<(String, String)>,
+    /// Commands to run when the minibuffer list selection changes:
+    /// (plugin, command) pairs.
+    pub minibuffer_selection_commands: Vec<(String, String)>,
 }
 
 impl Settings {
@@ -1127,6 +1132,9 @@ impl Settings {
         self.annotators.retain(|_, p| p != plugin);
         self.sources.retain(|s| s.plugin != plugin);
         self.selection_commands.retain(|(p, _)| p != plugin);
+        self.minibuffer_input_commands.retain(|(p, _)| p != plugin);
+        self.minibuffer_selection_commands
+            .retain(|(p, _)| p != plugin);
     }
 }
 

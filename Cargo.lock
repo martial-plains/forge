@@ -1778,6 +1778,7 @@ dependencies = [
  "ratatui",
  "unicode-width 0.2.0",
  "uniffi",
+ "url",
 ]
 
 [[package]]

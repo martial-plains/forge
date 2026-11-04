@@ -56,6 +56,7 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     forge_docs::CommandDoc::line("term-previous-prompt", "Move to the previous shell prompt (C-c C-p)."),
     forge_docs::CommandDoc::line("term-send-ctrl-x", "Send C-x to the program (C-c C-x)."),
     forge_docs::CommandDoc::line("term-show-integration", "Show the lines that make your shell report its directory and prompts."),
+    forge_docs::CommandDoc::line("term-show-keys", "Show which keys go to Forge and which go to the terminal program."),
 ];
 
 pub const BINDINGS: &[(&str, &str)] = &[
@@ -126,6 +127,7 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         }
         "term-choose-shell" => choose_shell(app),
         "term-show-integration" => show_integration(app),
+        "term-show-keys" => show_keys(app),
         _ => return term_command(app, cmd),
     }
     true
@@ -216,6 +218,23 @@ end
 # Only inside Forge: wrap any of them in  if test -n \"$INSIDE_FORGE\"
 ";
     app.show_special_buffer("*term integration*", "special-mode", text);
+}
+
+fn show_keys(app: &mut App) {
+    let text = "\
+Keys in terminal char mode
+
+Forge receives:
+  C-x                 Forge's normal C-x prefix and commands
+  C-c                 Terminal prefix: C-c C-j copies; C-c C-c interrupts;
+                      C-c C-k returns to char mode; C-c C-x sends C-x
+  M-x, M-:, M-!, M-&  Forge's command, eval and process commands
+  Any key after a Forge prefix already began
+
+The program receives every other key, including other M- keys such as M-f.
+In copy mode the terminal buffer is ordinary editor text and keys go to Forge.
+";
+    app.show_special_buffer("*term keys*", "special-mode", text);
 }
 
 // ---------------------------------------------------------------- keys

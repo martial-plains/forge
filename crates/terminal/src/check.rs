@@ -74,10 +74,10 @@ pub fn run(opts: Options) -> bool {
     let name = req.name().to_string();
     println!("plugin: {name}");
     if let Some(m) = &req.manifest {
-        if let Some(v) = &m.version {
+        if let Some(v) = m.version() {
             println!("version: {v}");
         }
-        if let Some(d) = &m.description {
+        if let Some(d) = m.description() {
             println!("description: {d}");
         }
     }

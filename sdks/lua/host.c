@@ -1569,3 +1569,20 @@ void exports_forge_editor_completion_handler_complete(uint32_t request, plugin_s
     lua_pushcclosure(L, comp_reply, 1);
     call(4, NULL);
 }
+
+void exports_forge_editor_completion_handler_commit(plugin_string_t *candidate, plugin_string_t *status) {
+    plugin_string_free(candidate);
+    plugin_string_free(status);
+}
+
+void exports_forge_editor_completion_handler_resolve_location(
+    exports_forge_editor_completion_handler_selection_t *selection) {
+    exports_forge_editor_completion_handler_selection_free(selection);
+}
+
+void exports_forge_editor_http_handler_on_response(
+    exports_forge_editor_http_handler_http_request_t request,
+    exports_forge_editor_http_handler_result_response_string_t *answer) {
+    (void)request;
+    exports_forge_editor_http_handler_result_response_string_free(answer);
+}

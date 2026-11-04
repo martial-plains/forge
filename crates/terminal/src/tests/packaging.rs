@@ -192,6 +192,8 @@ fn packages_from_version_control() {
                 "user.email=t@t",
                 "-c",
                 "init.defaultBranch=main",
+                "-c",
+                "tag.gpgSign=false",
             ])
             .args(args)
             .current_dir(&repo)

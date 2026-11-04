@@ -31,6 +31,9 @@ use unicode_width::UnicodeWidthStr;
 
 uniffi::setup_scaffolding!();
 
+pub mod desktop;
+pub mod macos;
+
 pub mod grid;
 pub use grid::{Grid, GridDialog, GridPicture, GridRun};
 
@@ -1027,7 +1030,11 @@ fn raise_editor_qos() {
 }
 
 impl Forge {
-    fn launch(files: Vec<String>, no_config: bool, graphical: bool) -> Result<Arc<Self>, ForgeError> {
+    fn launch(
+        files: Vec<String>,
+        no_config: bool,
+        graphical: bool,
+    ) -> Result<Arc<Self>, ForgeError> {
         install_panic_hook();
         // A window that draws pictures: plugins ask (display-graphic-p).
         forge_core::env::set_display_graphic(true);
@@ -1159,6 +1166,27 @@ impl Forge {
         self.send(Request::Open(path));
     }
 
+    /// Open a file from a `forge://open?file=...&line=...` URL.
+    /// Returns false for a URL Forge does not recognize.
+    pub fn open_url(&self, url: String) -> bool {
+        let Some(request) = desktop::parse_open_url(&url) else {
+            return false;
+        };
+        self.open_file(request.file);
+        if let Some(line) = request.line {
+            self.goto_position(line, 0);
+        }
+        true
+    }
+
+    /// The text formats the native macOS pasteboard helper supports.
+    pub fn macos_pasteboard_types(&self) -> Vec<String> {
+        macos::TEXT_PASTEBOARD_TYPES
+            .iter()
+            .map(|type_id| (*type_id).to_string())
+            .collect()
+    }
+
     /// Move to a zero-based line and column.
     pub fn goto_position(&self, line: u32, column: u32) {
         self.send(Request::Goto(line, column));
@@ -1283,7 +1311,11 @@ impl Forge {
             }
             Err(_) => {
                 let mut g = last().unwrap_or_else(|| empty_grid(cols, rows, dark));
-                g.busy = Some(self.watch.busy().map_or_else(|| "Forge".to_string(), |(name, _)| name));
+                g.busy = Some(
+                    self.watch
+                        .busy()
+                        .map_or_else(|| "Forge".to_string(), |(name, _)| name),
+                );
                 g.quit = self.quit.load(Ordering::SeqCst);
                 g
             }
@@ -1713,8 +1745,27 @@ fn empty_frame(width: u16, height: u16) -> Frame {
 /// The editor thread: handle requests in order; idle work when nothing
 /// comes (auto-save, prefix hints, buffer-changed events, plugin reloads).
 fn empty_grid(cols: u16, rows: u16, dark: bool) -> Grid {
-    let (fg, bg) = if dark { (0xcdd6f4, 0x1e1e2e) } else { (0x4c4f69, 0xeff1f5) };
-    Grid { cols, rows, runs: Vec::new(), pictures: Vec::new(), cursor_col: 0, cursor_row: 0, fg, bg, title: String::new(), modified: false, busy: None, quit: false, crashed: None, dialog: None }
+    let (fg, bg) = if dark {
+        (0xcdd6f4, 0x1e1e2e)
+    } else {
+        (0x4c4f69, 0xeff1f5)
+    };
+    Grid {
+        cols,
+        rows,
+        runs: Vec::new(),
+        pictures: Vec::new(),
+        cursor_col: 0,
+        cursor_row: 0,
+        fg,
+        bg,
+        title: String::new(),
+        modified: false,
+        busy: None,
+        quit: false,
+        crashed: None,
+        dialog: None,
+    }
 }
 
 fn engine(app: &mut App, rx: &mpsc::Receiver<Request>, quit: &AtomicBool) {
@@ -2410,10 +2461,23 @@ mod tests {
         let g = block_on(forge.grid(60, 12, true));
         assert_eq!((g.cols, g.rows), (60, 12));
         assert_eq!(g.title, "note.txt");
-        let text: String = g.runs.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("|");
+        let text: String = g
+            .runs
+            .iter()
+            .map(|r| r.text.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
         assert!(text.contains("first line"), "{text:?}");
-        assert!(g.runs.iter().any(|r| r.row == 0 && r.text.contains("File")), "the menu bar is drawn by Forge");
-        assert!(g.runs.iter().any(|r| r.row == 10 && r.text.contains("note.txt")), "the mode line");
+        assert!(
+            g.runs.iter().any(|r| r.row == 0 && r.text.contains("File")),
+            "the menu bar is drawn by Forge"
+        );
+        assert!(
+            g.runs
+                .iter()
+                .any(|r| r.row == 10 && r.text.contains("note.txt")),
+            "the mode line"
+        );
         // The mode line is reversed: its background is the text colour.
         let mode = g.runs.iter().find(|r| r.row == 10).unwrap();
         assert_ne!(mode.bg, g.bg);

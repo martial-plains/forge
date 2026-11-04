@@ -21,6 +21,7 @@ if [ "$CONFIG" = Release ]; then PROFILE=release; else PROFILE=fast; fi
 ARCHS=${ARCHS:-$(uname -m)}
 OUT=$ROOT/target/apple/$CONFIG
 mkdir -p "$OUT"
+export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-13.0}
 
 command -v cargo >/dev/null || { echo "error: cargo not found (install Rust: https://rustup.rs)" >&2; exit 1; }
 
@@ -57,6 +58,7 @@ rm -rf "$GEN"
 set -- $LIBS
 env -u LIBRARY_PATH -u CPATH cargo run --quiet --manifest-path "$ROOT/Cargo.toml" -p forge-ffi --bin uniffi-bindgen -- \
     generate --library "$1" --language swift --out-dir "$GEN" --no-format
+perl -pi -e 's/[ \t]+$//' "$GEN/forge_ffi.swift" "$GEN/forge_ffiFFI.h"
 put() {
     mkdir -p "$(dirname "$2")"
     cmp -s "$1" "$2" || cp "$1" "$2"

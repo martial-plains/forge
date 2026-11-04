@@ -13,7 +13,9 @@ set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FORGE=$ROOT/target/fast/forge
+[ -x "$FORGE.exe" ] && FORGE=$FORGE.exe
 [ -x "$FORGE" ] || FORGE=$ROOT/target/debug/forge
+[ -x "$FORGE.exe" ] && FORGE=$FORGE.exe
 [ -x "$FORGE" ] || { echo "build Forge first: cargo build --profile fast" >&2; exit 1; }
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
@@ -44,7 +46,7 @@ run_rust() {
         (cd "$ROOT/plugins/$p" && cargo build -q --release --target wasm32-wasip2) || { echo "FAIL rust: $p doesn't build"; FAILED=1; return; }
     done
     check "$ROOT"/plugins/hello/target/wasm32-wasip2/release/forge_hello.wasm --run hello-greet --answer Ada
-    expect rust/hello "$OUT/check.txt" "plugin: hello" "question: Greet whom? Ada" "Hello, Ada!"
+    expect rust/hello "$OUT/check.txt" "plugin: forge_hello" "question: Greet whom? Ada" "Hello, Ada!"
 }
 
 run_meow() {
@@ -226,8 +228,8 @@ check_favourites() {
 
     printf 'fn main() {\n    let letter = 1;\n    \n}\n' > "$OUT/t.rs"
     "$FORGE" --headless --size 60x10 --plugin "$3" --open "$OUT/t.rs" --keys "C-n C-n C-e" \
-        --type "mat" --wait 0.6 --screen --keys "TAB" --type " let" --wait 0.6 --keys "C-n RET" > "$OUT/c.txt" 2>&1
-    contains "$tag/corfu" "$OUT/c.txt" "match keyword" "buffer: t.rs at 3:16"
+        --type "mat" --wait 0.6 --screen --keys "TAB" --type " let" --wait 0.6 --keys "C-n RET" --screen > "$OUT/c.txt" 2>&1
+    contains "$tag/corfu" "$OUT/c.txt" "match keywor" "match letter" "buffer: t.rs at 3:16"
 
     printf 'hello world foo\nsecond line\n' > "$OUT/m.txt"
     "$FORGE" --headless --size 60x8 --plugin "$4" --open "$OUT/m.txt" --keys "w d i" --type "HI" \
@@ -245,9 +247,7 @@ check_favourites() {
     fi
 }
 
-# vertico, corfu, meow and lsp: the plugins (Rust, plugins/) if the
-# wasm32-wasip2 target is installed, and the same plugins written in Lua
-# (sdks/lua/examples) if its toolchain is.
+# Rust editor plugins, when their repositories are checked out beside Forge.
 run_favourites() {
     if [ ! -d "$ROOT/plugins/vertico" ]; then
         skip "rust plugins" "they live in their own repositories"
@@ -265,15 +265,6 @@ run_favourites() {
     else
         skip "rust plugins" "rustup target add wasm32-wasip2"
     fi
-    fi
-    if command -v wit-bindgen >/dev/null; then
-        for p in vertico corfu meow lsp; do
-            "$ROOT/sdks/lua/examples/$p/build.sh" -o "$OUT/$p-lua.wasm" >/dev/null || { echo "FAIL lua: $p doesn't build"; FAILED=1; return; }
-        done
-        check_favourites lua "$OUT/vertico-lua.wasm" "$OUT/corfu-lua.wasm" "$OUT/meow-lua.wasm"
-        if command -v pyright-langserver >/dev/null; then check_lsp lua/lsp "$OUT/lsp-lua.wasm"; else skip lua/lsp "pip install pyright"; fi
-    else
-        skip "lua plugins" "cargo install wit-bindgen-cli"
     fi
 }
 

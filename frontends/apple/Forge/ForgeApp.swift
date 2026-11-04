@@ -55,12 +55,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shown instead of the editor when the editor couldn't start.
     private var errorWindow: NSWindow?
     private var pendingFiles: [String] = []
+    private var services: ForgeServices?
     private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Launching
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         fixAppPath()
+        NSApp.appearance = nil
+        let services = ForgeServices { [weak self] text in
+            self?.model.openServiceText(text)
+        }
+        self.services = services
+        NSApp.servicesProvider = services
+        NSApp.registerServicesMenuSendTypes(
+            [.string, .rtf, .html],
+            returnTypes: []
+        )
         menuBar.model = model
         menuBar.showSettings = { [weak self] in self?.showSettings() }
         menuBar.fullScreenToolbarChanged = { [weak self] in self?.applyFullScreenToolbar() }
@@ -187,6 +198,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingFiles.append(contentsOf: filenames)
         openPendingFiles()
         sender.reply(toOpenOrPrint: .success)
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            model.open(url: url)
+        }
     }
 
     func openPendingFiles() {
@@ -344,8 +361,7 @@ struct CrashView: View {
                         NSPasteboard.general.setString(model.logPath, forType: .string)
                     }
                     Button("Reveal in Finder") {
-                        NSWorkspace.shared.selectFile(
-                            model.logPath, inFileViewerRootedAtPath: "")
+                        ForgeMacOSNamespace.revealInFinder(URL(fileURLWithPath: model.logPath))
                     }
                 }
             }
@@ -485,21 +501,32 @@ struct NativeTabView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    strip
-                    newTabButton
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color(nsColor: Theme.background))
-
+            tabBar
             EditorView(model: model, frameId: frameId)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onChange(of: tabs.map(\.id)) {
+        .onChange(of: tabs.map(\.id)) { _ in
             droppedOrder = nil
+        }
+    }
+
+    private var tabBar: some View {
+        Group {
+            if #available(macOS 26.0, *) {
+                GlassEffectContainer(spacing: 8) { tabStrip }
+            } else {
+                tabStrip
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: Theme.background))
+    }
+
+    private var tabStrip: some View {
+        HStack(spacing: 8) {
+            strip
+            newTabButton
         }
     }
 
@@ -540,7 +567,13 @@ struct NativeTabView: View {
             }
             .padding(stripInset)
             .frame(width: geo.size.width, height: geo.size.height)
-            .glassEffect(.regular, in: Capsule())
+            .background {
+                if #available(macOS 26.0, *) {
+                    Capsule().fill(.clear).glassEffect(.regular, in: Capsule())
+                } else {
+                    Capsule().fill(.ultraThinMaterial)
+                }
+            }
         }
         .frame(height: stripHeight)
     }
@@ -615,7 +648,13 @@ struct NativeTabView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Circle())
+        .background {
+            if #available(macOS 26.0, *) {
+                Circle().fill(.clear).glassEffect(.regular.interactive(), in: Circle())
+            } else {
+                Circle().fill(.ultraThinMaterial)
+            }
+        }
         .help("New Tab")
     }
 }
@@ -632,12 +671,16 @@ private struct TabBarItem: View {
         ZStack {
             if tab.selected {
                 // The raised tab: a brighter pill of glass in the strip.
-                Capsule()
-                    .fill(Color.clear)
-                    .glassEffect(
-                        .regular.tint(Color(nsColor: .labelColor).opacity(0.12)),
-                        in: Capsule()
-                    )
+                if #available(macOS 26.0, *) {
+                    Capsule()
+                        .fill(Color.clear)
+                        .glassEffect(
+                            .regular.tint(Color(nsColor: .labelColor).opacity(0.12)),
+                            in: Capsule()
+                        )
+                } else {
+                    Capsule().fill(.regularMaterial)
+                }
             } else if hovering {
                 Capsule().fill(Color(nsColor: .labelColor).opacity(0.06))
             }

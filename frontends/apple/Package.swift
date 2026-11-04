@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: MIT OR Apache-2.0
 // swift-tools-version: 5.9
+// SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // Tests for the macOS app's Swift, run without Xcode or the Rust core:
 //
@@ -38,6 +38,12 @@ let package = Package(
                 "EditorView.swift",
                 "ForgeApp.swift",
                 "ForgeMenuBar.swift",
+                "FrameToolbar.swift",
+                "MetalGrid.swift",
+                "SceneRenderer.swift",
+                "AppIntents.swift",
+                "Desktop.swift",
+                "MacOS.swift",
                 "Assets.xcassets",
             ],
             sources: [
