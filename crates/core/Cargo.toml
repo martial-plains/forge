@@ -9,7 +9,7 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0"
 log = "0.4"
-wasmtime = "48"
+wasmtime = "49"
 serde = { version = "1.0", features = ["derive"] }
 ropey = { version = "1.6", default-features = false, features = ["simd"] }
 unicode-segmentation = "1"
