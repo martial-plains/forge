@@ -546,7 +546,7 @@ when you give it focus.
 `frontends/gnome`; it needs the GTK 4 development files.
 
 **Windows.** Build the WinUI 3 app with `scripts/build-windows.ps1`; it needs
-Rust with the MSVC toolchain, the .NET 8 SDK and the Windows App SDK
+Rust with the MSVC toolchain, the .NET 10 SDK and the Windows App SDK
 workload. The script builds `forge-capi` (the C ABI the app calls) and
 publishes the app. The WinUI app is not verified to compile yet.
 

@@ -1,7 +1,7 @@
 # Build Forge for Windows (frontends/winui).
 #
 # Compiles forge.dll (the C ABI the WinUI app calls) and publishes the
-# app. Needs: Rust (MSVC toolchain), the .NET 8 SDK and the Windows App SDK
+# app. Needs: Rust (MSVC toolchain), the .NET 10 SDK and the Windows App SDK
 # workload.
 #
 # UNVERIFIED: the WinUI app has not been compiled.
