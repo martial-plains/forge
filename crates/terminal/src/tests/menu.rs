@@ -260,9 +260,10 @@ fn rhai_process_runs_without_freezing_and_answers() {
     );
     press(&mut app, "RET");
     finish_jobs(&mut app);
+    let expected = if cfg!(windows) { "hi\r\n" } else { "hi\n" };
     assert_eq!(
         text(&app),
-        "hi\n",
+        expected,
         "the callback inserted the output: {:?}",
         app.message
     );
@@ -273,9 +274,16 @@ fn rhai_process_runs_without_freezing_and_answers() {
 fn rhai_process_timeout_kills_and_answers() {
     let mut app = app_with("");
     press(&mut app, "M-:");
+    let command = if cfg!(windows) {
+        "ping -n 30 127.0.0.1 >nul"
+    } else {
+        "sleep 30"
+    };
     answer_typed(
         &mut app,
-        "forge.process.run(\"sleep 30\", #{ timeout: 1 }, |r| forge.buffer.current().insert(r.stderr));",
+        &format!(
+            "forge.process.run({command:?}, #{{ timeout: 1 }}, |r| forge.buffer.current().insert(r.stderr));"
+        ),
     );
     press(&mut app, "RET");
     finish_jobs(&mut app);

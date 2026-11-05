@@ -50,12 +50,12 @@ impl ClipboardProvider for SystemClipboard {
                 if target == SelectionTarget::Primary {
                     cmd.arg("--primary");
                 }
-                if let Ok(out) = cmd.output() {
-                    if out.status.success() {
-                        let s = String::from_utf8_lossy(&out.stdout).to_string();
-                        if !s.is_empty() {
-                            return Some(s);
-                        }
+                if let Ok(out) = cmd.output()
+                    && out.status.success()
+                {
+                    let s = String::from_utf8_lossy(&out.stdout).to_string();
+                    if !s.is_empty() {
+                        return Some(s);
                     }
                 }
             }
@@ -80,12 +80,11 @@ impl ClipboardProvider for SystemClipboard {
                         SelectionTarget::Primary => ["-p", "-o"],
                     })
                     .output()
+                    && out.status.success()
                 {
-                    if out.status.success() {
-                        let s = String::from_utf8_lossy(&out.stdout).to_string();
-                        if !s.is_empty() {
-                            return Some(s);
-                        }
+                    let s = String::from_utf8_lossy(&out.stdout).to_string();
+                    if !s.is_empty() {
+                        return Some(s);
                     }
                 }
             }

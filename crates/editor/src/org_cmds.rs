@@ -844,9 +844,8 @@ fn stage2(app: &mut App, cmd: &str) -> bool {
             if app
                 .buf()
                 .org_timestamp_shift(p, if right { 1 } else { -1 }, true)
-            {
-            } else if org::heading_level(&app.buf_ref().line(line)).is_none()
-                && app.buf().org_cycle_bullet(line, !right)
+                || org::heading_level(&app.buf_ref().line(line)).is_none()
+                    && app.buf().org_cycle_bullet(line, !right)
             {
             } else if app.buf_ref().org_level(line).is_some() {
                 change_todo(app, line, right, None);

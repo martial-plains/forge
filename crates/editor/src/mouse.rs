@@ -319,7 +319,9 @@ pub fn handle(app: &mut App, ev: MouseEvent) {
             // itself, with or without context-menu-mode.
             if let Hit::Text(id, p) = hit(app, ev.column, ev.row)
                 && matches!(
-                    app.editor.active_keymaps().lookup(&["<mouse-3>".to_string()]),
+                    app.editor
+                        .active_keymaps()
+                        .lookup(&["<mouse-3>".to_string()]),
                     forge_core::keymap::Lookup::Command { .. }
                 )
             {

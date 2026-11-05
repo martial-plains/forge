@@ -1,0 +1,292 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (for example v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  terminal-linux:
+    name: terminal (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the terminal editor
+        run: cargo build --release -p forge-terminal --bins
+
+      - name: Build the hello plugin
+        run: cargo build --release --manifest-path plugins/hello/Cargo.toml --target wasm32-wasip2
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="forge-${TAG}-linux-x86_64"
+          mkdir -p "dist/$pkg/share/man/man1"
+          cp target/release/forge target/release/forgeclient "dist/$pkg/"
+          cp README.md NEWS.org LICENSE-MIT LICENSE-APACHE NOTICE \
+             THIRD_PARTY_NOTICES.md LICENSING.md "dist/$pkg/"
+          install -m 644 docs/man/forge.1 "dist/$pkg/share/man/man1/forge.1"
+          tar -C dist -czf "dist/$pkg.tar.gz" "$pkg"
+          cp plugins/hello/target/wasm32-wasip2/release/forge_hello.wasm \
+             "dist/forge-hello-plugin-${TAG}.wasm"
+
+      - name: Upload the Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ env.TAG }}-linux-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.wasm
+          if-no-files-found: error
+
+  terminal-macos:
+    name: terminal (macOS universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the terminal editor
+        run: |
+          cargo build --release -p forge-terminal --bins --target x86_64-apple-darwin
+          cargo build --release -p forge-terminal --bins --target aarch64-apple-darwin
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="forge-${TAG}-macos-universal"
+          mkdir -p "dist/$pkg/share/man/man1"
+          for bin in forge forgeclient; do
+            lipo -create \
+              "target/x86_64-apple-darwin/release/$bin" \
+              "target/aarch64-apple-darwin/release/$bin" \
+              -output "dist/$pkg/$bin"
+          done
+          cp README.md NEWS.org LICENSE-MIT LICENSE-APACHE NOTICE \
+             THIRD_PARTY_NOTICES.md LICENSING.md "dist/$pkg/"
+          install -m 644 docs/man/forge.1 "dist/$pkg/share/man/man1/forge.1"
+          tar -C dist -czf "dist/$pkg.tar.gz" "$pkg"
+
+      - name: Upload the macOS terminal artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ env.TAG }}-macos-universal
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  terminal-windows:
+    name: terminal (Windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the terminal editor
+        run: cargo build --release -p forge-terminal --bins
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $pkg = "dist/forge-$env:TAG-windows-x86_64"
+          New-Item -ItemType Directory -Path "$pkg/share/man/man1" -Force | Out-Null
+          Copy-Item target/release/forge.exe, target/release/forgeclient.exe -Destination $pkg
+          Copy-Item README.md, NEWS.org, LICENSE-MIT, LICENSE-APACHE, NOTICE, THIRD_PARTY_NOTICES.md, LICENSING.md -Destination $pkg
+          Copy-Item docs/man/forge.1 -Destination "$pkg/share/man/man1"
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip" -Force
+
+      - name: Upload the Windows terminal artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ env.TAG }}-windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  gnome:
+    name: GNOME app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install GTK 4 development files
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+
+      - name: Build the GNOME frontend
+        run: cargo build --release --manifest-path frontends/gnome/Cargo.toml
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg="forge-${TAG}-linux-gnome-x86_64"
+          mkdir -p "dist/$pkg/share/man/man1"
+          cp frontends/gnome/target/release/forge-gnome "dist/$pkg/"
+          cp README.md NEWS.org LICENSE-MIT LICENSE-APACHE NOTICE \
+             THIRD_PARTY_NOTICES.md LICENSING.md "dist/$pkg/"
+          install -m 644 docs/man/forge.1 "dist/$pkg/share/man/man1/forge.1"
+          tar -C dist -czf "dist/$pkg.tar.gz" "$pkg"
+
+      - name: Upload the GNOME artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ env.TAG }}-linux-gnome-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  macos-app:
+    name: macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the macOS app
+        shell: bash
+        env:
+          CONFIGURATION: Release
+          ARCHS: "arm64 x86_64"
+        run: |
+          set -euo pipefail
+          scripts/build-apple.sh
+          version="${TAG#v}"
+          derived="$RUNNER_TEMP/derived"
+          xcodebuild \
+            -project frontends/apple/Forge.xcodeproj \
+            -scheme Forge \
+            -configuration Release \
+            -derivedDataPath "$derived" \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            MARKETING_VERSION="$version" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            build
+          app="$derived/Build/Products/Release/Forge.app"
+          test -d "$app"
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$app" "dist/forge-${TAG}-macos-app.zip"
+
+      - name: Upload the macOS app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ env.TAG }}-macos-app
+          path: dist/*.zip
+          if-no-files-found: error
+
+  winui:
+    name: Windows app
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build the WinUI frontend
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $publish = Get-ChildItem -Path frontends/winui/bin/Release -Recurse -Directory -Filter publish |
+            Select-Object -First 1
+          if (-not $publish) { throw "dotnet publish output not found" }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path (Join-Path $publish.FullName '*') `
+            -DestinationPath "dist/forge-$env:TAG-windows-x86_64-winui.zip" -Force
+
+      - name: Upload the WinUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ env.TAG }}-windows-x86_64-winui
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish the GitHub release
+    needs:
+      - terminal-linux
+      - terminal-macos
+      - terminal-windows
+      - gnome
+      - macos-app
+      - winui
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          cd dist
+          find . -maxdepth 1 -type f -not -name 'SHA256SUMS.txt' -print0 \
+            | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: Forge ${{ env.TAG }}
+          generate_release_notes: true
+          prerelease: ${{ contains(env.TAG, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/*

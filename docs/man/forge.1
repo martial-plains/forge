@@ -8,12 +8,6 @@ forge \- a terminal text editor in the classic keyboard-driven tradition
 Forge is a modal-capable terminal editor: keys run named commands, help is built from the same structured documentation that this page is, and the manual can be read in the editor with \fIC\-h i\fR. Files named on the command line are visited in order; \fB+LINE[:COLUMN]\fR may precede a file name to move point into it.
 .SH OPTIONS
 .TP
-.B \-q, \-\-no-config
-don't run ~/.config/forge/init.rhai
-.TP
-.B \-\-chdir \fIDIR\fR
-change to DIR before opening files
-.TP
 .B \-\-file \fIFILE\fR
 visit FILE (same as a positional file name)
 .TP
@@ -26,8 +20,50 @@ visit FILE (same as a positional file name)
 .B +LINE[:COLUMN]
 go to LINE (and optional zero-based COLUMN) in the next file
 .TP
+.B \-l, \-\-load \fIFILE\fR
+run FILE as a Rhai script
+.TP
+.B \-\-eval, \-\-execute \fIEXPR\fR
+evaluate the Rhai expression EXPR
+.TP
+.B \-f, \-\-funcall \fICMD\fR
+run the command CMD
+.TP
+.B \-\-insert \fIFILE\fR
+insert the contents of FILE at point
+.TP
+.B \-L, \-\-directory \fIDIR\fR
+load the plugins (.wasm files) in DIR
+.TP
 .B \-\-plugin \fIFILE\fR
 load a plugin (a .wasm component); may be repeated
+.TP
+.B \-\-kill
+exit after the actions
+.TP
+.B \-q, \-\-no-init-file, \-\-no-config
+don't run init.rhai or read the saved session
+.TP
+.B \-Q, \-\-quick
+same as \-q
+.TP
+.B \-\-init-directory \fIDIR\fR
+use DIR as the config directory (init.rhai, themes, plugins, grants)
+.TP
+.B \-u, \-\-user \fIUSER\fR
+use the config directory of USER's home
+.TP
+.B \-\-chdir \fIDIR\fR
+change to DIR before opening files
+.TP
+.B \-\-batch, \-batch
+run the actions without a screen and exit; messages go to standard error, and the exit status is 1 on an error
+.TP
+.B \-\-script \fIFILE\fR
+the same as \-\-batch \-l FILE
+.TP
+.B \-\-daemon[=NAME], \-\-bg-daemon[=NAME], \-\-fg-daemon[=NAME]
+start as an edit server, in the background (the first two) or in this process
 .TP
 .B \-\-check-plugin \fIFILE\fR
 load a plugin without the editor, show what it set up, run its commands (answering questions with \-\-answer), open files, wait for events and its processes' output

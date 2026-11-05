@@ -35,7 +35,7 @@ pub fn backup_dir() -> Option<PathBuf> {
 }
 
 fn absolute(file: &Path) -> PathBuf {
-    if file.is_absolute() {
+    if file.is_absolute() || file.has_root() {
         file.to_path_buf()
     } else {
         std::env::current_dir().unwrap_or_default().join(file)
@@ -46,7 +46,10 @@ fn absolute(file: &Path) -> PathBuf {
 /// doubled), the name backups in a central directory already use.
 pub(crate) fn mangled_path(dir: &Path, file: &Path) -> PathBuf {
     let abs = absolute(file);
-    let mangled = abs.to_string_lossy().replace('!', "!!").replace('/', "!");
+    let mangled = abs
+        .to_string_lossy()
+        .replace('!', "!!")
+        .replace(['\\', ':', '/'], "!");
     dir.join(mangled)
 }
 

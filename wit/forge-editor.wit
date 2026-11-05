@@ -20,7 +20,7 @@
 ///
 /// 0.1.29 adds `menus.define-for-mode`, so a mode's menu only shows while
 /// that major mode (or one deriving from it) is on.
-package forge:editor@0.1.29;
+package forge:editor@0.1.30;
 
 /// Values shared by several interfaces.
 interface types {
@@ -658,6 +658,12 @@ interface minibuffer {
     history-kind: func() -> option<string>;
     /// What the user has typed into the open prompt so far ("" when none).
     input: func() -> string;
+    /// Run `command` whenever the input of an open prompt changes. The
+    /// command may read the new text with `input`. Since 0.1.30.
+    on-input-changed: func(command: string);
+    /// Run `command` whenever the selected candidate in an open prompt list
+    /// changes. The command may read it with `completion.selected`. Since 0.1.30.
+    on-selection-changed: func(command: string);
     /// Like `completing-read`, but takes over the prompt that is open: it
     /// is hidden while this one runs, and the answer replaces its input
     /// (C-g leaves it as it was). Use it to offer a prompt's own history

@@ -4,10 +4,10 @@ using System.Text.Json;
 
 namespace Forge;
 
-/// <summary>forge.dll: the editor, as built by crates/capi.</summary>
+/// <summary>forge_native.dll: the editor, as built by crates/capi.</summary>
 internal static class Native
 {
-    private const string Lib = "forge";
+    private const string Lib = "forge_native";
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr forge_new(IntPtr filesJson, int noConfig);
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] private static extern IntPtr forge_last_error();

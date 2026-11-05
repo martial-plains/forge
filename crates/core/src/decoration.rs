@@ -401,7 +401,7 @@ impl RainbowFace {
     }
 }
 
-/// The faces of a Dired buffer, which look like eza's long listing.
+/// The faces of a Dired buffer, which look like a detailed long listing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiredFace {
     /// The directory on the first line.
@@ -436,7 +436,7 @@ pub enum DiredFace {
     SymlinkTarget,
     /// The `├── ` prefixes of a tree listing.
     TreePrefix,
-    /// What a file is by name and extension, like eza's file types.
+    /// What a file is by name and extension, as file types.
     Image,
     Video,
     Music,
@@ -458,7 +458,7 @@ pub enum DiredFace {
     GitConflicted,
     GitIgnored,
     /// A shade computed from the listing's own range of sizes or dates,
-    /// packed as 0xRRGGBB. The gradient is eza's `--color-scale`, so this
+    /// packed as 0xRRGGBB. The gradient follows `--color-scale`, so this
     /// is the only face whose colour isn't a fixed name.
     Shade(u32),
 }

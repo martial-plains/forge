@@ -4,6 +4,7 @@ authors.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Forge's editor for the macOS app: a Swift API (UniFFI) over forge-editor's App"
 
 [lib]
@@ -23,6 +24,7 @@ forge-terminal = { path = "../terminal" }
 uniffi = { version = "0.32", features = ["cli"] }
 ratatui = "0.29"
 unicode-width = "0.2"
+url = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

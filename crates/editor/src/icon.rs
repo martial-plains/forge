@@ -36,14 +36,15 @@ pub fn apply_settings(app: &mut App) {
             Err(e) => errors.push(format!("forge.opt.icon_preference: {e}")),
         }
     }
-    if let Some(v) = crate::org_flow::setting_string(app, "icon_platform") {
-        if !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("auto") {
-            match Platform::parse(&v) {
-                Some(p) => prefs.platform = Some(p),
-                None => errors.push(format!(
-                    "forge.opt.icon_platform must be auto, macos, windows or linux, not {v:?}"
-                )),
-            }
+    if let Some(v) = crate::org_flow::setting_string(app, "icon_platform")
+        && !v.trim().is_empty()
+        && !v.trim().eq_ignore_ascii_case("auto")
+    {
+        match Platform::parse(&v) {
+            Some(p) => prefs.platform = Some(p),
+            None => errors.push(format!(
+                "forge.opt.icon_platform must be auto, macos, windows or linux, not {v:?}"
+            )),
         }
     }
     let maps = app

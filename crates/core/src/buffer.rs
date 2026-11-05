@@ -2737,7 +2737,19 @@ mod tests {
         let path = dir.join("g.txt");
         let lock = dir.join(".#g.txt");
         std::fs::write(&path, "text\n").unwrap();
-        let theirs = format!("other@{}.1", crate::filelock::local_hostname());
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("ping")
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let theirs = format!("other@{}.{}", crate::filelock::local_hostname(), child.id());
         #[cfg(unix)]
         std::os::unix::fs::symlink(&theirs, &lock).unwrap();
         #[cfg(not(unix))]
@@ -2771,6 +2783,8 @@ mod tests {
         );
         drop(b);
         assert!(!lock_exists(&lock));
+        let _ = child.kill();
+        let _ = child.wait();
         std::fs::remove_dir_all(dir).unwrap();
     }
 

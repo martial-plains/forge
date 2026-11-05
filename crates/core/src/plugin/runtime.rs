@@ -701,13 +701,17 @@ impl forge::editor::buffers::HostBuffer for PluginState {
             .map_err(|e| format!("{path}: {e}")))
     }
 
-    fn open_path(&mut self, path: String) -> HostResult<Result<Option<Resource<BufferHandle>>, String>> {
+    fn open_path(
+        &mut self,
+        path: String,
+    ) -> HostResult<Result<Option<Resource<BufferHandle>>, String>> {
         if let Err(e) = self.foreground("buffer.open-path") {
             return Ok(Err(e));
         }
         let p = expand_home(&path);
         if p.is_dir() {
-            self.effects.push(Effect::OpenDir(p.to_string_lossy().into_owned()));
+            self.effects
+                .push(Effect::OpenDir(p.to_string_lossy().into_owned()));
             return Ok(Ok(None));
         }
         if !p.is_file() {
@@ -1106,7 +1110,17 @@ impl PluginState {
 impl PluginState {
     /// The folder this plugin keeps rebuildable files in (`files.cache-dir`).
     fn cache_path(&self) -> std::path::PathBuf {
-        let name: String = self.name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+        let name: String = self
+            .name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         crate::config::cache_dir()
             .unwrap_or_else(|| std::env::temp_dir().join("forge"))
             .join("plugin-data")
@@ -1115,7 +1129,10 @@ impl PluginState {
 
     /// Is `path` inside the plugin's own cache folder (and not climbing out of it)?
     fn in_cache(&self, path: &std::path::Path) -> bool {
-        path.starts_with(self.cache_path()) && !path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+        path.starts_with(self.cache_path())
+            && !path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
     }
 
     /// May this plugin read `path`?
@@ -1251,13 +1268,22 @@ impl forge::editor::environment::Host for PluginState {
 impl PluginState {
     /// The entries under `dir` (sorted by path), each with its metadata when
     /// `info` is set. Hidden entries and symlinked directories are skipped.
-    fn walk(&self, dir: &str, recursive: bool, info: bool) -> Result<Vec<(String, Option<forge::editor::files::FileInfo>)>, String> {
+    fn walk(
+        &self,
+        dir: &str,
+        recursive: bool,
+        info: bool,
+    ) -> Result<Vec<(String, Option<forge::editor::files::FileInfo>)>, String> {
         let root = expand_home(dir);
         if !self.may_read(&root) {
             return Err(format!("{dir}: not in a directory this plugin was granted"));
         }
         const LIMIT: usize = 1_000_000;
-        let ms = |t: std::io::Result<std::time::SystemTime>| t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
+        let ms = |t: std::io::Result<std::time::SystemTime>| {
+            t.ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_millis() as i64)
+        };
         let mut out = Vec::new();
         let mut todo = vec![root.clone()];
         while let Some(d) = todo.pop() {
@@ -1283,7 +1309,15 @@ impl PluginState {
                     }
                 }
                 let meta = if info {
-                    entry.metadata().ok().map(|m| forge::editor::files::FileInfo { size: m.len(), modified: ms(m.modified()), created: ms(m.created()), directory: m.is_dir() })
+                    entry
+                        .metadata()
+                        .ok()
+                        .map(|m| forge::editor::files::FileInfo {
+                            size: m.len(),
+                            modified: ms(m.modified()),
+                            created: ms(m.created()),
+                            directory: m.is_dir(),
+                        })
                 } else {
                     None
                 };
@@ -1366,14 +1400,32 @@ impl forge::editor::files::Host for PluginState {
         }))
     }
 
-    fn list_dir(&mut self, dir: String, recursive: bool) -> HostResult<Result<Vec<String>, String>> {
-        Ok(self.walk(&dir, recursive, false).map(|v| v.into_iter().map(|e| e.0).collect()))
+    fn list_dir(
+        &mut self,
+        dir: String,
+        recursive: bool,
+    ) -> HostResult<Result<Vec<String>, String>> {
+        Ok(self
+            .walk(&dir, recursive, false)
+            .map(|v| v.into_iter().map(|e| e.0).collect()))
     }
 
-    fn list_dir_info(&mut self, dir: String, recursive: bool) -> HostResult<Result<Vec<forge::editor::files::Entry>, String>> {
+    fn list_dir_info(
+        &mut self,
+        dir: String,
+        recursive: bool,
+    ) -> HostResult<Result<Vec<forge::editor::files::Entry>, String>> {
         Ok(self.walk(&dir, recursive, true).map(|v| {
             v.into_iter()
-                .map(|(path, info)| forge::editor::files::Entry { path, info: info.unwrap_or(forge::editor::files::FileInfo { size: 0, modified: 0, created: 0, directory: false }) })
+                .map(|(path, info)| forge::editor::files::Entry {
+                    path,
+                    info: info.unwrap_or(forge::editor::files::FileInfo {
+                        size: 0,
+                        modified: 0,
+                        created: 0,
+                        directory: false,
+                    }),
+                })
                 .collect()
         }))
     }
@@ -1393,69 +1445,122 @@ impl forge::editor::files::Host for PluginState {
         Ok(crate::fileops::make_directory(&path, parents).map_err(|e| format!("{path}: {e}")))
     }
 
-    fn copy_directory(&mut self, source: String, target: String, parents: bool, copy_contents: bool) -> HostResult<Result<String, String>> {
+    fn copy_directory(
+        &mut self,
+        source: String,
+        target: String,
+        parents: bool,
+        copy_contents: bool,
+    ) -> HostResult<Result<String, String>> {
         if let Err(e) = self.foreground("files.copy-directory") {
             return Ok(Err(e));
         }
         let (a, b) = (expand_home(&source), expand_home(&target));
         if !self.may_read(&a) {
-            return Ok(Err(format!("{source}: not in a directory this plugin was granted")));
+            return Ok(Err(format!(
+                "{source}: not in a directory this plugin was granted"
+            )));
         }
         if let Err(e) = self.may_write(&b) {
             return Ok(Err(e));
         }
-        Ok(crate::fileops::copy_directory(&source, &target, parents, copy_contents).map_err(|e| format!("{source} -> {target}: {e}")))
+        Ok(
+            crate::fileops::copy_directory(&source, &target, parents, copy_contents)
+                .map_err(|e| format!("{source} -> {target}: {e}")),
+        )
     }
 
-    fn directory_files(&mut self, dir: String, full: bool, matching: Option<String>, count: Option<u32>) -> HostResult<Result<Vec<String>, String>> {
+    fn directory_files(
+        &mut self,
+        dir: String,
+        full: bool,
+        matching: Option<String>,
+        count: Option<u32>,
+    ) -> HostResult<Result<Vec<String>, String>> {
         if !self.may_read(&expand_home(&dir)) {
-            return Ok(Err(format!("{dir}: not in a directory this plugin was granted")));
+            return Ok(Err(format!(
+                "{dir}: not in a directory this plugin was granted"
+            )));
         }
         let re = match matching.as_deref().map(regex::Regex::new).transpose() {
             Ok(r) => r,
             Err(e) => return Ok(Err(format!("bad regexp: {e}"))),
         };
-        Ok(crate::fileops::directory_files(&dir, full, re.as_ref(), false, count.map(|c| c as usize)).map_err(|e| format!("{dir}: {e}")))
+        Ok(crate::fileops::directory_files(
+            &dir,
+            full,
+            re.as_ref(),
+            false,
+            count.map(|c| c as usize),
+        )
+        .map_err(|e| format!("{dir}: {e}")))
     }
 
-    fn directory_files_and_attributes(&mut self, dir: String, full: bool, matching: Option<String>, count: Option<u32>) -> HostResult<Result<Vec<forge::editor::files::Entry>, String>> {
+    fn directory_files_and_attributes(
+        &mut self,
+        dir: String,
+        full: bool,
+        matching: Option<String>,
+        count: Option<u32>,
+    ) -> HostResult<Result<Vec<forge::editor::files::Entry>, String>> {
         if !self.may_read(&expand_home(&dir)) {
-            return Ok(Err(format!("{dir}: not in a directory this plugin was granted")));
+            return Ok(Err(format!(
+                "{dir}: not in a directory this plugin was granted"
+            )));
         }
         let re = match matching.as_deref().map(regex::Regex::new).transpose() {
             Ok(r) => r,
             Err(e) => return Ok(Err(format!("bad regexp: {e}"))),
         };
-        Ok(crate::fileops::directory_files_and_attributes(&dir, full, re.as_ref(), false, count.map(|c| c as usize))
-            .map(|v| {
-                v.into_iter()
-                    .map(|(path, a)| forge::editor::files::Entry {
-                        path,
-                        info: forge::editor::files::FileInfo {
-                            size: a.size,
-                            modified: a.modified * 1000,
-                            created: 0,
-                            directory: a.kind == crate::fileops::Kind::Dir,
-                        },
-                    })
-                    .collect()
-            })
-            .map_err(|e| format!("{dir}: {e}")))
+        Ok(crate::fileops::directory_files_and_attributes(
+            &dir,
+            full,
+            re.as_ref(),
+            false,
+            count.map(|c| c as usize),
+        )
+        .map(|v| {
+            v.into_iter()
+                .map(|(path, a)| forge::editor::files::Entry {
+                    path,
+                    info: forge::editor::files::FileInfo {
+                        size: a.size,
+                        modified: a.modified * 1000,
+                        created: 0,
+                        directory: a.kind == crate::fileops::Kind::Dir,
+                    },
+                })
+                .collect()
+        })
+        .map_err(|e| format!("{dir}: {e}")))
     }
 
     fn directory_empty(&mut self, dir: String) -> HostResult<bool> {
         Ok(self.may_read(&expand_home(&dir)) && crate::fileops::directory_empty_p(&dir))
     }
 
-    fn directory_files_recursively(&mut self, dir: String, regexp: String, include_dirs: bool) -> HostResult<Result<Vec<String>, String>> {
+    fn directory_files_recursively(
+        &mut self,
+        dir: String,
+        regexp: String,
+        include_dirs: bool,
+    ) -> HostResult<Result<Vec<String>, String>> {
         if !self.may_read(&expand_home(&dir)) {
-            return Ok(Err(format!("{dir}: not in a directory this plugin was granted")));
+            return Ok(Err(format!(
+                "{dir}: not in a directory this plugin was granted"
+            )));
         }
         let re = match regex::Regex::new(&regexp) {
             Ok(r) => r,
             Err(e) => return Ok(Err(format!("bad regexp: {e}"))),
         };
-        Ok(Ok(crate::fileops::directory_files_recursively(&dir, &re, include_dirs, None, false)))
+        Ok(Ok(crate::fileops::directory_files_recursively(
+            &dir,
+            &re,
+            include_dirs,
+            None,
+            false,
+        )))
     }
 
     fn locate_dominating_file(&mut self, file: String, name: String) -> HostResult<Option<String>> {
@@ -1469,12 +1574,25 @@ impl forge::editor::files::Host for PluginState {
         Ok(self.may_read(&expand_home(&dir)) && crate::fileops::file_in_directory_p(&file, &dir))
     }
 
-    fn expand_wildcards(&mut self, pattern: String, full: bool, regexp: bool) -> HostResult<Result<Vec<String>, String>> {
+    fn expand_wildcards(
+        &mut self,
+        pattern: String,
+        full: bool,
+        regexp: bool,
+    ) -> HostResult<Result<Vec<String>, String>> {
         let at = crate::fileops::file_name_directory(&pattern).unwrap_or_else(|| "./".into());
         if !self.may_read(&expand_home(&at)) {
-            return Ok(Err(format!("{pattern}: not in a directory this plugin was granted")));
+            return Ok(Err(format!(
+                "{pattern}: not in a directory this plugin was granted"
+            )));
         }
-        Ok(crate::fileops::file_expand_wildcards(&pattern, full, regexp, None).map(|v| v.into_iter().filter(|p| self.may_read(&expand_home(p))).collect()))
+        Ok(
+            crate::fileops::file_expand_wildcards(&pattern, full, regexp, None).map(|v| {
+                v.into_iter()
+                    .filter(|p| self.may_read(&expand_home(p)))
+                    .collect()
+            }),
+        )
     }
 
     fn name_directory(&mut self, name: String) -> HostResult<Option<String>> {
@@ -1498,11 +1616,17 @@ impl forge::editor::files::Host for PluginState {
     fn name_base(&mut self, name: String) -> HostResult<String> {
         Ok(crate::fileops::file_name_base(&name))
     }
-    fn name_with_extension(&mut self, name: String, extension: String) -> HostResult<Result<String, String>> {
+    fn name_with_extension(
+        &mut self,
+        name: String,
+        extension: String,
+    ) -> HostResult<Result<String, String>> {
         Ok(crate::fileops::file_name_with_extension(&name, &extension))
     }
     fn name_concat(&mut self, parts: Vec<String>) -> HostResult<String> {
-        Ok(crate::fileops::file_name_concat(&parts.iter().map(String::as_str).collect::<Vec<_>>()))
+        Ok(crate::fileops::file_name_concat(
+            &parts.iter().map(String::as_str).collect::<Vec<_>>(),
+        ))
     }
     fn name_absolute(&mut self, name: String) -> HostResult<bool> {
         Ok(crate::fileops::file_name_absolute_p(&name))
@@ -1904,7 +2028,12 @@ impl forge::editor::canvas::Host for PluginState {
             return Ok(Ok(handle(c.buffer)));
         }
         let owner = self.name.clone();
-        if self.editor()?.canvases.get(&name).is_some_and(|c| c.owner != owner) {
+        if self
+            .editor()?
+            .canvases
+            .get(&name)
+            .is_some_and(|c| c.owner != owner)
+        {
             return Ok(Err(format!("canvas {name} belongs to another plugin")));
         }
         let id = self.editor()?.canvas_show(&owner, &name, scene);
@@ -1924,20 +2053,24 @@ impl forge::editor::canvas::Host for PluginState {
             Ok(w) => w,
             Err(e) => return Ok(Err(e)),
         };
-        let page = if page_width >= 200.0 { page_width } else { 720.0 };
+        let page = if page_width >= 200.0 {
+            page_width
+        } else {
+            720.0
+        };
         let scene = forge_canvas::layout_widgets(&widget, page);
         let json = match serde_json::to_string(&scene) {
             Ok(j) => j,
             Err(e) => return Ok(Err(e.to_string())),
         };
         let shown = self.show(name.clone(), json)?;
-        if shown.is_ok() {
-            if let Ok(c) = self.canvas_of(&name) {
-                c.scroll = true;
-                c.scroll_w = page;
-                c.frame = None;
-                c.dirty = true;
-            }
+        if shown.is_ok()
+            && let Ok(c) = self.canvas_of(&name)
+        {
+            c.scroll = true;
+            c.scroll_w = page;
+            c.frame = None;
+            c.dirty = true;
         }
         Ok(shown)
     }
@@ -1959,10 +2092,19 @@ impl forge::editor::canvas::Host for PluginState {
     }
 
     fn last_event(&mut self, name: String) -> HostResult<Option<String>> {
-        Ok(self.canvas_of(&name).ok().and_then(|c| c.last_event.clone()))
+        Ok(self
+            .canvas_of(&name)
+            .ok()
+            .and_then(|c| c.last_event.clone()))
     }
 
-    fn set_view(&mut self, name: String, x: f32, y: f32, zoom: f32) -> HostResult<Result<(), String>> {
+    fn set_view(
+        &mut self,
+        name: String,
+        x: f32,
+        y: f32,
+        zoom: f32,
+    ) -> HostResult<Result<(), String>> {
         Ok(self.canvas_of(&name).map(|c| {
             c.view = crate::canvas::View {
                 x,
@@ -1974,10 +2116,18 @@ impl forge::editor::canvas::Host for PluginState {
     }
 
     fn get_view(&mut self, name: String) -> HostResult<Option<(f32, f32, f32)>> {
-        Ok(self.canvas_of(&name).ok().map(|c| (c.view.x, c.view.y, c.view.zoom)))
+        Ok(self
+            .canvas_of(&name)
+            .ok()
+            .map(|c| (c.view.x, c.view.y, c.view.zoom)))
     }
 
-    fn set_scroll(&mut self, name: String, yes: bool, page_width: f32) -> HostResult<Result<(), String>> {
+    fn set_scroll(
+        &mut self,
+        name: String,
+        yes: bool,
+        page_width: f32,
+    ) -> HostResult<Result<(), String>> {
         Ok(self.canvas_of(&name).map(|c| {
             c.scroll = yes;
             c.scroll_w = page_width.max(0.0);
@@ -2012,7 +2162,12 @@ impl forge::editor::canvas::Host for PluginState {
             .collect())
     }
 
-    fn render_png(&mut self, scene: String, path: String, scale: f32) -> HostResult<Result<(), String>> {
+    fn render_png(
+        &mut self,
+        scene: String,
+        path: String,
+        scale: f32,
+    ) -> HostResult<Result<(), String>> {
         if let Err(e) = self.foreground("canvas.render-png") {
             return Ok(Err(e));
         }
@@ -2556,6 +2711,38 @@ impl forge::editor::minibuffer::Host for PluginState {
         Ok(self.editor()?.prompt_input.clone())
     }
 
+    fn on_input_changed(&mut self, command: String) -> HostResult<()> {
+        self.foreground_only("minibuffer.on-input-changed")?;
+        let name = self.name.clone();
+        let ed = self.editor()?;
+        if !ed.commands.contains(&command) {
+            return Err(wasmtime::Error::msg(format!("no command named {command}")));
+        }
+        ed.completion
+            .minibuffer_input_commands
+            .retain(|(plugin, _)| plugin != &name);
+        ed.completion
+            .minibuffer_input_commands
+            .push((name, command));
+        Ok(())
+    }
+
+    fn on_selection_changed(&mut self, command: String) -> HostResult<()> {
+        self.foreground_only("minibuffer.on-selection-changed")?;
+        let name = self.name.clone();
+        let ed = self.editor()?;
+        if !ed.commands.contains(&command) {
+            return Err(wasmtime::Error::msg(format!("no command named {command}")));
+        }
+        ed.completion
+            .minibuffer_selection_commands
+            .retain(|(plugin, _)| plugin != &name);
+        ed.completion
+            .minibuffer_selection_commands
+            .push((name, command));
+        Ok(())
+    }
+
     fn y_or_n(&mut self, prompt: String) -> HostResult<u32> {
         Ok(self.ask(Question::YOrN { prompt }))
     }
@@ -2602,8 +2789,9 @@ impl forge::editor::menus::Host for PluginState {
         if let Err(e) = self.foreground("menus.popup") {
             return Ok(Err(e));
         }
-        self.effects
-            .push(Effect::Popup(items.into_iter().map(|i| (i.label, i.command)).collect()));
+        self.effects.push(Effect::Popup(
+            items.into_iter().map(|i| (i.label, i.command)).collect(),
+        ));
         Ok(Ok(()))
     }
 
@@ -4530,6 +4718,9 @@ mod tests {
             logged(&p),
             [dir.canonicalize().unwrap().display().to_string()]
         );
+        // Let go of the granted directory before removing it (Windows keeps
+        // its handle open otherwise).
+        drop(p);
 
         // A granted directory that doesn't exist is skipped with a warning.
         let gone = Grants {
@@ -4551,6 +4742,7 @@ mod tests {
                 "no directories"
             ]
         );
+        drop(p);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

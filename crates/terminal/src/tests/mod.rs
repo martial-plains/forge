@@ -25,6 +25,7 @@ mod mouse;
 mod packaging;
 mod plugins;
 mod rhai;
+mod term;
 mod vc;
 mod windows;
 
@@ -166,7 +167,10 @@ fn type_path(app: &mut App, path: &std::path::Path) {
     if let Some(mb) = app.minibuffer.as_mut() {
         mb.input.clear();
     }
-    for c in path.to_str().unwrap().chars() {
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    let path = path.strip_prefix("\\\\?\\").unwrap_or(&path);
+    for c in path.chars() {
         app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
     }
 }
@@ -198,6 +202,7 @@ fn rust_app(text: &str) -> App {
 fn demo_with_manifest(dir: &std::path::Path, data_dir: &std::path::Path) -> std::path::PathBuf {
     let path = demo_plugin_file(dir);
     std::fs::create_dir_all(data_dir).unwrap();
+    let data_dir = data_dir.to_string_lossy().replace('\\', "/");
     std::fs::write(
         dir.join("demo.toml"),
         format!(
@@ -209,7 +214,7 @@ network = true
 path = "{}"
 why = "greeting templates"
 "#,
-            data_dir.display()
+            data_dir
         ),
     )
     .unwrap();
@@ -340,8 +345,14 @@ fn quail_completions(app: &App) -> String {
 
 /// An app running `init` as its init.rhai.
 fn app_with_init(init: &str) -> (App, std::path::PathBuf) {
-    let dir =
-        std::env::temp_dir().join(format!("forge-hooks-{}-{}", std::process::id(), init.len()));
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "forge-hooks-{}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        init.len()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("init.rhai");
     std::fs::write(&path, init).unwrap();

@@ -205,6 +205,7 @@ pub(crate) enum GrammarSource {
         library: &'static libloading::Library,
         symbol: &'static str,
     },
+    #[allow(dead_code)]
     None,
 }
 
@@ -682,7 +683,7 @@ pub static LANGUAGES: [LanguageDef; 11] = [
             tabs: false,
         },
         #[cfg(feature = "tree-sitter")]
-        grammar: builtin_grammar!(|| tree_sitter_markdown_fork::language()),
+        grammar: builtin_grammar!(tree_sitter_markdown_fork::language),
         #[cfg(feature = "tree-sitter")]
         highlights: builtin_query!(MARKDOWN_HIGHLIGHTS),
         #[cfg(feature = "tree-sitter")]

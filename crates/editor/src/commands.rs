@@ -216,7 +216,7 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
         "digit-argument",
         "Add a digit to the prefix argument being typed (M-0 .. M-9).",
     ),
-    forge_docs::CommandDoc::new("dired", "Show a directory in a Dired buffer (default: this buffer's directory),").body("laid out like eza -l --header. RET visits (as does clicking a name, which is a region map: dired-entry), m/u/d mark, x deletes flagged, C/R/D copy, rename, delete, + makes a directory, ^ goes up, g reverts. keys are the defaults (* and % mark sets, ! shell, S H M Z, T touch, C-x C-q edits names). s cycles --sort, i lists one directory inline, and I/r///B switch inodes, reverse, only-dirs and icons. The eza toggles that clash with keys are on C-c C-: a dotfiles, d directories-first, t --tree, c gradient, g git-ignore, f only-files, l --level, k kill the inline listing."),
+    forge_docs::CommandDoc::new("dired", "Show a directory in a Dired buffer (default: this buffer's directory),").body("laid out as a detailed long listing. RET visits (as does clicking a name, which is a region map: dired-entry), m/u/d mark, x deletes flagged, C/R/D copy, rename, delete, + makes a directory, ^ goes up, g reverts. keys are the defaults (* and % mark sets, ! shell, S H M Z, T touch, C-x C-q edits names). s cycles --sort, i lists one directory inline, and I/r///B switch inodes, reverse, only-dirs and icons. The layout toggles that clash with keys are on C-c C-: a dotfiles, d directories-first, t --tree, c gradient, g git-ignore, f only-files, l --level, k kill the inline listing."),
     forge_docs::CommandDoc::line("dired-change-marks", "In Dired: change every mark OLD to NEW (asks OLD NEW)."),
     forge_docs::CommandDoc::line("dired-clean-directory", "In Dired: flag numbered backups, keeping the newest two of each."),
     forge_docs::CommandDoc::line("dired-copy-filename-as-kill", "In Dired: put the file names on the kill ring (C-u: full paths)."),
@@ -289,7 +289,7 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     forge_docs::CommandDoc::line("dired-mark-files-regexp", "In Dired: mark the files whose names match a regexp."),
     forge_docs::CommandDoc::line("dired-mark-subdir-files", "In Dired: mark every file of the listing point is in."),
     forge_docs::CommandDoc::line("dired-mark-symlinks", "In Dired: mark the symbolic links (*)."),
-    forge_docs::CommandDoc::new("dired-maybe-insert-subdir", "In Dired: list the directory on this line inline as an eza tree,").body("below its parent in its own section (or go to its listing if it has one). C-c C-t draws everything as a tree instead."),
+    forge_docs::CommandDoc::new("dired-maybe-insert-subdir", "In Dired: list the directory on this line inline as a tree,").body("below its parent in its own section (or go to its listing if it has one). C-c C-t draws everything as a tree instead."),
     forge_docs::CommandDoc::line("dired-next-dirline", "In Dired: move to the next directory line."),
     forge_docs::CommandDoc::line("dired-next-line", "In Dired: move to the next file line."),
     forge_docs::CommandDoc::line("dired-next-marked-file", "In Dired: move to the next marked file."),
@@ -319,38 +319,38 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     ),
     forge_docs::CommandDoc::line("dired-show-file-type", "In Dired: show what kind of file this is (file(1))."),
     forge_docs::CommandDoc::new("dired-summary", "In Dired: show a one-line reminder of the commonest keys (?).").body("C-h m lists them all."),
-    forge_docs::CommandDoc::new("dired-toggle-color-scale", "In Dired: shade sizes and dates by how large and how old they are among the").body("files listed, as eza's --color-scale does. Off by default."),
-    forge_docs::CommandDoc::new("dired-toggle-dirs-first", "In Dired: list the directories before everything else, whatever the sort order,").body("as eza's --group-directories-first does."),
+    forge_docs::CommandDoc::new("dired-toggle-color-scale", "In Dired: shade sizes and dates by how large and how old they are among the").body("files listed, as --color-scale does. Off by default."),
+    forge_docs::CommandDoc::new("dired-toggle-dirs-first", "In Dired: list the directories before everything else, whatever the sort order,").body("as --group-directories-first does."),
     forge_docs::CommandDoc::line(
         "dired-toggle-git-ignore",
-        "In Dired: hide git-ignored files, as eza's --git-ignore does.",
+        "In Dired: hide git-ignored files, as --git-ignore does.",
     ),
     forge_docs::CommandDoc::line(
         "dired-toggle-hidden",
-        "In Dired: show the dotfiles (eza's --all). They are hidden by default.",
+        "In Dired: show the dotfiles (--all). They are hidden by default.",
     ),
-    forge_docs::CommandDoc::new("dired-toggle-icons", "In Dired: show Nerd Font icons before names,").body("as eza's --icons does (FORGE_DIRED_ICONS=0 turns them off entirely). On by default."),
+    forge_docs::CommandDoc::new("dired-toggle-icons", "In Dired: show Nerd Font icons before names,").body("as --icons does (FORGE_DIRED_ICONS=0 turns them off entirely). On by default."),
     forge_docs::CommandDoc::line(
         "dired-toggle-inodes",
-        "In Dired: show each file's inode number (eza's --inode).",
+        "In Dired: show each file's inode number (--inode).",
     ),
-    forge_docs::CommandDoc::new("dired-toggle-ls-style", "In Dired: switch between `ls -l` lines and eza's columns.").body("New Dired buffers start as `ls -al` lines; set forge.opt.dired_listing = \"eza\" for the columns instead."),
+    forge_docs::CommandDoc::new("dired-toggle-ls-style", "In Dired: switch between `ls -l` lines and detailed columns.").body("New Dired buffers start as `ls -al` lines; set forge.opt.dired_listing = \"columns\" for the columns instead."),
     forge_docs::CommandDoc::line("dired-toggle-marks", "In Dired: mark the unmarked files and unmark the marked ones."),
     forge_docs::CommandDoc::line(
         "dired-toggle-only-dirs",
-        "In Dired: show only directories, as eza's -D does.",
+        "In Dired: show only directories, as -D does.",
     ),
     forge_docs::CommandDoc::line(
         "dired-toggle-only-files",
-        "In Dired: show only files, as eza's -f does.",
+        "In Dired: show only files, as -f does.",
     ),
     forge_docs::CommandDoc::line(
         "dired-toggle-reverse",
-        "In Dired: reverse the sort order, as eza's --reverse does.",
+        "In Dired: reverse the sort order, as --reverse does.",
     ),
-    forge_docs::CommandDoc::new("dired-toggle-sort", "In Dired: cycle the sort order between name, date (newest first),").body("size (largest first) and extension, keeping marks and point (eza's --sort)."),
-    forge_docs::CommandDoc::new("dired-toggle-tree", "In Dired: draw everything as a tree, recursing into every subdirectory,").body("as eza's --tree does (C-c C-t). i draws just one directory that way."),
-    forge_docs::CommandDoc::new("dired-tree-set-level", "In Dired: set how deep the tree goes (1-8), as eza's --level does.").body("Turns the tree on."),
+    forge_docs::CommandDoc::new("dired-toggle-sort", "In Dired: cycle the sort order between name, date (newest first),").body("size (largest first) and extension, keeping marks and point (--sort)."),
+    forge_docs::CommandDoc::new("dired-toggle-tree", "In Dired: draw everything as a tree, recursing into every subdirectory,").body("as --tree does (C-c C-t). i draws just one directory that way."),
+    forge_docs::CommandDoc::new("dired-tree-set-level", "In Dired: set how deep the tree goes (1-8), as --level does.").body("Turns the tree on."),
     forge_docs::CommandDoc::line(
         "dired-unmark",
         "In Dired: remove the mark on this line and move down.",
@@ -2753,11 +2753,22 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         }
         "goto-char" => app.prompt("Goto char: ", Purpose::GotoChar),
         "insert-file" => app.prompt("Insert file: ", Purpose::InsertFile),
-        "make-directory" | "mkdir" => app.prompt("Make directory: ", Purpose::FileOp(FileOp::MakeDirectory)),
-        "make-empty-file" => app.prompt("Create empty file: ", Purpose::FileOp(FileOp::MakeEmptyFile)),
+        "make-directory" | "mkdir" => {
+            app.prompt("Make directory: ", Purpose::FileOp(FileOp::MakeDirectory))
+        }
+        "make-empty-file" => app.prompt(
+            "Create empty file: ",
+            Purpose::FileOp(FileOp::MakeEmptyFile),
+        ),
         "copy-directory" => app.prompt("Copy directory: ", Purpose::FileOp(FileOp::CopyFrom)),
-        "delete-directory" => app.prompt("Delete directory: ", Purpose::FileOp(FileOp::DeleteDirectory)),
-        "insert-directory" => app.prompt("Insert directory listing of: ", Purpose::FileOp(FileOp::InsertDirectory)),
+        "delete-directory" => app.prompt(
+            "Delete directory: ",
+            Purpose::FileOp(FileOp::DeleteDirectory),
+        ),
+        "insert-directory" => app.prompt(
+            "Insert directory listing of: ",
+            Purpose::FileOp(FileOp::InsertDirectory),
+        ),
         "apropos-command" => app.prompt(
             "Apropos command (word list or regexp): ",
             Purpose::Apropos { docs: false },
@@ -3005,22 +3016,25 @@ fn tidy_before_save(app: &mut App) {
 
 /// `executable-make-buffer-file-executable-if-script-p`: after a save,
 /// a file that starts with `#!` gets its execute bits.
-fn make_script_executable(app: &App) {
-    use std::os::unix::fs::PermissionsExt;
-    if !crate::org_flow::setting_flag(app, "make_scripts_executable_on_save")
-        || !app.buf_ref().line(0).starts_with("#!")
+fn make_script_executable(_app: &App) {
+    #[cfg(unix)]
     {
-        return;
-    }
-    if let Some(p) = app.buf_ref().path()
-        && let Ok(meta) = std::fs::metadata(p)
-    {
-        let mode = meta.permissions().mode();
-        if mode & 0o111 == 0 {
-            let _ = std::fs::set_permissions(
-                p,
-                std::fs::Permissions::from_mode(mode | ((mode & 0o444) >> 2)),
-            );
+        use std::os::unix::fs::PermissionsExt;
+        if !crate::org_flow::setting_flag(_app, "make_scripts_executable_on_save")
+            || !_app.buf_ref().line(0).starts_with("#!")
+        {
+            return;
+        }
+        if let Some(p) = _app.buf_ref().path()
+            && let Ok(meta) = std::fs::metadata(p)
+        {
+            let mode = meta.permissions().mode();
+            if mode & 0o111 == 0 {
+                let _ = std::fs::set_permissions(
+                    p,
+                    std::fs::Permissions::from_mode(mode | ((mode & 0o444) >> 2)),
+                );
+            }
         }
     }
 }

@@ -48,7 +48,14 @@ pub fn open(
     app.switch_to(id);
     app.win_mut().scroll_top = 0;
     app.msg(prompt);
-    app.one_key = Some(OneKey { buffer: id, window, origin, prompt: prompt.to_string(), valid, on_key });
+    app.one_key = Some(OneKey {
+        buffer: id,
+        window,
+        origin,
+        prompt: prompt.to_string(),
+        valid,
+        on_key,
+    });
 }
 
 fn close_existing(app: &mut App) {
@@ -77,7 +84,9 @@ fn close(app: &mut App) -> Option<OneKey> {
 
 /// A key while a menu is waiting. Always true when one is.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
-    let Some(m) = app.one_key.as_ref() else { return false };
+    let Some(m) = app.one_key.as_ref() else {
+        return false;
+    };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let quit = matches!(key.code, KeyCode::Esc) || (ctrl && key.code == KeyCode::Char('g'));
     let chosen = match key.code {

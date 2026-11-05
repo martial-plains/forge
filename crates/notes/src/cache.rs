@@ -97,7 +97,13 @@ fn read_header<'a>(kind: &str, text: &'a str) -> Option<(Header, &'a str)> {
         return None;
     }
     let saved = f.next()?.parse().ok()?;
-    Some((Header { saved, vault: unesc(f.next()?) }, rest))
+    Some((
+        Header {
+            saved,
+            vault: unesc(f.next()?),
+        },
+        rest,
+    ))
 }
 
 /// The whole index as text.
@@ -138,7 +144,12 @@ pub fn decode_index(text: &str) -> Option<(Header, Index)> {
         n.mtime = f.next()?.parse().ok()?;
         n.size = f.next()?.parse().ok()?;
         n.tags = unlist(f.next()?);
-        let targets: Option<Vec<usize>> = f.next()?.split(' ').filter(|t| !t.is_empty()).map(|t| t.parse().ok()).collect();
+        let targets: Option<Vec<usize>> = f
+            .next()?
+            .split(' ')
+            .filter(|t| !t.is_empty())
+            .map(|t| t.parse().ok())
+            .collect();
         out.push(targets?);
         unresolved.push(unlist(f.next()?));
         notes.push(n);
@@ -189,7 +200,12 @@ pub fn encode_layout(g: &Graph, idx: &Index, key: &str, h: &Header) -> Option<St
     let mut s = header(LAYOUT, h);
     esc(key, &mut s);
     s.push('\n');
-    s.push_str(&format!("{}\t{}\t{}\n", g.hidden, g.nodes.len(), g.edges.len()));
+    s.push_str(&format!(
+        "{}\t{}\t{}\n",
+        g.hidden,
+        g.nodes.len(),
+        g.edges.len()
+    ));
     for n in &g.nodes {
         let Kind::Note(i) = n.kind else { return None };
         esc(&idx.notes[i].path, &mut s);
@@ -225,13 +241,25 @@ fn body<'a>(text: &'a str, key: &str) -> Option<(usize, usize, usize, std::str::
 
 pub fn decode_snapshot(text: &str, key: &str) -> Option<Snapshot> {
     let (hidden, n, e, mut lines) = body(text, key)?;
-    let mut g = Graph { hidden, ..Graph::default() };
+    let mut g = Graph {
+        hidden,
+        ..Graph::default()
+    };
     let mut paths = Vec::with_capacity(n);
     for _ in 0..n {
         let mut f = lines.next()?.split('\t');
         let path = unesc(f.next()?);
         let note = Note::at(&path);
-        g.nodes.push(crate::graph::Node { label: note.name, kind: Kind::Note(usize::MAX), x: 0.0, y: 0.0, pinned: false, degree: 0, group: f.next()?.parse().ok()?, depth: 0 });
+        g.nodes.push(crate::graph::Node {
+            label: note.name,
+            kind: Kind::Note(usize::MAX),
+            x: 0.0,
+            y: 0.0,
+            pinned: false,
+            degree: 0,
+            group: f.next()?.parse().ok()?,
+            depth: 0,
+        });
         let last = g.nodes.last_mut()?;
         last.x = f.next()?.parse().ok()?;
         last.y = f.next()?.parse().ok()?;
@@ -253,12 +281,18 @@ pub fn decode_snapshot(text: &str, key: &str) -> Option<Snapshot> {
 /// Put a saved layout on `g`; false (and `g` untouched) unless it is for the
 /// same `key` and has a place for every note in `g`.
 pub fn apply_layout(text: &str, g: &mut Graph, idx: &Index, key: &str) -> bool {
-    let Some((_, n, _, lines)) = body(text, key) else { return false };
+    let Some((_, n, _, lines)) = body(text, key) else {
+        return false;
+    };
     let mut at: HashMap<String, (f32, f32)> = HashMap::with_capacity(n);
     for line in lines.take(n) {
         let mut f = line.split('\t');
-        let (Some(p), Some(_), Some(x), Some(y)) = (f.next(), f.next(), f.next(), f.next()) else { return false };
-        let (Ok(x), Ok(y)) = (x.parse(), y.parse()) else { return false };
+        let (Some(p), Some(_), Some(x), Some(y)) = (f.next(), f.next(), f.next(), f.next()) else {
+            return false;
+        };
+        let (Ok(x), Ok(y)) = (x.parse(), y.parse()) else {
+            return false;
+        };
         at.insert(unesc(p), (x, y));
     }
     let mut found = Vec::with_capacity(g.nodes.len());
@@ -286,7 +320,12 @@ mod tests {
         let raws: Vec<RawNote> = (0..40)
             .map(|i| RawNote {
                 path: format!("d{}/n {i}.md", i % 3),
-                text: format!("---\ntags: [t{}]\n---\nSee [[n {}]] and [[Nowhere{}]]\n", i % 4, (i + 1) % 40, i % 2),
+                text: format!(
+                    "---\ntags: [t{}]\n---\nSee [[n {}]] and [[Nowhere{}]]\n",
+                    i % 4,
+                    (i + 1) % 40,
+                    i % 2
+                ),
                 size: 10 + i as u64,
                 mtime: 1000 + i as i64,
                 ..Default::default()
@@ -295,10 +334,16 @@ mod tests {
         Index::build(&raws)
     }
 
-    const H: Header = Header { saved: 5, vault: String::new() };
+    const H: Header = Header {
+        saved: 5,
+        vault: String::new(),
+    };
 
     fn header_for(v: &str) -> Header {
-        Header { saved: 77, vault: v.into() }
+        Header {
+            saved: 77,
+            vault: v.into(),
+        }
     }
 
     #[test]
@@ -311,7 +356,10 @@ mod tests {
             assert_eq!(back.notes[i].path, idx.notes[i].path);
             assert_eq!(back.notes[i].name, idx.notes[i].name);
             assert_eq!(back.notes[i].folder, idx.notes[i].folder);
-            assert_eq!((back.notes[i].mtime, back.notes[i].size), (idx.notes[i].mtime, idx.notes[i].size));
+            assert_eq!(
+                (back.notes[i].mtime, back.notes[i].size),
+                (idx.notes[i].mtime, idx.notes[i].size)
+            );
             assert_eq!(back.notes[i].tags, idx.notes[i].tags);
             assert_eq!(back.outgoing(i), idx.outgoing(i));
             assert_eq!(back.backlinks(i), idx.backlinks(i));
@@ -323,7 +371,11 @@ mod tests {
 
     #[test]
     fn odd_paths_and_garbage_are_handled() {
-        let mut idx = Index::build(&[RawNote { path: "we\tird\\name.md".into(), text: "x".into(), ..Default::default() }]);
+        let mut idx = Index::build(&[RawNote {
+            path: "we\tird\\name.md".into(),
+            text: "x".into(),
+            ..Default::default()
+        }]);
         idx.notes[0].tags = vec!["a b".into()];
         let (_, back) = decode_index(&encode_index(&idx, &H)).unwrap();
         assert_eq!(back.notes[0].path, "we\tird\\name.md");
@@ -344,7 +396,11 @@ mod tests {
         let (_, notes) = decode_edits(&text).unwrap();
         back.update_notes(notes);
         let four = back.find_path("d1/n 4.md").unwrap();
-        let names: Vec<&str> = back.outgoing(four).iter().map(|&j| back.notes[j].name.as_str()).collect();
+        let names: Vec<&str> = back
+            .outgoing(four)
+            .iter()
+            .map(|&j| back.notes[j].name.as_str())
+            .collect();
         assert_eq!(names, ["n 10", "brand new"]);
         // The old link from n 4 to n 5 is gone, from both ends.
         let five = back.find_path("d2/n 5.md").unwrap();
@@ -357,7 +413,9 @@ mod tests {
         let idx = vault();
         let gone = idx.find_path("d0/n 3.md").unwrap();
         let changed = idx.find_path("d1/n 4.md").unwrap();
-        let kept: Vec<usize> = (0..idx.notes.len()).filter(|&i| i != gone && i != changed).collect();
+        let kept: Vec<usize> = (0..idx.notes.len())
+            .filter(|&i| i != gone && i != changed)
+            .collect();
         let mut again = Note::at("d1/n 4.md");
         again.links = vec!["n 20".into()];
         let mut new = Note::at("d0/Nowhere0.md");
@@ -369,7 +427,10 @@ mod tests {
         assert_eq!(m.outgoing(four).len(), 1);
         // Who linked to n 4 still does (by path, so the changed note keeps its backlinks).
         let three_before = idx.backlinks(changed).len();
-        assert_eq!(m.backlinks(four).len(), three_before - usize::from(idx.backlinks(changed).contains(&gone)));
+        assert_eq!(
+            m.backlinks(four).len(),
+            three_before - usize::from(idx.backlinks(changed).contains(&gone))
+        );
         // Links that had nowhere to go now reach the note that appeared.
         let nowhere = m.find_path("d0/Nowhere0.md").unwrap();
         assert!(!m.backlinks(nowhere).is_empty());
@@ -394,20 +455,43 @@ mod tests {
             assert_eq!((a.x, a.y), (b.x, b.y));
         }
         let mut other = global(&idx, &o);
-        assert!(!apply_layout(&text, &mut other, &idx, "k2"), "different settings");
-        assert!(other.nodes.iter().all(|n| n.x == 0.0 && n.y == 0.0), "untouched");
+        assert!(
+            !apply_layout(&text, &mut other, &idx, "k2"),
+            "different settings"
+        );
+        assert!(
+            other.nodes.iter().all(|n| n.x == 0.0 && n.y == 0.0),
+            "untouched"
+        );
         // The same file opens a graph with no index at all.
         let snap = decode_snapshot(&text, "k1").unwrap();
         assert_eq!(snap.graph.nodes.len(), g.nodes.len());
         assert_eq!(snap.graph.edges, g.edges);
         for (i, n) in g.nodes.iter().enumerate() {
-            assert_eq!(snap.paths[i], idx.notes[match n.kind { Kind::Note(k) => k, _ => unreachable!() }].path);
+            assert_eq!(
+                snap.paths[i],
+                idx.notes[match n.kind {
+                    Kind::Note(k) => k,
+                    _ => unreachable!(),
+                }]
+                .path
+            );
             assert_eq!((snap.graph.nodes[i].x, snap.graph.nodes[i].y), (n.x, n.y));
-            assert_eq!((snap.graph.nodes[i].label.as_str(), snap.graph.nodes[i].degree, snap.graph.nodes[i].group), (n.label.as_str(), n.degree, n.group));
+            assert_eq!(
+                (
+                    snap.graph.nodes[i].label.as_str(),
+                    snap.graph.nodes[i].degree,
+                    snap.graph.nodes[i].group
+                ),
+                (n.label.as_str(), n.degree, n.group)
+            );
         }
         assert!(decode_snapshot(&text, "other").is_none());
         assert!(decode_snapshot("junk", "k1").is_none());
         let tags = global(&idx, &Options { tags: true, ..o });
-        assert!(encode_layout(&tags, &idx, "k1", &H).is_none(), "tag dots can't be found again by path");
+        assert!(
+            encode_layout(&tags, &idx, "k1", &H).is_none(),
+            "tag dots can't be found again by path"
+        );
     }
 }

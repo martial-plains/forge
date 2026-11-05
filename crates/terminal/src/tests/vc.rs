@@ -104,7 +104,11 @@ fn vc_register_revert_dir_and_branches() {
     wait_vc(&mut app);
     assert_eq!(
         std::fs::read_to_string(dir.join("a.txt")).unwrap(),
-        "one\ntwo\nthree\n"
+        if cfg!(windows) {
+            "one\r\ntwo\r\nthree\r\n"
+        } else {
+            "one\ntwo\nthree\n"
+        }
     );
     assert_eq!(
         text(&app),
@@ -118,9 +122,16 @@ fn vc_register_revert_dir_and_branches() {
     let d = app.buf_ref().get_contents();
     assert!(
         d.contains("VC backend  : Git") && d.contains("Branch      : main"),
-        "{d}"
+        "buffer {} message {:?}:\n{d}",
+        app.buf_ref().name(),
+        app.message
     );
-    assert!(d.contains("Added (1)") && d.contains("new.txt"), "{d}");
+    assert!(
+        d.contains("Added (1)") && d.contains("new.txt"),
+        "buffer {} message {:?}:\n{d}",
+        app.buf_ref().name(),
+        app.message
+    );
 
     // Branches: make one, and the mode line follows.
     press(&mut app, "C-x v b c topic RET");

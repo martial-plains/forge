@@ -34,7 +34,10 @@ pub fn set_default_recipients(list: Vec<String>) {
 }
 
 pub fn default_recipients() -> Vec<String> {
-    DEFAULT_RECIPIENTS.lock().map(|d| d.clone()).unwrap_or_default()
+    DEFAULT_RECIPIENTS
+        .lock()
+        .map(|d| d.clone())
+        .unwrap_or_default()
 }
 
 /// Use another program than `gpg` (tests, or `gpg2` by name).
@@ -166,10 +169,12 @@ pub fn encrypt(plaintext: &[u8], epa: &Epa) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::buffer::Buffer;
 
     /// A stand-in for gpg: "encrypts" by reversing the bytes of stdin,
     /// "decrypts" by reversing the file, and lists a public-key packet.
+    #[cfg(unix)]
     fn fake_gpg(dir: &Path) -> std::path::PathBuf {
         let script = dir.join("fakegpg");
         std::fs::write(
@@ -214,10 +219,19 @@ esac
         b.insert_str("more ");
         b.save().unwrap();
         let on_disk = std::fs::read_to_string(&file).unwrap();
-        assert!(!on_disk.contains("secret"), "the file stays encrypted: {on_disk:?}");
+        assert!(
+            !on_disk.contains("secret"),
+            "the file stays encrypted: {on_disk:?}"
+        );
         let args = std::fs::read_to_string(dir.join("args")).unwrap();
-        assert!(args.contains("--recipient ABCD1234ABCD1234"), "same recipients: {args}");
-        assert!(!args.contains("0000000000000000"), "hidden recipients are skipped");
+        assert!(
+            args.contains("--recipient ABCD1234ABCD1234"),
+            "same recipients: {args}"
+        );
+        assert!(
+            !args.contains("0000000000000000"),
+            "hidden recipients are skipped"
+        );
 
         let mut again = Buffer::from_file(&file).unwrap();
         assert!(again.get_contents().contains("more secret"));

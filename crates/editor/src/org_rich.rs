@@ -2474,10 +2474,8 @@ pub fn command(app: &mut App, cmd: &str) -> bool {
         | "org-babel-pop-to-session"
         | "org-babel-switch-to-session-with-code" => babel_session(app, cmd),
         "org-cite-insert" | "org-cite-insert-key" => cite_insert(app),
-        "org-cite-follow" if in_org(app) => {
-            if !follow(app) {
-                app.error("No citation at point");
-            }
+        "org-cite-follow" if in_org(app) && !follow(app) => {
+            app.error("No citation at point");
         }
         _ => {}
     }

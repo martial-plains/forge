@@ -34,12 +34,7 @@ fn windows_split_select_and_keep_their_own_point() {
     press(&mut app, "C-x 1");
     assert_eq!(app.editor.windows.count(), 1);
     press(&mut app, "C-x 0");
-    assert!(
-        app.message
-            .as_deref()
-            .unwrap()
-            .contains("only window")
-    );
+    assert!(app.message.as_deref().unwrap().contains("only window"));
 
     // C-x 4 b opens a buffer in another window; C-M-v scrolls it.
     press(&mut app, "C-x 4 b *other* RET");

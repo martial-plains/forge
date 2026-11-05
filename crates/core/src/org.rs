@@ -387,7 +387,9 @@ impl Buffer {
         let name = t.strip_prefix(':')?.strip_suffix(':')?;
         if name.is_empty()
             || name.eq_ignore_ascii_case("END")
-            || !name.chars().all(|c| c.is_alphanumeric() || "_-@#%".contains(c))
+            || !name
+                .chars()
+                .all(|c| c.is_alphanumeric() || "_-@#%".contains(c))
         {
             return None;
         }
@@ -2119,7 +2121,10 @@ mod tests {
         b.unfold_all();
         b.fold_subtree(0);
         b.org_cycle(0);
-        assert!(b.line_hidden(2), "the drawer is collapsed when the entry opens");
+        assert!(
+            b.line_hidden(2),
+            "the drawer is collapsed when the entry opens"
+        );
     }
 
     use super::*;

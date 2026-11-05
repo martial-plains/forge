@@ -279,7 +279,7 @@ fn set_modifier(style: Style, modifier: Modifier, on: bool) -> Style {
 
 /// Colors from the terminal's own palette, so light and dark themes
 /// both work.
-/// Dired follows eza's default colors: bold blue directories, bold green
+/// Dired follows its default colors: bold blue directories, bold green
 /// executables, cyan links, yellow/red/green r/w/x, purple inode numbers,
 /// blue dates and underlined column headers. Sizes are shaded by
 /// magnitude (green below a megabyte, then yellow, red and purple), and

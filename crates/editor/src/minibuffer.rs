@@ -565,7 +565,7 @@ fn completion_columns(items: &[String], width: usize) -> String {
 /// Show the candidates in *Completions*, in another window, without
 /// leaving the prompt.
 fn show_completions(app: &mut App, mb: &mut Minibuffer, items: &[String]) {
-    let width = app.win().width as usize;
+    let width = app.win().width;
     let n = items.len();
     let text = format!(
         "{n} possible completion{}:\n\n{}",
@@ -1786,7 +1786,7 @@ fn complete(app: &mut App, mb: &mut Minibuffer) {
                 hide_completions(app, mb);
                 mb.input = common;
             } else {
-                if candidates.iter().any(|c| *c == input) {
+                if candidates.contains(&input) {
                     mb.note = Some(" [Complete, but not unique]".into());
                 }
                 // No progress to make: show what the choices are, in
@@ -1834,7 +1834,14 @@ fn source(
         Purpose::FindFile { .. }
         | Purpose::WriteFile
         | Purpose::InsertFile
-        | Purpose::FileOp(FileOp::MakeDirectory | FileOp::MakeEmptyFile | FileOp::CopyFrom | FileOp::CopyTo(_) | FileOp::DeleteDirectory | FileOp::InsertDirectory)
+        | Purpose::FileOp(
+            FileOp::MakeDirectory
+            | FileOp::MakeEmptyFile
+            | FileOp::CopyFrom
+            | FileOp::CopyTo(_)
+            | FileOp::DeleteDirectory
+            | FileOp::InsertDirectory,
+        )
         | Purpose::LoadPlugin
         | Purpose::Dired(_) => {
             let (dir_part, name) = match input.rfind('/') {
@@ -2301,7 +2308,7 @@ pub(crate) fn initial_find_file_input(app: &App) -> String {
     s
 }
 
-/// eza-style sizes for file annotations: `96`, `103k`.
+/// Detailed sizes for file annotations: `96`, `103k`.
 fn human_size(n: u64) -> String {
     if n < 1000 {
         return n.to_string();
@@ -2475,6 +2482,22 @@ pub(crate) fn expand_path(input: &str) -> PathBuf {
     {
         return PathBuf::from(home).join(input.trim_start_matches('~').trim_start_matches('/'));
     }
+    #[cfg(windows)]
+    {
+        let input = input
+            .strip_prefix("/\\\\?\\")
+            .or_else(|| {
+                let bytes = input.as_bytes();
+                (bytes.len() >= 3
+                    && bytes[0] == b'/'
+                    && bytes[1].is_ascii_alphabetic()
+                    && bytes[2] == b':')
+                    .then(|| &input[1..])
+            })
+            .unwrap_or(input);
+        PathBuf::from(input.replace('/', "\\"))
+    }
+    #[cfg(not(windows))]
     PathBuf::from(input)
 }
 
@@ -2964,6 +2987,111 @@ pub fn cmd_no(app: &mut App) {
 }
 
 #[cfg(test)]
+pub(crate) fn buffer_directory_for_test(app: &App) -> PathBuf {
+    buffer_directory(app)
+}
+
+/// Where a typed file name points: `~` expanded, a relative name taken from
+/// the buffer's directory.
+fn typed_path(app: &App, input: &str) -> String {
+    let p = expand_path(input);
+    let p = if p.is_absolute() {
+        p
+    } else {
+        buffer_directory(app).join(p)
+    };
+    p.display().to_string()
+}
+
+/// The answer to make-directory, make-empty-file, copy-directory,
+/// delete-directory and insert-directory.
+fn file_op(app: &mut App, op: FileOp, input: &str) {
+    use forge_core::fileops as fo;
+    let input = input.trim();
+    if input.is_empty() {
+        return;
+    }
+    match op {
+        FileOp::MakeDirectory => {
+            let at = typed_path(app, input);
+            match fo::make_directory(&at, true) {
+                Ok(true) => app.msg(format!("Made directory {at}")),
+                Ok(false) => app.msg(format!("{at} already exists")),
+                Err(e) => app.error(format!("Cannot make directory {at}: {e}")),
+            }
+        }
+        FileOp::MakeEmptyFile => {
+            let at = typed_path(app, input);
+            match fo::make_empty_file(&at, true) {
+                Ok(()) => app.msg(format!("Made empty file {at}")),
+                Err(e) => app.error(format!("Cannot make {at}: {e}")),
+            }
+        }
+        FileOp::CopyFrom => {
+            let from = typed_path(app, input);
+            if !std::path::Path::new(&from).is_dir() {
+                app.error(format!("{from} is not a directory"));
+                return;
+            }
+            app.prompt(
+                format!("Copy directory {from} to: "),
+                Purpose::FileOp(FileOp::CopyTo(from)),
+            );
+        }
+        FileOp::CopyTo(from) => {
+            let to = typed_path(app, input);
+            match fo::copy_directory(&from, &to, true, false) {
+                Ok(wrote) => app.msg(format!("Copied {from} to {wrote}")),
+                Err(e) => app.error(format!("Cannot copy {from}: {e}")),
+            }
+        }
+        FileOp::DeleteDirectory => {
+            let at = typed_path(app, input);
+            if !std::path::Path::new(&at).is_dir() {
+                app.error(format!("{at} is not a directory"));
+            } else if fo::directory_empty_p(&at) {
+                match fo::delete_directory(&at, false) {
+                    Ok(()) => app.msg(format!("Deleted {at}")),
+                    Err(e) => app.error(format!("Cannot delete {at}: {e}")),
+                }
+            } else {
+                app.prompt(
+                    format!("{at} is not empty; delete it and everything in it? (yes or no) "),
+                    Purpose::FileOp(FileOp::DeleteAll(at)),
+                );
+            }
+        }
+        FileOp::DeleteAll(at) => {
+            if input != "yes" {
+                app.msg("Not deleted".to_string());
+                return;
+            }
+            match fo::delete_directory(&at, true) {
+                Ok(()) => app.msg(format!("Deleted {at}")),
+                Err(e) => app.error(format!("Cannot delete {at}: {e}")),
+            }
+        }
+        FileOp::InsertDirectory => {
+            let at = typed_path(app, input);
+            let wildcard = input.contains(['*', '?', '[']);
+            let full = std::path::Path::new(&at).is_dir();
+            match fo::directory_listing(&at, &["-al".to_string()], wildcard, full) {
+                Ok(text) => {
+                    let b = app.buf();
+                    let start = b.point();
+                    b.push_mark(start, false);
+                    b.insert_str(&text);
+                    let end = b.point();
+                    b.push_mark(end, false);
+                    b.set_point(start);
+                }
+                Err(e) => app.error(e),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -3242,6 +3370,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_gui_starts_in_home_when_launched_from_root() {
         let old = std::env::current_dir().unwrap();
         std::env::set_current_dir("/").unwrap();
@@ -3250,100 +3379,5 @@ mod tests {
         let home = std::fs::canonicalize(std::env::var_os("HOME").unwrap()).unwrap();
         std::env::set_current_dir(old).unwrap();
         assert_eq!(now, home);
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn buffer_directory_for_test(app: &App) -> PathBuf {
-    buffer_directory(app)
-}
-
-/// Where a typed file name points: `~` expanded, a relative name taken from
-/// the buffer's directory.
-fn typed_path(app: &App, input: &str) -> String {
-    let p = expand_path(input);
-    let p = if p.is_absolute() { p } else { buffer_directory(app).join(p) };
-    p.display().to_string()
-}
-
-/// The answer to make-directory, make-empty-file, copy-directory,
-/// delete-directory and insert-directory.
-fn file_op(app: &mut App, op: FileOp, input: &str) {
-    use forge_core::fileops as fo;
-    let input = input.trim();
-    if input.is_empty() {
-        return;
-    }
-    match op {
-        FileOp::MakeDirectory => {
-            let at = typed_path(app, input);
-            match fo::make_directory(&at, true) {
-                Ok(true) => app.msg(format!("Made directory {at}")),
-                Ok(false) => app.msg(format!("{at} already exists")),
-                Err(e) => app.error(format!("Cannot make directory {at}: {e}")),
-            }
-        }
-        FileOp::MakeEmptyFile => {
-            let at = typed_path(app, input);
-            match fo::make_empty_file(&at, true) {
-                Ok(()) => app.msg(format!("Made empty file {at}")),
-                Err(e) => app.error(format!("Cannot make {at}: {e}")),
-            }
-        }
-        FileOp::CopyFrom => {
-            let from = typed_path(app, input);
-            if !std::path::Path::new(&from).is_dir() {
-                app.error(format!("{from} is not a directory"));
-                return;
-            }
-            app.prompt(format!("Copy directory {from} to: "), Purpose::FileOp(FileOp::CopyTo(from)));
-        }
-        FileOp::CopyTo(from) => {
-            let to = typed_path(app, input);
-            match fo::copy_directory(&from, &to, true, false) {
-                Ok(wrote) => app.msg(format!("Copied {from} to {wrote}")),
-                Err(e) => app.error(format!("Cannot copy {from}: {e}")),
-            }
-        }
-        FileOp::DeleteDirectory => {
-            let at = typed_path(app, input);
-            if !std::path::Path::new(&at).is_dir() {
-                app.error(format!("{at} is not a directory"));
-            } else if fo::directory_empty_p(&at) {
-                match fo::delete_directory(&at, false) {
-                    Ok(()) => app.msg(format!("Deleted {at}")),
-                    Err(e) => app.error(format!("Cannot delete {at}: {e}")),
-                }
-            } else {
-                app.prompt(format!("{at} is not empty; delete it and everything in it? (yes or no) "), Purpose::FileOp(FileOp::DeleteAll(at)));
-            }
-        }
-        FileOp::DeleteAll(at) => {
-            if input != "yes" {
-                app.msg("Not deleted".to_string());
-                return;
-            }
-            match fo::delete_directory(&at, true) {
-                Ok(()) => app.msg(format!("Deleted {at}")),
-                Err(e) => app.error(format!("Cannot delete {at}: {e}")),
-            }
-        }
-        FileOp::InsertDirectory => {
-            let at = typed_path(app, input);
-            let wildcard = input.contains(['*', '?', '[']);
-            let full = std::path::Path::new(&at).is_dir();
-            match fo::directory_listing(&at, &["-al".to_string()], wildcard, full) {
-                Ok(text) => {
-                    let b = app.buf();
-                    let start = b.point();
-                    b.push_mark(start, false);
-                    b.insert_str(&text);
-                    let end = b.point();
-                    b.push_mark(end, false);
-                    b.set_point(start);
-                }
-                Err(e) => app.error(e),
-            }
-        }
     }
 }

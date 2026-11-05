@@ -443,7 +443,9 @@ pub fn remote_picture(url: &str) -> Remote {
     if remote_inline_images() == RemoteImages::Skip {
         return Remote::Missing;
     }
-    let Some(dir) = crate::config::cache_dir().map(|d| d.join("org-images")) else { return Remote::Missing };
+    let Some(dir) = crate::config::cache_dir().map(|d| d.join("org-images")) else {
+        return Remote::Missing;
+    };
     let path = dir.join(remote_file_name(url));
     if remote_image_ready(&path) {
         return Remote::Ready(path);
@@ -1203,13 +1205,20 @@ impl Buffer {
         let lines: Vec<usize> = images.iter().map(|(l, _)| *l).collect();
         self.set_plugin_images(owner, images);
         for l in lines {
-            self.plugin_centered.entry(l).or_default().insert(owner.to_string());
+            self.plugin_centered
+                .entry(l)
+                .or_default()
+                .insert(owner.to_string());
         }
     }
 
     /// Whether the picture a plugin pinned to `line` is centred.
     pub fn plugin_image_centered(&self, line: usize) -> bool {
-        self.plugin_image(line).is_some() && self.plugin_centered.get(&line).is_some_and(|o| !o.is_empty())
+        self.plugin_image(line).is_some()
+            && self
+                .plugin_centered
+                .get(&line)
+                .is_some_and(|o| !o.is_empty())
     }
 
     /// Remove every picture `owner` pinned (the plugin is unloading).

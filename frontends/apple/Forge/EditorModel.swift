@@ -56,6 +56,7 @@ final class EditorModel: ObservableObject {
     private var lastClip: String?
     /// Files dropped or opened before the editor was ready.
     private var pendingOpens: [String] = []
+    private var pendingURLs: [URL] = []
     /// One refresh at a time, with at most one more queued: a stream of
     /// keys can't stack up waits on the editor thread.
     private var refreshing = false
@@ -123,6 +124,13 @@ final class EditorModel: ObservableObject {
         pendingOpens.removeAll()
         for path in queued {
             editor.openFile(path: path)
+        }
+        let queuedURLs = pendingURLs
+        pendingURLs.removeAll()
+        for url in queuedURLs {
+            if !editor.desktop.open(url: url) {
+                NSLog("Forge ignored an unsupported open URL: %@", url.absoluteString)
+            }
         }
         refresh(full: true)
     }
@@ -287,8 +295,9 @@ final class EditorModel: ObservableObject {
         guard top != lastClip else { return }
         lastClip = top
         guard let top, !top.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(top, forType: .string)
+        if !ForgeMacOSNamespace(editor: forge).writePasteboardText(top) {
+            NSLog("Forge could not update the pasteboard")
+        }
     }
 
     // MARK: - Sending events
@@ -305,6 +314,15 @@ final class EditorModel: ObservableObject {
 
     func text(_ text: String) {
         send { $0.text(text: text) }
+    }
+
+    @discardableResult
+    func pasteFromPasteboard() -> Bool {
+        guard let text = ForgeMacOSNamespace.readPasteboardText() else { return false }
+        if !text.isEmpty {
+            self.text(text)
+        }
+        return true
     }
 
     func mouse(_ kind: MouseKind, column: UInt16, row: UInt16) {
@@ -474,6 +492,29 @@ final class EditorModel: ObservableObject {
         }
         forge.openFile(path: path)
         refresh()
+    }
+
+    func open(url: URL) {
+        guard let forge else {
+            pendingURLs.append(url)
+            return
+        }
+        if !forge.desktop.open(url: url) {
+            NSLog("Forge ignored an unsupported open URL: %@", url.absoluteString)
+            return
+        }
+        refresh()
+    }
+
+    func openServiceText(_ text: String) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Forge-Service-\(UUID().uuidString).txt")
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            open(path: url.path)
+        } catch {
+            NSLog("Forge could not create a text document for Services: %@", String(describing: error))
+        }
     }
 
     func showOpenPanel() {

@@ -56,18 +56,31 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { tags: false, orphans: true, unresolved: false, folder: None, tag: None, max_nodes: 1500 }
+        Options {
+            tags: false,
+            orphans: true,
+            unresolved: false,
+            folder: None,
+            tag: None,
+            max_nodes: 1500,
+        }
     }
 }
 
 /// Whether a note passes the folder and tag filters. The folder prefix is
 /// worked out once, not per note: this runs over every note in the vault.
 fn keeper<'a>(index: &'a Index, o: &'a Options) -> impl Fn(usize) -> bool + 'a {
-    let folder = o.folder.as_deref().map(|f| f.trim_matches('/')).filter(|f| !f.is_empty());
+    let folder = o
+        .folder
+        .as_deref()
+        .map(|f| f.trim_matches('/'))
+        .filter(|f| !f.is_empty());
     let prefix = folder.map(|f| format!("{f}/"));
     move |i| {
         let n = &index.notes[i];
-        folder.is_none_or(|f| n.folder == f || prefix.as_deref().is_some_and(|p| n.folder.starts_with(p))) && o.tag.as_ref().is_none_or(|t| n.has_tag(t))
+        folder.is_none_or(|f| {
+            n.folder == f || prefix.as_deref().is_some_and(|p| n.folder.starts_with(p))
+        }) && o.tag.as_ref().is_none_or(|t| n.has_tag(t))
     }
 }
 
@@ -82,7 +95,14 @@ struct Builder<'a> {
 
 impl<'a> Builder<'a> {
     fn new(index: &'a Index) -> Self {
-        Builder { index, g: Graph::default(), of_note: BTreeMap::new(), of_name: BTreeMap::new(), folders: BTreeMap::new(), seen: Default::default() }
+        Builder {
+            index,
+            g: Graph::default(),
+            of_note: BTreeMap::new(),
+            of_name: BTreeMap::new(),
+            folders: BTreeMap::new(),
+            seen: Default::default(),
+        }
     }
 
     fn note(&mut self, i: usize) -> usize {
@@ -91,8 +111,20 @@ impl<'a> Builder<'a> {
         }
         let note = &self.index.notes[i];
         let next = self.folders.len();
-        let group = *self.folders.entry(note.folder.split('/').next().unwrap_or("").to_string()).or_insert(next);
-        self.g.nodes.push(Node { label: note.name.clone(), kind: Kind::Note(i), x: 0.0, y: 0.0, pinned: false, degree: 0, group, depth: 0 });
+        let group = *self
+            .folders
+            .entry(note.folder.split('/').next().unwrap_or("").to_string())
+            .or_insert(next);
+        self.g.nodes.push(Node {
+            label: note.name.clone(),
+            kind: Kind::Note(i),
+            x: 0.0,
+            y: 0.0,
+            pinned: false,
+            degree: 0,
+            group,
+            depth: 0,
+        });
         self.of_note.insert(i, self.g.nodes.len() - 1);
         self.g.nodes.len() - 1
     }
@@ -101,7 +133,16 @@ impl<'a> Builder<'a> {
         if let Some(&n) = self.of_name.get(&key) {
             return n;
         }
-        self.g.nodes.push(Node { label, kind, x: 0.0, y: 0.0, pinned: false, degree: 0, group: usize::MAX, depth: 0 });
+        self.g.nodes.push(Node {
+            label,
+            kind,
+            x: 0.0,
+            y: 0.0,
+            pinned: false,
+            degree: 0,
+            group: usize::MAX,
+            depth: 0,
+        });
         self.of_name.insert(key, self.g.nodes.len() - 1);
         self.g.nodes.len() - 1
     }
@@ -134,8 +175,15 @@ pub const LOCAL_CAP: usize = 250;
 pub fn global(index: &Index, o: &Options) -> Graph {
     let mut b = Builder::new(index);
     let keep = keeper(index, o);
-    let linked = |i: usize| !index.outgoing(i).is_empty() || !index.backlinks(i).is_empty() || (o.unresolved && !index.unresolved(i).is_empty()) || (o.tags && !index.notes[i].tags.is_empty());
-    let mut kept: Vec<usize> = (0..index.notes.len()).filter(|&i| keep(i) && (o.orphans || linked(i))).collect();
+    let linked = |i: usize| {
+        !index.outgoing(i).is_empty()
+            || !index.backlinks(i).is_empty()
+            || (o.unresolved && !index.unresolved(i).is_empty())
+            || (o.tags && !index.notes[i].tags.is_empty())
+    };
+    let mut kept: Vec<usize> = (0..index.notes.len())
+        .filter(|&i| keep(i) && (o.orphans || linked(i)))
+        .collect();
     let total = kept.len();
     if total > o.max_nodes {
         let score = |i: usize| index.outgoing(i).len() + index.backlinks(i).len();
@@ -160,7 +208,11 @@ pub fn global(index: &Index, o: &Options) -> Graph {
         }
         if o.unresolved {
             for u in index.unresolved(i) {
-                let t = b.named(format!("ghost:{}", u.to_lowercase()), u.clone(), Kind::Unresolved);
+                let t = b.named(
+                    format!("ghost:{}", u.to_lowercase()),
+                    u.clone(),
+                    Kind::Unresolved,
+                );
                 b.edge(a, t);
             }
         }
@@ -196,9 +248,23 @@ pub fn local(index: &Index, center: usize, depth: usize, o: &Options) -> Graph {
     // keep the nearest and best connected, and say how many were left out.
     let mut hidden = 0;
     if dist.len() > LOCAL_CAP {
-        let mut ranked: Vec<(usize, usize)> = dist.iter().filter(|e| *e.0 != center).map(|e| (*e.0, *e.1)).collect();
-        ranked.sort_by_key(|&(i, d)| (d, std::cmp::Reverse(index.outgoing(i).len() + index.backlinks(i).len())));
-        let keep: BTreeSet<usize> = ranked.iter().take(LOCAL_CAP - 1).map(|r| r.0).chain([center]).collect();
+        let mut ranked: Vec<(usize, usize)> = dist
+            .iter()
+            .filter(|e| *e.0 != center)
+            .map(|e| (*e.0, *e.1))
+            .collect();
+        ranked.sort_by_key(|&(i, d)| {
+            (
+                d,
+                std::cmp::Reverse(index.outgoing(i).len() + index.backlinks(i).len()),
+            )
+        });
+        let keep: BTreeSet<usize> = ranked
+            .iter()
+            .take(LOCAL_CAP - 1)
+            .map(|r| r.0)
+            .chain([center])
+            .collect();
         hidden = dist.len() - keep.len();
         dist.retain(|i, _| keep.contains(i));
     }
@@ -219,7 +285,11 @@ pub fn local(index: &Index, center: usize, depth: usize, o: &Options) -> Graph {
         }
         if o.unresolved && dist[&i] < depth.max(1) {
             for u in index.unresolved(i) {
-                let t = b.named(format!("ghost:{}", u.to_lowercase()), u.clone(), Kind::Unresolved);
+                let t = b.named(
+                    format!("ghost:{}", u.to_lowercase()),
+                    u.clone(),
+                    Kind::Unresolved,
+                );
                 b.g.nodes[t].depth = dist[&i] + 1;
                 b.edge(a, t);
             }
@@ -257,8 +327,16 @@ pub fn layout(g: &mut Graph, iterations: Option<usize>) {
             continue;
         }
         let h = hash(&node.label);
-        let angle = if g.center.is_some() { (h % 3600) as f32 / 3600.0 * std::f32::consts::TAU } else { i as f32 * std::f32::consts::PI * (3.0 - 5f32.sqrt()) };
-        let r = if g.center.is_some() { 60.0 + node.depth as f32 * 120.0 } else { 10.0 * (0.5 + i as f32).sqrt() };
+        let angle = if g.center.is_some() {
+            (h % 3600) as f32 / 3600.0 * std::f32::consts::TAU
+        } else {
+            i as f32 * std::f32::consts::PI * (3.0 - 5f32.sqrt())
+        };
+        let r = if g.center.is_some() {
+            60.0 + node.depth as f32 * 120.0
+        } else {
+            10.0 * (0.5 + i as f32).sqrt()
+        };
         node.x = angle.cos() * r;
         node.y = angle.sin() * r;
     }
@@ -268,7 +346,12 @@ pub fn layout(g: &mut Graph, iterations: Option<usize>) {
         g.nodes[c].pinned = true;
     }
     let ticks = iterations.unwrap_or(if n > 3000 { 120 } else { 300 });
-    simulate(g, ticks, 1.0, 1.0 - 0.001f32.powf(1.0 / ticks.max(1) as f32));
+    simulate(
+        g,
+        ticks,
+        1.0,
+        1.0 - 0.001f32.powf(1.0 / ticks.max(1) as f32),
+    );
 }
 
 /// A few more steps of the same physics, warm: what runs while a dot is
@@ -307,7 +390,16 @@ fn build_tree(xs: &[f32], ys: &[f32]) -> Vec<Cell> {
         y1 = y1.max(ys[i]);
     }
     let size = (x1 - x0).max(y1 - y0).max(1.0) + 1.0;
-    let mut cells = vec![Cell { x0, y0, size, mass: 0.0, cx: 0.0, cy: 0.0, kids: [NONE; 4], leaf: NONE }];
+    let mut cells = vec![Cell {
+        x0,
+        y0,
+        size,
+        mass: 0.0,
+        cx: 0.0,
+        cy: 0.0,
+        kids: [NONE; 4],
+        leaf: NONE,
+    }];
     for i in 0..xs.len() {
         insert(&mut cells, xs, ys, 0, i);
     }
@@ -319,7 +411,16 @@ fn child_for(cells: &mut Vec<Cell>, at: usize, x: f32, y: f32) -> usize {
     let (cx0, cy0, half) = (cells[at].x0, cells[at].y0, cells[at].size / 2.0);
     let q = usize::from(x >= cx0 + half) + 2 * usize::from(y >= cy0 + half);
     if cells[at].kids[q] == NONE {
-        cells.push(Cell { x0: cx0 + (q & 1) as f32 * half, y0: cy0 + (q >> 1) as f32 * half, size: half, mass: 0.0, cx: 0.0, cy: 0.0, kids: [NONE; 4], leaf: NONE });
+        cells.push(Cell {
+            x0: cx0 + (q & 1) as f32 * half,
+            y0: cy0 + (q >> 1) as f32 * half,
+            size: half,
+            mass: 0.0,
+            cx: 0.0,
+            cy: 0.0,
+            kids: [NONE; 4],
+            leaf: NONE,
+        });
         let id = cells.len() - 1;
         cells[at].kids[q] = id as u32;
     }
@@ -413,7 +514,10 @@ fn simulate(g: &mut Graph, ticks: usize, alpha0: f32, decay: f32) {
             vy[i] -= ys[i] * pull;
         }
         for &(a, b) in &g.edges {
-            let (dx, dy) = ((xs[b] + vx[b]) - (xs[a] + vx[a]), (ys[b] + vy[b]) - (ys[a] + vy[a]));
+            let (dx, dy) = (
+                (xs[b] + vx[b]) - (xs[a] + vx[a]),
+                (ys[b] + vy[b]) - (ys[a] + vy[a]),
+            );
             let d = (dx * dx + dy * dy).sqrt().max(0.01);
             let strength = 1.0 / deg[a].min(deg[b]).max(1.0);
             let f = (d - link_len) / d * alpha * strength;
@@ -488,37 +592,92 @@ pub fn fit(g: &Graph, width: f32, height: f32) -> Fit {
         y1 = y1.max(n.y);
     }
     if x1 < x0 {
-        return Fit { scale: 1.0, ox: width / 2.0, oy: height / 2.0 };
+        return Fit {
+            scale: 1.0,
+            ox: width / 2.0,
+            oy: height / 2.0,
+        };
     }
     let pad = 70.0;
-    let scale = ((width - 2.0 * pad) / (x1 - x0).max(1.0)).min((height - 2.0 * pad) / (y1 - y0).max(1.0)).min(1.5);
-    Fit { scale, ox: (width - (x1 - x0) * scale) / 2.0 - x0 * scale, oy: (height - (y1 - y0) * scale) / 2.0 - y0 * scale }
+    let scale = ((width - 2.0 * pad) / (x1 - x0).max(1.0))
+        .min((height - 2.0 * pad) / (y1 - y0).max(1.0))
+        .min(1.5);
+    Fit {
+        scale,
+        ox: (width - (x1 - x0) * scale) / 2.0 - x0 * scale,
+        oy: (height - (y1 - y0) * scale) / 2.0 - y0 * scale,
+    }
 }
 
 /// Draw it, scaled to fit `width` x `height`. Node `i` has the id `n:i`.
 /// `selected` is lit along with its neighbours; the rest dim.
-pub fn scene(g: &Graph, selected: Option<usize>, width: f32, height: f32, labels: Option<bool>) -> Scene {
+pub fn scene(
+    g: &Graph,
+    selected: Option<usize>,
+    width: f32,
+    height: f32,
+    labels: Option<bool>,
+) -> Scene {
     scene_fit(g, selected, width, height, labels, fit(g, width, height))
 }
 
-pub fn scene_fit(g: &Graph, selected: Option<usize>, width: f32, height: f32, labels: Option<bool>, f: Fit) -> Scene {
+pub fn scene_fit(
+    g: &Graph,
+    selected: Option<usize>,
+    width: f32,
+    height: f32,
+    labels: Option<bool>,
+    f: Fit,
+) -> Scene {
     let pal = Palette::current();
     let mut s = Scene::new(width, height).background(&pal.sunken);
     if g.nodes.is_empty() {
-        s.push(Op::text(width / 2.0 - 90.0, height / 2.0, "Nothing to show", 18.0, &pal.dim));
+        s.push(Op::text(
+            width / 2.0 - 90.0,
+            height / 2.0,
+            "Nothing to show",
+            18.0,
+            &pal.dim,
+        ));
         return s;
     }
     let at = |n: &Node| f.to_frame(n.x, n.y);
     let lit: BTreeSet<usize> = selected
-        .map(|s| g.edges.iter().filter_map(|&(a, b)| if a == s { Some(b) } else if b == s { Some(a) } else { None }).chain([s]).collect())
+        .map(|s| {
+            g.edges
+                .iter()
+                .filter_map(|&(a, b)| {
+                    if a == s {
+                        Some(b)
+                    } else if b == s {
+                        Some(a)
+                    } else {
+                        None
+                    }
+                })
+                .chain([s])
+                .collect()
+        })
         .unwrap_or_default();
     // Links are hairlines, faint until one end is picked: a thousand of
     // them must read as texture, not as a wall.
     for &(a, b) in &g.edges {
         let ((ax, ay), (bx, by)) = (at(&g.nodes[a]), at(&g.nodes[b]));
         let on = selected.is_some_and(|s| a == s || b == s);
-        let col = if on { &pal.fg } else if selected.is_some() { &pal.fainter } else { &pal.faint };
-        s.push(Op::line(ax, ay, bx, by, Stroke::new(col, if on { 1.6 } else { 0.7 })));
+        let col = if on {
+            &pal.fg
+        } else if selected.is_some() {
+            &pal.fainter
+        } else {
+            &pal.faint
+        };
+        s.push(Op::line(
+            ax,
+            ay,
+            bx,
+            by,
+            Stroke::new(col, if on { 1.6 } else { 0.7 }),
+        ));
     }
     for (i, n) in g.nodes.iter().enumerate() {
         let (x, y) = at(n);
@@ -537,7 +696,10 @@ pub fn scene_fit(g: &Graph, selected: Option<usize>, width: f32, height: f32, la
     let mut order: Vec<usize> = (0..g.nodes.len()).collect();
     order.sort_by_key(|&i| {
         let must = selected == Some(i) || g.center == Some(i) || lit.contains(&i);
-        (std::cmp::Reverse(must), std::cmp::Reverse(g.nodes[i].degree))
+        (
+            std::cmp::Reverse(must),
+            std::cmp::Reverse(g.nodes[i].degree),
+        )
     });
     let mut taken: Vec<[f32; 4]> = Vec::new();
     let budget = if show_all { usize::MAX } else { 40 };
@@ -554,13 +716,31 @@ pub fn scene_fit(g: &Graph, selected: Option<usize>, width: f32, height: f32, la
         let r = radius(n);
         let w = (n.label.chars().count().min(24) as f32) * 6.4;
         let b = [x - w / 2.0, y + r + 2.0, w, 14.0];
-        let hit = |t: &[f32; 4]| b[0] < t[0] + t[2] && t[0] < b[0] + b[2] && b[1] < t[1] + t[3] && t[1] < b[1] + b[3];
+        let hit = |t: &[f32; 4]| {
+            b[0] < t[0] + t[2] && t[0] < b[0] + b[2] && b[1] < t[1] + t[3] && t[1] < b[1] + b[3]
+        };
         if !must && taken.iter().any(hit) {
             continue;
         }
         taken.push(b);
-        let mut t = Op::text(x, y + r + 3.0, &n.label, 12.0, if selected == Some(i) { &pal.strong } else { &pal.soft });
-        if let Op::Text { align, max_width, max_lines, .. } = &mut t {
+        let mut t = Op::text(
+            x,
+            y + r + 3.0,
+            &n.label,
+            12.0,
+            if selected == Some(i) {
+                &pal.strong
+            } else {
+                &pal.soft
+            },
+        );
+        if let Op::Text {
+            align,
+            max_width,
+            max_lines,
+            ..
+        } = &mut t
+        {
             *align = forge_canvas::Align::Center;
             *max_width = Some(150.0);
             *max_lines = Some(1);
@@ -584,8 +764,19 @@ pub struct Pointer {
 }
 
 impl Pointer {
-    pub fn handle(&mut self, g: &mut Graph, selected: &mut Option<usize>, f: Fit, ev: &crate::jsoncanvas::Event) -> Vec<Act> {
-        let node = ev.id.as_deref().and_then(|i| i.strip_prefix("n:")).and_then(|n| n.parse::<usize>().ok()).filter(|&n| n < g.nodes.len());
+    pub fn handle(
+        &mut self,
+        g: &mut Graph,
+        selected: &mut Option<usize>,
+        f: Fit,
+        ev: &crate::jsoncanvas::Event,
+    ) -> Vec<Act> {
+        let node = ev
+            .id
+            .as_deref()
+            .and_then(|i| i.strip_prefix("n:"))
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|&n| n < g.nodes.len());
         match (ev.kind.as_str(), ev.button) {
             ("press", 1) => {
                 *selected = node;
@@ -628,7 +819,11 @@ mod tests {
     use crate::vault::{Note, RawNote};
 
     fn index() -> Index {
-        let n = |p: &str, t: &str| RawNote { path: p.into(), text: t.into(), ..Default::default() };
+        let n = |p: &str, t: &str| RawNote {
+            path: p.into(),
+            text: t.into(),
+            ..Default::default()
+        };
         Index::build(&[
             n("Hub.md", "[[A]] [[B]] [[Ghost]] #hub"),
             n("A.md", "[[C]] #x"),
@@ -651,18 +846,57 @@ mod tests {
         let idx = index();
         let g = global(&idx, &Options::default());
         assert_eq!(g.nodes.len(), 7);
-        assert_eq!(g.edges.len(), 5, "Hub-A, Hub-B (once, though B links back), A-C, C-D, E-Hub");
+        assert_eq!(
+            g.edges.len(),
+            5,
+            "Hub-A, Hub-B (once, though B links back), A-C, C-D, E-Hub"
+        );
         let hub = g.nodes.iter().find(|n| n.label == "Hub").unwrap();
         assert_eq!(hub.degree, 3);
-        let g = global(&idx, &Options { orphans: false, ..Default::default() });
+        let g = global(
+            &idx,
+            &Options {
+                orphans: false,
+                ..Default::default()
+            },
+        );
         assert!(!labels(&g).contains(&"Lonely") && g.nodes.len() == 6);
-        let g = global(&idx, &Options { unresolved: true, tags: true, ..Default::default() });
-        assert!(labels(&g).contains(&"Ghost") && labels(&g).contains(&"#x") && labels(&g).contains(&"#hub"));
-        let g = global(&idx, &Options { folder: Some("notes".into()), ..Default::default() });
+        let g = global(
+            &idx,
+            &Options {
+                unresolved: true,
+                tags: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            labels(&g).contains(&"Ghost")
+                && labels(&g).contains(&"#x")
+                && labels(&g).contains(&"#hub")
+        );
+        let g = global(
+            &idx,
+            &Options {
+                folder: Some("notes".into()),
+                ..Default::default()
+            },
+        );
         assert_eq!(labels(&g), ["E"]);
-        let g = global(&idx, &Options { tag: Some("x".into()), ..Default::default() });
+        let g = global(
+            &idx,
+            &Options {
+                tag: Some("x".into()),
+                ..Default::default()
+            },
+        );
         assert_eq!(labels(&g), ["A", "E"]);
-        let g = global(&idx, &Options { max_nodes: 3, ..Default::default() });
+        let g = global(
+            &idx,
+            &Options {
+                max_nodes: 3,
+                ..Default::default()
+            },
+        );
         assert!(g.nodes.len() <= 4);
     }
 
@@ -676,7 +910,15 @@ mod tests {
         let g = local(&idx, hub, 2, &Options::default());
         assert!(labels(&g).contains(&"C") && !labels(&g).contains(&"D"));
         assert_eq!(g.nodes.iter().find(|n| n.label == "C").unwrap().depth, 2);
-        let g = local(&idx, hub, 3, &Options { unresolved: true, ..Default::default() });
+        let g = local(
+            &idx,
+            hub,
+            3,
+            &Options {
+                unresolved: true,
+                ..Default::default()
+            },
+        );
         assert!(labels(&g).contains(&"D") && labels(&g).contains(&"Ghost"));
         // Backlinks count: from D, depth 1 reaches C.
         let d = idx.find_path("D.md").unwrap();
@@ -695,13 +937,23 @@ mod tests {
         for i in 0..a.nodes.len() {
             assert!(a.nodes[i].x.is_finite() && a.nodes[i].y.is_finite());
             for j in i + 1..a.nodes.len() {
-                let d = ((a.nodes[i].x - a.nodes[j].x).powi(2) + (a.nodes[i].y - a.nodes[j].y).powi(2)).sqrt();
-                assert!(d > 5.0, "{} and {} overlap", a.nodes[i].label, a.nodes[j].label);
+                let d = ((a.nodes[i].x - a.nodes[j].x).powi(2)
+                    + (a.nodes[i].y - a.nodes[j].y).powi(2))
+                .sqrt();
+                assert!(
+                    d > 5.0,
+                    "{} and {} overlap",
+                    a.nodes[i].label,
+                    a.nodes[j].label
+                );
             }
         }
         // Linked nodes end up nearer than unlinked ones, on average.
-        let dist = |x: usize, y: usize| ((a.nodes[x].x - a.nodes[y].x).powi(2) + (a.nodes[x].y - a.nodes[y].y).powi(2)).sqrt();
-        let linked: f32 = a.edges.iter().map(|&(x, y)| dist(x, y)).sum::<f32>() / a.edges.len() as f32;
+        let dist = |x: usize, y: usize| {
+            ((a.nodes[x].x - a.nodes[y].x).powi(2) + (a.nodes[x].y - a.nodes[y].y).powi(2)).sqrt()
+        };
+        let linked: f32 =
+            a.edges.iter().map(|&(x, y)| dist(x, y)).sum::<f32>() / a.edges.len() as f32;
         let mut all = 0.0;
         let mut count = 0;
         for i in 0..a.nodes.len() {
@@ -728,18 +980,38 @@ mod tests {
         layout(&mut g, None);
         let f = fit(&g, 1000.0, 700.0);
         let (px, py) = f.to_frame(g.nodes[2].x, g.nodes[2].y);
-        assert!((f.to_layout(px, py).0 - g.nodes[2].x).abs() < 0.01, "fit round-trips");
-        let ev = |kind: &str, x: f32, y: f32, id: Option<&str>| crate::jsoncanvas::Event { kind: kind.into(), button: 1, x, y, id: id.map(Into::into), shift: false, dy: 0.0 };
+        assert!(
+            (f.to_layout(px, py).0 - g.nodes[2].x).abs() < 0.01,
+            "fit round-trips"
+        );
+        let ev = |kind: &str, x: f32, y: f32, id: Option<&str>| crate::jsoncanvas::Event {
+            kind: kind.into(),
+            button: 1,
+            x,
+            y,
+            id: id.map(Into::into),
+            shift: false,
+            dy: 0.0,
+        };
         let (mut p, mut sel) = (Pointer::default(), None);
-        assert_eq!(p.handle(&mut g, &mut sel, f, &ev("press", px, py, Some("n:2"))), [Act::Redraw]);
+        assert_eq!(
+            p.handle(&mut g, &mut sel, f, &ev("press", px, py, Some("n:2"))),
+            [Act::Redraw]
+        );
         assert_eq!(sel, Some(2));
         p.handle(&mut g, &mut sel, f, &ev("drag", px + 50.0, py, Some("n:2")));
         assert!(g.nodes[2].pinned);
         let (nx, _) = f.to_frame(g.nodes[2].x, g.nodes[2].y);
         assert!((nx - (px + 50.0)).abs() < 0.01);
         p.handle(&mut g, &mut sel, f, &ev("release", 0.0, 0.0, None));
-        assert!(p.handle(&mut g, &mut sel, f, &ev("drag", 5.0, 5.0, None)).is_empty());
-        assert_eq!(p.handle(&mut g, &mut sel, f, &ev("double", px, py, Some("n:2"))), [Act::Open(2)]);
+        assert!(
+            p.handle(&mut g, &mut sel, f, &ev("drag", 5.0, 5.0, None))
+                .is_empty()
+        );
+        assert_eq!(
+            p.handle(&mut g, &mut sel, f, &ev("double", px, py, Some("n:2"))),
+            [Act::Open(2)]
+        );
         p.handle(&mut g, &mut sel, f, &ev("press", 1.0, 1.0, None));
         assert_eq!(sel, None);
     }
@@ -750,10 +1022,17 @@ mod tests {
         let mut g = global(&idx, &Options::default());
         layout(&mut g, None);
         let s = scene(&g, None, 1000.0, 700.0, None);
-        let ids: Vec<String> = s.ops.iter().filter_map(|o| o.id().map(String::from)).collect();
+        let ids: Vec<String> = s
+            .ops
+            .iter()
+            .filter_map(|o| o.id().map(String::from))
+            .collect();
         assert_eq!(ids.len(), g.nodes.len());
         let b = s.bounds_of("n:0").unwrap();
-        assert_eq!(s.hit(b[0] + b[2] / 2.0, b[1] + b[3] / 2.0).as_deref(), Some("n:0"));
+        assert_eq!(
+            s.hit(b[0] + b[2] / 2.0, b[1] + b[3] / 2.0).as_deref(),
+            Some("n:0")
+        );
         let lit = scene(&g, Some(0), 1000.0, 700.0, None);
         assert_ne!(lit.to_json(), s.to_json());
         assert!(scene(&Graph::default(), None, 400.0, 300.0, None).ops.len() == 1);
@@ -762,10 +1041,17 @@ mod tests {
     /// Writes a preview SVG of a vault-sized graph when FORGE_PREVIEW_DIR is set.
     #[test]
     fn preview_big_graph() {
-        let Ok(dir) = std::env::var("FORGE_PREVIEW_DIR") else { return };
+        let Ok(dir) = std::env::var("FORGE_PREVIEW_DIR") else {
+            return;
+        };
         let mut raws = Vec::new();
         let mut seed = 12345u64;
-        let mut rnd = |m: u64| { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (seed >> 33) % m };
+        let mut rnd = |m: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % m
+        };
         let total = 1500;
         for i in 0..total {
             let mut text = String::new();
@@ -773,36 +1059,67 @@ mod tests {
                 // Clusters of notes that mostly link inside their own area, a few hubs between.
                 let area = i / 100;
                 for _ in 0..(1 + rnd(14)) {
-                    let j = if rnd(10) < 8 { area * 100 + rnd(100) } else { rnd(1000) };
+                    let j = if rnd(10) < 8 {
+                        area * 100 + rnd(100)
+                    } else {
+                        rnd(1000)
+                    };
                     text.push_str(&format!("[[n{j}]] "));
                 }
             }
-            raws.push(RawNote { path: format!("area{}/n{i}.md", i / 100), text, ..Default::default() });
+            raws.push(RawNote {
+                path: format!("area{}/n{i}.md", i / 100),
+                text,
+                ..Default::default()
+            });
         }
         let idx = Index::build(&raws);
         let t = std::time::Instant::now();
         let mut g = global(&idx, &Options::default());
         let built = t.elapsed();
         layout(&mut g, None);
-        eprintln!("{} nodes, {} links: built in {built:?}, laid out in {:?}", g.nodes.len(), g.edges.len(), t.elapsed() - built);
-        std::fs::write(format!("{dir}/graph.svg"), scene(&g, None, 1400.0, 900.0, None).to_svg()).unwrap();
-        let hub = (0..idx.notes.len()).max_by_key(|&i| idx.outgoing(i).len() + idx.backlinks(i).len()).unwrap();
+        eprintln!(
+            "{} nodes, {} links: built in {built:?}, laid out in {:?}",
+            g.nodes.len(),
+            g.edges.len(),
+            t.elapsed() - built
+        );
+        std::fs::write(
+            format!("{dir}/graph.svg"),
+            scene(&g, None, 1400.0, 900.0, None).to_svg(),
+        )
+        .unwrap();
+        let hub = (0..idx.notes.len())
+            .max_by_key(|&i| idx.outgoing(i).len() + idx.backlinks(i).len())
+            .unwrap();
         let mut l = local(&idx, hub, 2, &Options::default());
         layout(&mut l, None);
-        std::fs::write(format!("{dir}/graph-local.svg"), scene(&l, None, 1400.0, 900.0, None).to_svg()).unwrap();
+        std::fs::write(
+            format!("{dir}/graph-local.svg"),
+            scene(&l, None, 1400.0, 900.0, None).to_svg(),
+        )
+        .unwrap();
         let sel = g.nodes.iter().position(|n| n.degree > 15);
-        std::fs::write(format!("{dir}/graph-selected.svg"), scene(&g, sel, 1400.0, 900.0, None).to_svg()).unwrap();
+        std::fs::write(
+            format!("{dir}/graph-selected.svg"),
+            scene(&g, sel, 1400.0, 900.0, None).to_svg(),
+        )
+        .unwrap();
     }
 
     /// Timings on a vault of FORGE_BENCH_N notes (default 10000):
     /// `FORGE_BENCH_N=300000 cargo test --release -p forge-notes bench_scale -- --nocapture`.
     #[test]
     fn bench_scale() {
-        let Ok(n) = std::env::var("FORGE_BENCH_N") else { return };
+        let Ok(n) = std::env::var("FORGE_BENCH_N") else {
+            return;
+        };
         let total: u64 = n.parse().unwrap_or(10_000);
         let mut seed = 99u64;
         let mut rnd = |m: u64| {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (seed >> 33) % m
         };
         let area = (total / 200).max(1);
@@ -818,12 +1135,19 @@ mod tests {
                 };
                 text.push_str(&format!("[[n{j}]] "));
             }
-            raws.push(RawNote { path: format!("a{}/s{}/n{i}.md", i / area / 10, i / area), text, ..Default::default() });
+            raws.push(RawNote {
+                path: format!("a{}/s{}/n{i}.md", i / area / 10, i / area),
+                text,
+                ..Default::default()
+            });
         }
         let t = std::time::Instant::now();
         let idx = Index::build(&raws);
         let t_index = t.elapsed();
-        let hd = crate::cache::Header { saved: 1, vault: "v".into() };
+        let hd = crate::cache::Header {
+            saved: 1,
+            vault: "v".into(),
+        };
         let t = std::time::Instant::now();
         let saved = crate::cache::encode_index(&idx, &hd);
         let t_save = t.elapsed();
@@ -854,7 +1178,9 @@ mod tests {
         let json = scene(&g, None, 1400.0, 900.0, None).to_json();
         let t_scene = t.elapsed();
         let t = std::time::Instant::now();
-        let hub = (0..idx.notes.len()).max_by_key(|&i| idx.outgoing(i).len() + idx.backlinks(i).len()).unwrap();
+        let hub = (0..idx.notes.len())
+            .max_by_key(|&i| idx.outgoing(i).len() + idx.backlinks(i).len())
+            .unwrap();
         let mut l = local(&idx, hub, 2, &Options::default());
         layout(&mut l, None);
         let t_local = t.elapsed();
@@ -881,27 +1207,74 @@ mod tests {
         // chain are what is drawn, not simply the first 200 files.
         let mut raws = Vec::new();
         for i in 0..3000 {
-            let text = if i < 2900 { "[[n2999]] ".to_string() } else if i < 2999 { format!("[[n{}]] ", i + 1) } else { String::new() };
-            raws.push(RawNote { path: format!("f{}/n{i}.md", i % 7), text, ..Default::default() });
+            let text = if i < 2900 {
+                "[[n2999]] ".to_string()
+            } else if i < 2999 {
+                format!("[[n{}]] ", i + 1)
+            } else {
+                String::new()
+            };
+            raws.push(RawNote {
+                path: format!("f{}/n{i}.md", i % 7),
+                text,
+                ..Default::default()
+            });
         }
         let idx = Index::build(&raws);
-        let o = Options { max_nodes: 200, ..Options::default() };
+        let o = Options {
+            max_nodes: 200,
+            ..Options::default()
+        };
         let g = global(&idx, &o);
         assert_eq!(g.nodes.len(), 200);
         assert_eq!(g.hidden, 2800);
-        assert!(g.nodes.iter().any(|n| n.label == "n2999"), "the hub is drawn");
-        assert!(g.nodes.iter().any(|n| n.label == "n2950"), "the chain is drawn");
+        assert!(
+            g.nodes.iter().any(|n| n.label == "n2999"),
+            "the hub is drawn"
+        );
+        assert!(
+            g.nodes.iter().any(|n| n.label == "n2950"),
+            "the chain is drawn"
+        );
         // The same vault draws the same notes every time.
         let again = global(&idx, &o);
-        assert_eq!(g.nodes.iter().map(|n| n.label.clone()).collect::<Vec<_>>(), again.nodes.iter().map(|n| n.label.clone()).collect::<Vec<_>>());
+        assert_eq!(
+            g.nodes.iter().map(|n| n.label.clone()).collect::<Vec<_>>(),
+            again
+                .nodes
+                .iter()
+                .map(|n| n.label.clone())
+                .collect::<Vec<_>>()
+        );
         // A folder filter looks at the rest.
-        let f = global(&idx, &Options { folder: Some("f3".into()), max_nodes: 200, ..Options::default() });
-        assert!(f.nodes.iter().all(|n| matches!(&n.kind, Kind::Note(i) if idx.notes[*i].folder == "f3")));
+        let f = global(
+            &idx,
+            &Options {
+                folder: Some("f3".into()),
+                max_nodes: 200,
+                ..Options::default()
+            },
+        );
+        assert!(
+            f.nodes
+                .iter()
+                .all(|n| matches!(&n.kind, Kind::Note(i) if idx.notes[*i].folder == "f3"))
+        );
     }
 
     #[test]
     fn a_vault_is_indexed_note_by_note_the_same_as_in_one_go() {
-        let raws: Vec<RawNote> = (0..50).map(|i| RawNote { path: format!("d{}/n{i}.md", i % 3), text: format!("---\ntags: [t{}]\n---\nSee [[n{}]] and [[d1/n4]] #x\n", i % 5, (i + 1) % 50), ..Default::default() }).collect();
+        let raws: Vec<RawNote> = (0..50)
+            .map(|i| RawNote {
+                path: format!("d{}/n{i}.md", i % 3),
+                text: format!(
+                    "---\ntags: [t{}]\n---\nSee [[n{}]] and [[d1/n4]] #x\n",
+                    i % 5,
+                    (i + 1) % 50
+                ),
+                ..Default::default()
+            })
+            .collect();
         let whole = Index::build(&raws);
         let light = Index::from_notes(raws.iter().map(Note::parse_light).collect());
         for i in 0..whole.notes.len() {
@@ -914,9 +1287,21 @@ mod tests {
 
     #[test]
     fn a_huge_hub_is_capped_and_dragging_pulls_neighbours() {
-        let mut raws = vec![RawNote { path: "index.md".into(), text: (0..600).map(|i| format!("[[n{i}]] ")).collect(), ..Default::default() }];
+        let mut raws = vec![RawNote {
+            path: "index.md".into(),
+            text: (0..600).map(|i| format!("[[n{i}]] ")).collect(),
+            ..Default::default()
+        }];
         for i in 0..600 {
-            raws.push(RawNote { path: format!("n{i}.md"), text: if i % 3 == 0 { format!("[[n{}]]", (i + 1) % 600) } else { String::new() }, ..Default::default() });
+            raws.push(RawNote {
+                path: format!("n{i}.md"),
+                text: if i % 3 == 0 {
+                    format!("[[n{}]]", (i + 1) % 600)
+                } else {
+                    String::new()
+                },
+                ..Default::default()
+            });
         }
         let idx = Index::build(&raws);
         let hub = idx.find_path("index.md").unwrap();
@@ -925,12 +1310,19 @@ mod tests {
         assert_eq!(g.hidden, 601 - LOCAL_CAP);
         layout(&mut g, None);
         // Pull a linked pair apart: the neighbour of the dragged dot follows.
-        let (a, b) = *g.edges.iter().find(|&&(x, y)| Some(x) != g.center && Some(y) != g.center).unwrap();
+        let (a, b) = *g
+            .edges
+            .iter()
+            .find(|&&(x, y)| Some(x) != g.center && Some(y) != g.center)
+            .unwrap();
         let before = (g.nodes[b].x, g.nodes[b].y);
         g.nodes[a].x += 400.0;
         g.nodes[a].pinned = true;
         relax(&mut g, 6, 0.3);
-        assert!((g.nodes[b].x - before.0).abs() + (g.nodes[b].y - before.1).abs() > 1.0, "the neighbour moved");
+        assert!(
+            (g.nodes[b].x - before.0).abs() + (g.nodes[b].y - before.1).abs() > 1.0,
+            "the neighbour moved"
+        );
         assert!(g.nodes.iter().all(|n| n.x.is_finite() && n.y.is_finite()));
     }
 }

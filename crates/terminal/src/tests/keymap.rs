@@ -374,7 +374,10 @@ fn a_projects_init_rhai_asks_before_it_runs() {
             .expect("the question is up")
             .prompt
             .clone();
-        assert!(prompt.contains(".forge/init.rhai"), "{prompt}");
+        assert!(
+            prompt.replace('\\', "/").contains(".forge/init.rhai"),
+            "{prompt}"
+        );
         assert!(prompt.contains("(y or n)"), "{prompt}");
         press(&mut app, "n");
         assert!(app.minibuffer.is_none());

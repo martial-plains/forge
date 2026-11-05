@@ -245,7 +245,8 @@ impl ModeRegistry {
         if !self.is_major(mode) {
             return Err(format!("{mode} isn't a major mode"));
         }
-        self.interpreters.push((interpreter.to_string(), mode.to_string()));
+        self.interpreters
+            .push((interpreter.to_string(), mode.to_string()));
         Ok(())
     }
 
@@ -278,7 +279,10 @@ impl ModeRegistry {
         }
         if let Some(rest) = line0.strip_prefix("#!") {
             let mut words = rest.split_whitespace();
-            let mut prog = words.next().and_then(|w| w.rsplit('/').next()).unwrap_or("");
+            let mut prog = words
+                .next()
+                .and_then(|w| w.rsplit('/').next())
+                .unwrap_or("");
             if prog == "env" {
                 prog = words.find(|w| !w.starts_with('-')).unwrap_or("");
             }

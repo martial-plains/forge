@@ -30,7 +30,7 @@ pub(super) fn make_row(
     let Ok(meta) = fs::symlink_metadata(path) else {
         return unknown();
     };
-    let perms = mode_string(&meta);
+    let perms = mode_string(name, &meta);
     let kind = perms.chars().next().unwrap_or('.');
     let exec = matches!(perms.chars().nth(3), Some('x' | 's'));
     let size = if meta.is_file() || meta.file_type().is_symlink() {
@@ -104,9 +104,9 @@ pub(super) fn layout_for(b: &Buffer, header: usize) -> Option<Layout> {
     }
 }
 /// A listing's header line, like "  /home/me/src:" — or with "  [by date,
-/// all, tree]" after it for everything that isn't as eza has it.
+/// all, tree]" after it for everything that isn't at its default.
 pub(super) fn parse_header_line(line: &str) -> Option<(PathBuf, View)> {
-    if !line.starts_with("  /") {
+    if !line.starts_with("  ") {
         return None;
     }
     let line = line.trim();
@@ -114,6 +114,9 @@ pub(super) fn parse_header_line(line: &str) -> Option<(PathBuf, View)> {
         Some((dir, rest)) => (dir, rest.strip_suffix(']')?),
         None => (line.strip_suffix(':')?, ""),
     };
+    if !Path::new(dir).is_absolute() && !dir.starts_with('/') {
+        return None;
+    }
     let mut view = View::default();
     for option in options.split(", ").filter(|o| !o.is_empty()) {
         match option {

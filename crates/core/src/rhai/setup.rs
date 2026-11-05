@@ -702,7 +702,12 @@ impl RhaiConfig {
         );
         let s = self.shared.clone();
         engine.register_fn("use_package_report", move || -> Vec<Dynamic> {
-            s.use_log.borrow().iter().cloned().map(Dynamic::from).collect()
+            s.use_log
+                .borrow()
+                .iter()
+                .cloned()
+                .map(Dynamic::from)
+                .collect()
         });
         let s = self.shared.clone();
         let cell = engine_cell;
@@ -1210,10 +1215,11 @@ fn use_code(
     value: &Dynamic,
     catch: bool,
 ) -> RhaiResult<()> {
-    let func = value
-        .clone()
-        .try_cast::<FnPtr>()
-        .ok_or_else(|| err(format!("use_package: {key} is a function, like || {{ ... }}")))?;
+    let func = value.clone().try_cast::<FnPtr>().ok_or_else(|| {
+        err(format!(
+            "use_package: {key} is a function, like || {{ ... }}"
+        ))
+    })?;
     match call_now(s, engine_cell, func, ()) {
         Ok(_) => Ok(()),
         Err(e) if catch => {
@@ -1273,7 +1279,10 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
     let mut wanted: Vec<(String, Option<String>)> = Vec::new();
     if let Some(m) = value.clone().try_cast::<Map>() {
         for (exe, how) in &m {
-            wanted.push((exe.to_string(), Some(as_string(how, "ensure_system_package")?)));
+            wanted.push((
+                exe.to_string(),
+                Some(as_string(how, "ensure_system_package")?),
+            ));
         }
     } else {
         for exe in name_or_names(value, "ensure_system_package")? {
@@ -1295,7 +1304,11 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
         };
         #[cfg(not(test))]
         {
-            let (shell, flag) = if cfg!(windows) { ("cmd", "/C") } else { ("sh", "-c") };
+            let (shell, flag) = if cfg!(windows) {
+                ("cmd", "/C")
+            } else {
+                ("sh", "-c")
+            };
             let _ = std::process::Command::new(shell)
                 .args([flag, &command])
                 .stdin(std::process::Stdio::null())
@@ -1337,7 +1350,11 @@ fn use_package_spec(
     // spellings: autoload is commands, diminish is delight, bind*
     // is bind (Forge has no override map), pin is the git tag/branch/commit.
     let mut spec = spec.clone();
-    for (from, to) in [("autoload", "commands"), ("diminish", "delight"), ("bind_star", "bind")] {
+    for (from, to) in [
+        ("autoload", "commands"),
+        ("diminish", "delight"),
+        ("bind_star", "bind"),
+    ] {
         if let Some(v) = spec.remove(from) {
             if spec.contains_key(to) {
                 if to == "commands" {
@@ -1360,10 +1377,10 @@ fn use_package_spec(
             }
         }
     }
-    if let Some(pin) = spec.remove("pin") {
-        if !spec.contains_key("rev") {
-            spec.insert("rev".into(), pin);
-        }
+    if let Some(pin) = spec.remove("pin")
+        && !spec.contains_key("rev")
+    {
+        spec.insert("rev".into(), pin);
     }
     let spec = &spec;
     let catch = match spec.get("catch") {
@@ -1371,7 +1388,9 @@ fn use_package_spec(
         None => false,
     };
     let skip = |why: &str| {
-        s.use_log.borrow_mut().push(format!("{name}: skipped, {why}"));
+        s.use_log
+            .borrow_mut()
+            .push(format!("{name}: skipped, {why}"));
     };
 
     // Whether to use it at all.
@@ -1604,7 +1623,11 @@ fn use_package_spec(
         .is_some_and(|u| u.lazy());
     s.use_log.borrow_mut().push(format!(
         "{name}: {}",
-        if lazy { "deferred until used" } else { "loads at startup" }
+        if lazy {
+            "deferred until used"
+        } else {
+            "loads at startup"
+        }
     ));
 
     for (ext, mode) in &associations {

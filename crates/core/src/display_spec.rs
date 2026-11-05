@@ -176,6 +176,15 @@ pub fn replacement_with(
     shown
 }
 
+/// The percentage a buffer's text scale stands for: each step is [`STEP`]
+/// times the last. 100 when `pixel_text` is off (a terminal cannot scale).
+pub fn scale_pct(steps: i32, pixel_text: bool) -> u16 {
+    if !pixel_text || steps == 0 {
+        return 100;
+    }
+    ((STEP.powi(steps) * 100.0).round() as i64).clamp(25, 800) as u16
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,13 +282,4 @@ mod tests {
         assert!(replacement(&p, "x", 0).is_none());
         assert!(!changes_text(&p) && !changes_style(&p));
     }
-}
-
-/// The percentage a buffer's text scale stands for: each step is [`STEP`]
-/// times the last. 100 when `pixel_text` is off (a terminal cannot scale).
-pub fn scale_pct(steps: i32, pixel_text: bool) -> u16 {
-    if !pixel_text || steps == 0 {
-        return 100;
-    }
-    ((STEP.powi(steps) * 100.0).round() as i64).clamp(25, 800) as u16
 }

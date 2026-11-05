@@ -943,10 +943,12 @@ final class EditorNSView: NSView, NSMenuDelegate {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        registerForDraggedTypes([.fileURL])
         if let o = keyObserver {
             NotificationCenter.default.removeObserver(o)
             keyObserver = nil
         }
+
         if let o = resignObserver {
             NotificationCenter.default.removeObserver(o)
             resignObserver = nil
@@ -997,6 +999,19 @@ final class EditorNSView: NSView, NSMenuDelegate {
             return nil
         }
         updateGridSize()
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        ForgeMacOSNamespace.fileURLs(on: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = ForgeMacOSNamespace.fileURLs(on: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        for url in urls where url.isFileURL {
+            model?.open(path: url.path)
+        }
+        return true
     }
 
     override func viewDidChangeBackingProperties() {
@@ -1646,7 +1661,9 @@ final class EditorNSView: NSView, NSMenuDelegate {
                 model.runCommand("kill-ring-save")
                 return
             case "v":
-                model.runCommand("yank")
+                if !model.pasteFromPasteboard() {
+                    model.runCommand("yank")
+                }
                 return
             case "o":
                 model.showOpenPanel()

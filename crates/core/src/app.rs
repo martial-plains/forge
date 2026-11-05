@@ -1243,7 +1243,13 @@ mod frame_tests {
         }
         let names: Vec<String> = org_files_in(&dir)
             .iter()
-            .map(|p| p.strip_prefix(&dir).unwrap().display().to_string())
+            .map(|p| {
+                p.strip_prefix(&dir)
+                    .unwrap()
+                    .display()
+                    .to_string()
+                    .replace('\\', "/")
+            })
             .collect();
         assert_eq!(names, ["a/deep/two.org", "a/one.org", "top.org"]);
         let missing = dir.join("new.org");

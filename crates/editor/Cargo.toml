@@ -4,6 +4,7 @@ authors.workspace = true
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Forge's editor application: keys to commands, the minibuffer, plugins and init.rhai, shared by both frontends"
 autobins = false
 

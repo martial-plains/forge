@@ -914,6 +914,81 @@ fn normalize_display(display: &mut Vec<crate::buffer::DisplayRange>) {
     *display = out;
 }
 
+/// A line laid out for text taller than a cell (see [`Buffer::tall_line`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TallLine {
+    /// The text with a blank cell after each character that is wider than one.
+    pub text: String,
+    /// For each character of `text`, the source column it stands for.
+    pub src: Vec<usize>,
+    /// Display columns (start, end) of the stretches that are not normal
+    /// size, with their height in percent.
+    pub runs: Vec<(usize, usize, u16)>,
+}
+
+/// The text of a `margin` specification for `side` among `props`.
+fn margin_of<'a>(props: &'a [crate::buffer::DisplaySpec], side: &str) -> Option<&'a str> {
+    use crate::buffer::DisplayValue::{Str, Symbol};
+    props
+        .iter()
+        .find_map(|s| match (s.name.as_str(), s.args.first(), s.args.get(1)) {
+            ("margin", Some(Str(which) | Symbol(which)), Some(Str(text))) if which == side => {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+}
+
+/// The glyph of a `left-fringe` or `right-fringe` specification for `side`.
+fn fringe_of(props: &[crate::buffer::DisplaySpec], side: &str) -> Option<char> {
+    use crate::buffer::DisplayValue::{Str, Symbol};
+    props
+        .iter()
+        .find_map(|s| match (s.name.as_str(), s.args.first()) {
+            (name, Some(Str(bitmap) | Symbol(bitmap))) if name == side => {
+                Some(fringe_glyph(bitmap))
+            }
+            _ => None,
+        })
+}
+
+/// The character standing in for one of fringe bitmaps. A name that
+/// is a single character is used as it is.
+pub fn fringe_glyph(bitmap: &str) -> char {
+    match bitmap {
+        "left-arrow" => '←',
+        "right-arrow" => '→',
+        "up-arrow" => '↑',
+        "down-arrow" => '↓',
+        "left-curly-arrow" => '↶',
+        "right-curly-arrow" => '↷',
+        "left-triangle" => '◀',
+        "right-triangle" => '▶',
+        "up-triangle" => '▲',
+        "down-triangle" => '▼',
+        "question-mark" => '?',
+        "exclamation-mark" => '!',
+        "filled-rectangle" | "filled-square" => '█',
+        "hollow-rectangle" | "hollow-square" => '□',
+        "empty-line" => '·',
+        "vertical-bar" => '│',
+        "horizontal-bar" => '─',
+        "top-left-angle" => '┌',
+        "top-right-angle" => '┐',
+        "bottom-left-angle" => '└',
+        "bottom-right-angle" => '┘',
+        "left-bracket" => '[',
+        "right-bracket" => ']',
+        other => {
+            let mut chars = other.chars();
+            match (chars.next(), chars.next()) {
+                (Some(c), None) => c,
+                _ => '•',
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1215,80 +1290,5 @@ mod tests {
         b.set_point(Pos::new(0, 0));
         b.insert_str(">> ");
         assert_eq!(b.decoration_keymaps_at(10), ["spell-word"]);
-    }
-}
-
-/// A line laid out for text taller than a cell (see [`Buffer::tall_line`]).
-#[derive(Debug, Clone, PartialEq)]
-pub struct TallLine {
-    /// The text with a blank cell after each character that is wider than one.
-    pub text: String,
-    /// For each character of `text`, the source column it stands for.
-    pub src: Vec<usize>,
-    /// Display columns (start, end) of the stretches that are not normal
-    /// size, with their height in percent.
-    pub runs: Vec<(usize, usize, u16)>,
-}
-
-/// The text of a `margin` specification for `side` among `props`.
-fn margin_of<'a>(props: &'a [crate::buffer::DisplaySpec], side: &str) -> Option<&'a str> {
-    use crate::buffer::DisplayValue::{Str, Symbol};
-    props
-        .iter()
-        .find_map(|s| match (s.name.as_str(), s.args.first(), s.args.get(1)) {
-            ("margin", Some(Str(which) | Symbol(which)), Some(Str(text))) if which == side => {
-                Some(text.as_str())
-            }
-            _ => None,
-        })
-}
-
-/// The glyph of a `left-fringe` or `right-fringe` specification for `side`.
-fn fringe_of(props: &[crate::buffer::DisplaySpec], side: &str) -> Option<char> {
-    use crate::buffer::DisplayValue::{Str, Symbol};
-    props
-        .iter()
-        .find_map(|s| match (s.name.as_str(), s.args.first()) {
-            (name, Some(Str(bitmap) | Symbol(bitmap))) if name == side => {
-                Some(fringe_glyph(bitmap))
-            }
-            _ => None,
-        })
-}
-
-/// The character standing in for one of fringe bitmaps. A name that
-/// is a single character is used as it is.
-pub fn fringe_glyph(bitmap: &str) -> char {
-    match bitmap {
-        "left-arrow" => '←',
-        "right-arrow" => '→',
-        "up-arrow" => '↑',
-        "down-arrow" => '↓',
-        "left-curly-arrow" => '↶',
-        "right-curly-arrow" => '↷',
-        "left-triangle" => '◀',
-        "right-triangle" => '▶',
-        "up-triangle" => '▲',
-        "down-triangle" => '▼',
-        "question-mark" => '?',
-        "exclamation-mark" => '!',
-        "filled-rectangle" | "filled-square" => '█',
-        "hollow-rectangle" | "hollow-square" => '□',
-        "empty-line" => '·',
-        "vertical-bar" => '│',
-        "horizontal-bar" => '─',
-        "top-left-angle" => '┌',
-        "top-right-angle" => '┐',
-        "bottom-left-angle" => '└',
-        "bottom-right-angle" => '┘',
-        "left-bracket" => '[',
-        "right-bracket" => ']',
-        other => {
-            let mut chars = other.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) => c,
-                _ => '•',
-            }
-        }
     }
 }

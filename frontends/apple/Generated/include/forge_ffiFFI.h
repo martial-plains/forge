@@ -258,6 +258,11 @@ void uniffi_forge_ffi_fn_free_forge(uint64_t handle, RustCallStatus *_Nonnull ou
 uint64_t uniffi_forge_ffi_fn_constructor_forge_new(RustBuffer files, int8_t no_config, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_CONSTRUCTOR_FORGE_NEW_GRID
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_CONSTRUCTOR_FORGE_NEW_GRID
+uint64_t uniffi_forge_ffi_fn_constructor_forge_new_grid(RustBuffer files, int8_t no_config, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_CLOSE_CONTEXT_MENU
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_CLOSE_CONTEXT_MENU
 void uniffi_forge_ffi_fn_method_forge_close_context_menu(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -283,6 +288,11 @@ uint64_t uniffi_forge_ffi_fn_method_forge_context_menu(uint64_t ptr
 RustBuffer uniffi_forge_ffi_fn_method_forge_crash(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_DIALOG_RESULT
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_DIALOG_RESULT
+void uniffi_forge_ffi_fn_method_forge_dialog_result(uint64_t ptr, uint32_t id, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_FRAME
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_FRAME
 uint64_t uniffi_forge_ffi_fn_method_forge_frame(uint64_t ptr, uint16_t width, uint16_t height
@@ -301,6 +311,11 @@ uint64_t uniffi_forge_ffi_fn_method_forge_frames(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_GOTO_POSITION
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_GOTO_POSITION
 void uniffi_forge_ffi_fn_method_forge_goto_position(uint64_t ptr, uint32_t line, uint32_t column, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_GRID
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_GRID
+uint64_t uniffi_forge_ffi_fn_method_forge_grid(uint64_t ptr, uint16_t cols, uint16_t rows, int8_t dark
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_HOVER
@@ -326,6 +341,11 @@ uint64_t uniffi_forge_ffi_fn_method_forge_kill_top(uint64_t ptr
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_LOG_PATH
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_LOG_PATH
 RustBuffer uniffi_forge_ffi_fn_method_forge_log_path(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_MACOS_PASTEBOARD_TYPES
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_MACOS_PASTEBOARD_TYPES
+RustBuffer uniffi_forge_ffi_fn_method_forge_macos_pasteboard_types(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_MENU_BAR
@@ -361,6 +381,11 @@ void uniffi_forge_ffi_fn_method_forge_new_tab(uint64_t ptr, uint32_t frame, Rust
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_OPEN_FILE
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_OPEN_FILE
 void uniffi_forge_ffi_fn_method_forge_open_file(uint64_t ptr, RustBuffer path, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_OPEN_URL
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_OPEN_URL
+int8_t uniffi_forge_ffi_fn_method_forge_open_url(uint64_t ptr, RustBuffer url, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_RUN_COMMAND
@@ -406,6 +431,21 @@ void uniffi_forge_ffi_fn_method_forge_select_tab(uint64_t ptr, uint32_t frame, u
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_CELL_SIZE
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_CELL_SIZE
 void uniffi_forge_ffi_fn_method_forge_set_cell_size(uint64_t ptr, double width, double height, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_DARK_MODE
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_DARK_MODE
+void uniffi_forge_ffi_fn_method_forge_set_dark_mode(uint64_t ptr, int8_t dark, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_NATIVE_SCENES
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_NATIVE_SCENES
+void uniffi_forge_ffi_fn_method_forge_set_native_scenes(uint64_t ptr, int8_t on, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_TOUCH_INPUT
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_SET_TOUCH_INPUT
+void uniffi_forge_ffi_fn_method_forge_set_touch_input(uint64_t ptr, int8_t touch, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_FN_METHOD_FORGE_TEXT
@@ -686,211 +726,259 @@ void ffi_forge_ffi_rust_future_complete_void(uint64_t handle, RustCallStatus *_N
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CLOSE_CONTEXT_MENU
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CLOSE_CONTEXT_MENU
 uint16_t uniffi_forge_ffi_checksum_method_forge_close_context_menu(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CLOSE_FRAME
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CLOSE_FRAME
 uint16_t uniffi_forge_ffi_checksum_method_forge_close_frame(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CLOSE_TAB
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CLOSE_TAB
 uint16_t uniffi_forge_ffi_checksum_method_forge_close_tab(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CONTEXT_MENU
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CONTEXT_MENU
 uint16_t uniffi_forge_ffi_checksum_method_forge_context_menu(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CRASH
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_CRASH
 uint16_t uniffi_forge_ffi_checksum_method_forge_crash(void
-    
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_DIALOG_RESULT
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_DIALOG_RESULT
+uint16_t uniffi_forge_ffi_checksum_method_forge_dialog_result(void
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_FRAME
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_FRAME
 uint16_t uniffi_forge_ffi_checksum_method_forge_frame(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_FRAME_AT
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_FRAME_AT
 uint16_t uniffi_forge_ffi_checksum_method_forge_frame_at(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_FRAMES
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_FRAMES
 uint16_t uniffi_forge_ffi_checksum_method_forge_frames(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_GOTO_POSITION
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_GOTO_POSITION
 uint16_t uniffi_forge_ffi_checksum_method_forge_goto_position(void
-    
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_GRID
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_GRID
+uint16_t uniffi_forge_ffi_checksum_method_forge_grid(void
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_HOVER
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_HOVER
 uint16_t uniffi_forge_ffi_checksum_method_forge_hover(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_INTERRUPT
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_INTERRUPT
 uint16_t uniffi_forge_ffi_checksum_method_forge_interrupt(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_KEY
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_KEY
 uint16_t uniffi_forge_ffi_checksum_method_forge_key(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_KILL_TOP
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_KILL_TOP
 uint16_t uniffi_forge_ffi_checksum_method_forge_kill_top(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_LOG_PATH
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_LOG_PATH
 uint16_t uniffi_forge_ffi_checksum_method_forge_log_path(void
-    
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MACOS_PASTEBOARD_TYPES
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MACOS_PASTEBOARD_TYPES
+uint16_t uniffi_forge_ffi_checksum_method_forge_macos_pasteboard_types(void
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MENU_BAR
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MENU_BAR
 uint16_t uniffi_forge_ffi_checksum_method_forge_menu_bar(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MENU_ENTRY
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MENU_ENTRY
 uint16_t uniffi_forge_ffi_checksum_method_forge_menu_entry(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MODIFIER_BUTTON
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MODIFIER_BUTTON
 uint16_t uniffi_forge_ffi_checksum_method_forge_modifier_button(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MOUSE
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MOUSE
 uint16_t uniffi_forge_ffi_checksum_method_forge_mouse(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MOVE_TAB
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_MOVE_TAB
 uint16_t uniffi_forge_ffi_checksum_method_forge_move_tab(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_NEW_TAB
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_NEW_TAB
 uint16_t uniffi_forge_ffi_checksum_method_forge_new_tab(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_OPEN_FILE
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_OPEN_FILE
 uint16_t uniffi_forge_ffi_checksum_method_forge_open_file(void
-    
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_OPEN_URL
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_OPEN_URL
+uint16_t uniffi_forge_ffi_checksum_method_forge_open_url(void
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_RUN_COMMAND
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_RUN_COMMAND
 uint16_t uniffi_forge_ffi_checksum_method_forge_run_command(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SAVE_SESSION
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SAVE_SESSION
 uint16_t uniffi_forge_ffi_checksum_method_forge_save_session(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_PIXELS
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_PIXELS
 uint16_t uniffi_forge_ffi_checksum_method_forge_scroll_pixels(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_TO_COLUMN
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_TO_COLUMN
 uint16_t uniffi_forge_ffi_checksum_method_forge_scroll_to_column(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_TO_LINE
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_TO_LINE
 uint16_t uniffi_forge_ffi_checksum_method_forge_scroll_to_line(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_TO_LINE_PIXELS
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SCROLL_TO_LINE_PIXELS
 uint16_t uniffi_forge_ffi_checksum_method_forge_scroll_to_line_pixels(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SELECT_FRAME
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SELECT_FRAME
 uint16_t uniffi_forge_ffi_checksum_method_forge_select_frame(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SELECT_TAB
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SELECT_TAB
 uint16_t uniffi_forge_ffi_checksum_method_forge_select_tab(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_CELL_SIZE
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_CELL_SIZE
 uint16_t uniffi_forge_ffi_checksum_method_forge_set_cell_size(void
-    
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_DARK_MODE
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_DARK_MODE
+uint16_t uniffi_forge_ffi_checksum_method_forge_set_dark_mode(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_NATIVE_SCENES
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_NATIVE_SCENES
+uint16_t uniffi_forge_ffi_checksum_method_forge_set_native_scenes(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_TOUCH_INPUT
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_SET_TOUCH_INPUT
+uint16_t uniffi_forge_ffi_checksum_method_forge_set_touch_input(void
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_TEXT
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_TEXT
 uint16_t uniffi_forge_ffi_checksum_method_forge_text(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_THEME
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_THEME
 uint16_t uniffi_forge_ffi_checksum_method_forge_theme(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_TOOL_BAR_ITEM
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_METHOD_FORGE_TOOL_BAR_ITEM
 uint16_t uniffi_forge_ffi_checksum_method_forge_tool_bar_item(void
-    
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_CONSTRUCTOR_FORGE_NEW
 #define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_CONSTRUCTOR_FORGE_NEW
 uint16_t uniffi_forge_ffi_checksum_constructor_forge_new(void
-    
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_CONSTRUCTOR_FORGE_NEW_GRID
+#define UNIFFI_FFIDEF_UNIFFI_FORGE_FFI_CHECKSUM_CONSTRUCTOR_FORGE_NEW_GRID
+uint16_t uniffi_forge_ffi_checksum_constructor_forge_new_grid(void
+
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_FORGE_FFI_UNIFFI_CONTRACT_VERSION
 #define UNIFFI_FFIDEF_FFI_FORGE_FFI_UNIFFI_CONTRACT_VERSION
 uint32_t ffi_forge_ffi_uniffi_contract_version(void
-    
+
 );
 #endif
 

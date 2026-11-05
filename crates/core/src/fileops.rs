@@ -50,7 +50,11 @@ pub fn file_name_as_directory(f: &str) -> String {
 /// `(directory-file-name D)`: D without its trailing `/` (a root stays).
 pub fn directory_file_name(d: &str) -> String {
     let t = d.trim_end_matches(is_sep);
-    if t.is_empty() && !d.is_empty() { d[..1].to_string() } else { t.to_string() }
+    if t.is_empty() && !d.is_empty() {
+        d[..1].to_string()
+    } else {
+        t.to_string()
+    }
 }
 
 /// `(file-name-extension F PERIOD)`: the extension of F's last component, or
@@ -59,7 +63,11 @@ pub fn directory_file_name(d: &str) -> String {
 pub fn file_name_extension(f: &str, period: bool) -> Option<String> {
     let name = file_name_nondirectory(f);
     let i = name.rfind('.').filter(|&i| i > 0)?;
-    Some(if period { name[i..].to_string() } else { name[i + 1..].to_string() })
+    Some(if period {
+        name[i..].to_string()
+    } else {
+        name[i + 1..].to_string()
+    })
 }
 
 /// `(file-name-sans-extension F)`.
@@ -107,7 +115,11 @@ pub fn file_name_concat(parts: &[&str]) -> String {
 pub fn file_name_absolute_p(f: &str) -> bool {
     f.starts_with(is_sep) || f == "~" || f.starts_with("~/") || {
         let b = f.as_bytes();
-        cfg!(windows) && b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && is_sep(b[2] as char)
+        cfg!(windows)
+            && b.len() >= 3
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && is_sep(b[2] as char)
     }
 }
 
@@ -127,19 +139,24 @@ pub fn file_name_parent_directory(f: &str) -> Option<String> {
     match file_name_directory(&t) {
         Some(d) => Some(d),
         None if t == "." || t == ".." || t.ends_with("/..") => Some(format!("{t}/../")),
-        None => Some("./".to_string()).filter(|_| !file_name_absolute_p(&t)).or(None),
+        None => (!file_name_absolute_p(&t)).then_some("./".to_string()),
     }
 }
 
 /// The home directory, from the environment.
 pub fn home() -> Option<String> {
-    std::env::var("HOME").ok().or_else(|| std::env::var("USERPROFILE").ok()).filter(|h| !h.is_empty())
+    std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .filter(|h| !h.is_empty())
 }
 
 fn default_dir(dir: Option<&str>) -> String {
     match dir {
         Some(d) if !d.is_empty() => expand_file_name(d, None),
-        _ => std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_else(|_| "/".into()),
+        _ => std::env::current_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|_| "/".into()),
     }
 }
 
@@ -149,7 +166,11 @@ fn default_dir(dir: Option<&str>) -> String {
 pub fn expand_file_name(name: &str, dir: Option<&str>) -> String {
     let full = if name == "~" || name.starts_with("~/") {
         match home() {
-            Some(h) => format!("{}/{}", h.trim_end_matches(is_sep), name[1..].trim_start_matches(is_sep)),
+            Some(h) => format!(
+                "{}/{}",
+                h.trim_end_matches(is_sep),
+                name[1..].trim_start_matches(is_sep)
+            ),
             None => name.to_string(),
         }
     } else if file_name_absolute_p(name) {
@@ -164,7 +185,10 @@ pub fn expand_file_name(name: &str, dir: Option<&str>) -> String {
         match c {
             "" | "." => {}
             ".." => {
-                if parts.last().is_some_and(|p| *p != ".." && !(p.len() == 2 && p.ends_with(':'))) {
+                if parts
+                    .last()
+                    .is_some_and(|p| *p != ".." && !(p.len() == 2 && p.ends_with(':')))
+                {
                     parts.pop();
                 } else if !rooted {
                     parts.push("..");
@@ -173,7 +197,11 @@ pub fn expand_file_name(name: &str, dir: Option<&str>) -> String {
             c => parts.push(c),
         }
     }
-    let mut out = if rooted { "/".to_string() } else { String::new() };
+    let mut out = if rooted {
+        "/".to_string()
+    } else {
+        String::new()
+    };
     out.push_str(&parts.join("/"));
     if trailing && !out.ends_with('/') {
         out.push('/');
@@ -184,7 +212,10 @@ pub fn expand_file_name(name: &str, dir: Option<&str>) -> String {
 /// `(file-relative-name F DIR)`: F as seen from DIR (default: the current
 /// directory), with `..` where it must climb.
 pub fn file_relative_name(f: &str, dir: Option<&str>) -> String {
-    let (f, d) = (expand_file_name(f, None), expand_file_name(&file_name_as_directory(&default_dir(dir)), None));
+    let (f, d) = (
+        expand_file_name(f, None),
+        expand_file_name(&file_name_as_directory(&default_dir(dir)), None),
+    );
     let fc: Vec<&str> = f.split(is_sep).filter(|s| !s.is_empty()).collect();
     let dc: Vec<&str> = d.split(is_sep).filter(|s| !s.is_empty()).collect();
     let common = fc.iter().zip(&dc).take_while(|(a, b)| a == b).count();
@@ -203,13 +234,20 @@ pub fn file_relative_name(f: &str, dir: Option<&str>) -> String {
 /// `(abbreviate-file-name F)`: F with the home directory as `~`.
 pub fn abbreviate_file_name(f: &str) -> String {
     if let Some(h) = home() {
+        let h = expand_file_name(&h, None);
         let h = h.trim_end_matches(is_sep);
+        let f = if file_name_absolute_p(f) {
+            expand_file_name(f, None)
+        } else {
+            f.to_string()
+        };
         if f == h {
             return "~".into();
         }
         if let Some(rest) = f.strip_prefix(h).filter(|r| r.starts_with(is_sep)) {
             return format!("~{rest}");
         }
+        return f;
     }
     f.to_string()
 }
@@ -241,8 +279,18 @@ fn names_in(dir: &str, nosort: bool) -> io::Result<Vec<String>> {
 /// `..` included. `full` makes them absolute; `matching` keeps those whose
 /// own name (not the directory part) contains a match; `count` stops after
 /// that many.
-pub fn directory_files(dir: &str, full: bool, matching: Option<&Regex>, nosort: bool, count: Option<usize>) -> io::Result<Vec<String>> {
-    let base = if full { Some(expand_file_name(&file_name_as_directory(dir), None)) } else { None };
+pub fn directory_files(
+    dir: &str,
+    full: bool,
+    matching: Option<&Regex>,
+    nosort: bool,
+    count: Option<usize>,
+) -> io::Result<Vec<String>> {
+    let base = if full {
+        Some(expand_file_name(&file_name_as_directory(dir), None))
+    } else {
+        None
+    };
     let mut out = Vec::new();
     for n in names_in(dir, nosort)? {
         if count.is_some_and(|c| out.len() >= c) {
@@ -285,7 +333,9 @@ pub enum Kind {
 }
 
 fn secs(t: io::Result<std::time::SystemTime>) -> i64 {
-    t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64)
+    t.ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 fn mode_string(meta: &fs::Metadata, kind: Kind) -> String {
@@ -320,9 +370,17 @@ fn mode_string(meta: &fs::Metadata, kind: Kind) -> String {
     }
     #[cfg(not(unix))]
     {
-        let w = if meta.permissions().readonly() { '-' } else { 'w' };
-        format!("{lead}r{w}x------")
+        let w = if meta.permissions().readonly() {
+            '-'
+        } else {
+            'w'
+        };
+        format!("{lead}r{w}-r{w}-r{w}-")
     }
+}
+
+fn path_text(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// `(file-attributes F)`, without following a final symbolic link.
@@ -353,17 +411,28 @@ pub fn file_attributes(f: &str) -> io::Result<Attrs> {
         accessed: secs(meta.accessed()),
         changed,
         mode: mode_string(&meta, kind),
-        target: (kind == Kind::Link).then(|| fs::read_link(&p).map(|t| t.display().to_string()).unwrap_or_default()),
+        target: (kind == Kind::Link)
+            .then(|| fs::read_link(&p).map(|t| path_text(&t)).unwrap_or_default()),
     })
 }
 
 /// `(directory-files-and-attributes DIR FULL MATCH NOSORT ID-FORMAT COUNT)`:
 /// each name with its attributes.
-pub fn directory_files_and_attributes(dir: &str, full: bool, matching: Option<&Regex>, nosort: bool, count: Option<usize>) -> io::Result<Vec<(String, Attrs)>> {
+pub fn directory_files_and_attributes(
+    dir: &str,
+    full: bool,
+    matching: Option<&Regex>,
+    nosort: bool,
+    count: Option<usize>,
+) -> io::Result<Vec<(String, Attrs)>> {
     let base = expand_file_name(&file_name_as_directory(dir), None);
     let mut out = Vec::new();
     for name in directory_files(dir, full, matching, nosort, count)? {
-        let at = if full { name.clone() } else { format!("{base}{name}") };
+        let at = if full {
+            name.clone()
+        } else {
+            format!("{base}{name}")
+        };
         if let Ok(a) = file_attributes(&at) {
             out.push((name, a));
         }
@@ -390,9 +459,21 @@ pub fn directory_files_recursively(
     descend: Option<&dyn Fn(&str) -> bool>,
     follow_symlinks: bool,
 ) -> Vec<String> {
-    fn walk(dir: &str, re: &Regex, inc: bool, descend: Option<&dyn Fn(&str) -> bool>, follow: bool, out: &mut Vec<String>) {
-        let Ok(rd) = fs::read_dir(path_of(dir)) else { return };
-        let mut names: Vec<String> = rd.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    fn walk(
+        dir: &str,
+        re: &Regex,
+        inc: bool,
+        descend: Option<&dyn Fn(&str) -> bool>,
+        follow: bool,
+        out: &mut Vec<String>,
+    ) {
+        let Ok(rd) = fs::read_dir(path_of(dir)) else {
+            return;
+        };
+        let mut names: Vec<String> = rd
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
         names.sort();
         let base = file_name_as_directory(dir);
         for n in names {
@@ -412,7 +493,14 @@ pub fn directory_files_recursively(
         }
     }
     let mut out = Vec::new();
-    walk(&expand_file_name(dir, None), regexp, include_dirs, descend, follow_symlinks, &mut out);
+    walk(
+        &expand_file_name(dir, None),
+        regexp,
+        include_dirs,
+        descend,
+        follow_symlinks,
+        &mut out,
+    );
     out
 }
 
@@ -422,7 +510,11 @@ pub fn directory_files_recursively(
 /// trailing `/`; None at the top without a hit.
 pub fn locate_dominating_file(file: &str, found: &dyn Fn(&str) -> bool) -> Option<String> {
     let abs = expand_file_name(file, None);
-    let mut dir = if path_of(&abs).is_dir() { file_name_as_directory(&abs) } else { file_name_directory(&abs).unwrap_or_else(|| "/".into()) };
+    let mut dir = if path_of(&abs).is_dir() {
+        file_name_as_directory(&abs)
+    } else {
+        file_name_directory(&abs).unwrap_or_else(|| "/".into())
+    };
     loop {
         if found(&dir) {
             return Some(dir);
@@ -439,7 +531,9 @@ pub fn locate_dominating_file(file: &str, found: &dyn Fn(&str) -> bool) -> Optio
 /// `locate-dominating-file` for a file name: the first directory holding
 /// something called `name`.
 pub fn locate_dominating_name(file: &str, name: &str) -> Option<String> {
-    locate_dominating_file(file, &|d| fs::symlink_metadata(Path::new(d).join(name)).is_ok())
+    locate_dominating_file(file, &|d| {
+        fs::symlink_metadata(Path::new(d).join(name)).is_ok()
+    })
 }
 
 /// The real name of a file, even one that doesn't exist yet: the nearest
@@ -450,7 +544,10 @@ fn truename(f: &str) -> PathBuf {
     let mut cur = p.as_path();
     loop {
         if let Ok(c) = cur.canonicalize() {
-            return rest.iter().rev().fold(c, |acc, part: &std::ffi::OsString| acc.join(part));
+            return rest
+                .iter()
+                .rev()
+                .fold(c, |acc, part: &std::ffi::OsString| acc.join(part));
         }
         match (cur.file_name(), cur.parent()) {
             (Some(n), Some(par)) => {
@@ -522,13 +619,33 @@ fn has_wildcard(s: &str) -> bool {
 /// a `/`. With `regexp`, only the last component is a regexp. An absolute
 /// PATTERN gives absolute names; a relative one gives names relative to
 /// `dir` (default: the current directory), or absolute with `full`.
-pub fn file_expand_wildcards(pattern: &str, full: bool, regexp: bool, dir: Option<&str>) -> Result<Vec<String>, String> {
+pub fn file_expand_wildcards(
+    pattern: &str,
+    full: bool,
+    regexp: bool,
+    dir: Option<&str>,
+) -> Result<Vec<String>, String> {
     let absolute = file_name_absolute_p(pattern);
-    let root = if absolute { String::new() } else { file_name_as_directory(&default_dir(dir)) };
-    let pat = if pattern == "~" || pattern.starts_with("~/") { expand_file_name(pattern, None) } else { pattern.to_string() };
-    let comps: Vec<&str> = pat.split(is_sep).collect();
+    let root = if absolute {
+        String::new()
+    } else {
+        file_name_as_directory(&default_dir(dir))
+    };
+    let pat = if pattern == "~" || pattern.starts_with("~/") {
+        expand_file_name(pattern, None)
+    } else {
+        pattern.to_string()
+    };
+    // In a regexp, `\` escapes the next character, so it can't also be a
+    // path separator there.
+    let sep = |c: char| c == '/' || (!regexp && cfg!(windows) && c == '\\');
+    let comps: Vec<&str> = pat.split(sep).collect();
     let n = comps.len();
-    let mut hits: Vec<String> = vec![if pat.starts_with(is_sep) { "/".to_string() } else { String::new() }];
+    let mut hits: Vec<String> = vec![if pat.starts_with(sep) {
+        "/".to_string()
+    } else {
+        String::new()
+    }];
     for (i, c) in comps.iter().enumerate() {
         if c.is_empty() {
             continue;
@@ -546,8 +663,14 @@ pub fn file_expand_wildcards(pattern: &str, full: bool, regexp: bool, dir: Optio
             let at = format!("{root}{h}");
             match &re {
                 Some(re) => {
-                    let Ok(rd) = fs::read_dir(path_of(if at.is_empty() { "." } else { &at })) else { continue };
-                    let mut names: Vec<String> = rd.filter_map(Result::ok).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+                    let Ok(rd) = fs::read_dir(path_of(if at.is_empty() { "." } else { &at }))
+                    else {
+                        continue;
+                    };
+                    let mut names: Vec<String> = rd
+                        .filter_map(Result::ok)
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect();
                     names.sort();
                     for name in names.into_iter().filter(|nm| re.is_match(nm)) {
                         next.push(format!("{h}{name}{}", if last { "" } else { "/" }));
@@ -569,7 +692,11 @@ pub fn file_expand_wildcards(pattern: &str, full: bool, regexp: bool, dir: Optio
         .into_iter()
         .map(|h| {
             let h = h.trim_end_matches('/').to_string();
-            if full && !absolute { format!("{root}{h}") } else { h }
+            if full && !absolute {
+                format!("{root}{h}")
+            } else {
+                h
+            }
         })
         .collect())
 }
@@ -584,7 +711,12 @@ pub fn make_directory(dir: &str, parents: bool) -> io::Result<bool> {
     if p.is_dir() && parents {
         return Ok(false);
     }
-    if parents { fs::create_dir_all(&p) } else { fs::create_dir(&p) }.map(|()| true)
+    if parents {
+        fs::create_dir_all(&p)
+    } else {
+        fs::create_dir(&p)
+    }
+    .map(|()| true)
 }
 
 /// `(make-empty-file FILE PARENTS)`: make an empty file; it is an error if
@@ -594,7 +726,11 @@ pub fn make_empty_file(file: &str, parents: bool) -> io::Result<()> {
     if parents && let Some(d) = p.parent() {
         fs::create_dir_all(d)?;
     }
-    fs::OpenOptions::new().write(true).create_new(true).open(p).map(|_| ())
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(p)
+        .map(|_| ())
 }
 
 fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
@@ -624,10 +760,18 @@ fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
 /// directory that exists, FROM is copied *into* it (as `TO/NAME`) unless
 /// `copy_contents`, which copies what is inside FROM into TO. Returns the
 /// directory that was written.
-pub fn copy_directory(from: &str, to: &str, parents: bool, copy_contents: bool) -> io::Result<String> {
+pub fn copy_directory(
+    from: &str,
+    to: &str,
+    parents: bool,
+    copy_contents: bool,
+) -> io::Result<String> {
     let src = path_of(from);
     if !src.is_dir() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, format!("{from}: not a directory")));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{from}: not a directory"),
+        ));
     }
     let mut dst = path_of(to);
     let into_existing = dst.is_dir() && !copy_contents && !to.is_empty();
@@ -635,13 +779,22 @@ pub fn copy_directory(from: &str, to: &str, parents: bool, copy_contents: bool) 
         dst = dst.join(src.file_name().unwrap_or_default());
     }
     if dst.starts_with(&src) && dst != src {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot copy a directory into itself"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot copy a directory into itself",
+        ));
     }
-    if !parents && let Some(par) = dst.parent() && !par.is_dir() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, format!("{}: no such directory", par.display())));
+    if !parents
+        && let Some(par) = dst.parent()
+        && !par.is_dir()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{}: no such directory", par.display()),
+        ));
     }
     copy_tree(&src, &dst)?;
-    Ok(dst.display().to_string())
+    Ok(path_text(&dst))
 }
 
 /// `(delete-directory D RECURSIVE)`: remove a directory; without
@@ -651,7 +804,11 @@ pub fn delete_directory(dir: &str, recursive: bool) -> io::Result<()> {
     if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
         return fs::remove_file(p);
     }
-    if recursive { fs::remove_dir_all(p) } else { fs::remove_dir(p) }
+    if recursive {
+        fs::remove_dir_all(p)
+    } else {
+        fs::remove_dir(p)
+    }
 }
 
 // ------------------------------------------------------- insert-directory
@@ -670,7 +827,9 @@ fn civil(days: i64) -> (i64, usize, i64) {
 
 /// `ls`'s date: `Mon DD HH:MM` for the last six months, else `Mon DD  YYYY`.
 fn ls_date(t: i64, now: i64) -> String {
-    const M: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const M: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let (y, m, d) = civil(t.div_euclid(86_400));
     let rem = t.rem_euclid(86_400);
     if (now - t).abs() < 182 * 86_400 {
@@ -700,12 +859,14 @@ fn human(n: u64) -> String {
 fn id_name(file: &str, id: u32) -> String {
     fs::read_to_string(file)
         .ok()
-        .and_then(|t| t.lines().find_map(|l| {
-            let mut f = l.split(':');
-            let name = f.next()?;
-            f.next()?;
-            (f.next()?.parse::<u32>().ok()? == id).then(|| name.to_string())
-        }))
+        .and_then(|t| {
+            t.lines().find_map(|l| {
+                let mut f = l.split(':');
+                let name = f.next()?;
+                f.next()?;
+                (f.next()?.parse::<u32>().ok()? == id).then(|| name.to_string())
+            })
+        })
         .unwrap_or_else(|| id.to_string())
 }
 
@@ -771,8 +932,18 @@ impl LsSwitches {
 }
 
 fn ls_line(dir: &str, name: &str, sw: &LsSwitches, now: i64) -> Option<String> {
-    let at = if name.is_empty() { dir.to_string() } else if dir.is_empty() { name.to_string() } else { format!("{}{name}", file_name_as_directory(dir)) };
-    let shown = if name.is_empty() { at.clone() } else { name.to_string() };
+    let at = if name.is_empty() {
+        dir.to_string()
+    } else if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}{name}", file_name_as_directory(dir))
+    };
+    let shown = if name.is_empty() {
+        at.clone()
+    } else {
+        name.to_string()
+    };
     let a = file_attributes(&at).ok()?;
     let mark = if sw.classify {
         match a.kind {
@@ -787,8 +958,16 @@ fn ls_line(dir: &str, name: &str, sw: &LsSwitches, now: i64) -> Option<String> {
     if !sw.long {
         return Some(format!("{shown}{mark}"));
     }
-    let size = if sw.human { human(a.size) } else { a.size.to_string() };
-    let target = a.target.as_ref().map(|t| format!(" -> {t}")).unwrap_or_default();
+    let size = if sw.human {
+        human(a.size)
+    } else {
+        a.size.to_string()
+    };
+    let target = a
+        .target
+        .as_ref()
+        .map(|t| format!(" -> {t}"))
+        .unwrap_or_default();
     Some(format!(
         "{} {:>2} {} {} {:>6} {} {shown}{mark}{target}",
         a.mode,
@@ -805,7 +984,13 @@ fn ls_line(dir: &str, name: &str, sw: &LsSwitches, now: i64) -> Option<String> {
 /// FILE's listing -- the entries of a directory when `full_directory`,
 /// FILE itself otherwise (or with `-d`) -- or, with `wildcard`, every file the
 /// pattern names. Switches: `-l -a -A -h -r -t -S -d -1 -F -R`.
-pub fn insert_directory(file: &str, switches: &[String], wildcard: bool, full_directory: bool, now: i64) -> Result<String, String> {
+pub fn insert_directory(
+    file: &str,
+    switches: &[String],
+    wildcard: bool,
+    full_directory: bool,
+    now: i64,
+) -> Result<String, String> {
     let sw = LsSwitches::parse(switches);
     let mut out = String::new();
     let sort = |names: &mut Vec<(String, i64, u64)>| {
@@ -825,7 +1010,11 @@ pub fn insert_directory(file: &str, switches: &[String], wildcard: bool, full_di
             .into_iter()
             .map(|n| {
                 let a = file_attributes(&n).ok();
-                (n, a.as_ref().map_or(0, |a| a.modified), a.map_or(0, |a| a.size))
+                (
+                    n,
+                    a.as_ref().map_or(0, |a| a.modified),
+                    a.map_or(0, |a| a.size),
+                )
             })
             .collect();
         sort(&mut names);
@@ -848,21 +1037,39 @@ pub fn insert_directory(file: &str, switches: &[String], wildcard: bool, full_di
         }
         return Ok(out);
     }
-    fn one(dir: &str, sw: &LsSwitches, now: i64, out: &mut String, header: bool, sort: &dyn Fn(&mut Vec<(String, i64, u64)>)) -> Result<(), String> {
+    fn one(
+        dir: &str,
+        sw: &LsSwitches,
+        now: i64,
+        out: &mut String,
+        header: bool,
+        sort: &dyn Fn(&mut Vec<(String, i64, u64)>),
+    ) -> Result<(), String> {
         let mut names: Vec<(String, i64, u64)> = Vec::new();
         for n in names_in(dir, true).map_err(|e| format!("{dir}: {e}"))? {
-            if !(sw.all || n.starts_with('.') == false || sw.almost_all && n != "." && n != "..") {
+            if !(sw.all || !n.starts_with('.') || sw.almost_all && n != "." && n != "..") {
                 continue;
             }
             let a = file_attributes(&format!("{}{n}", file_name_as_directory(dir))).ok();
-            names.push((n, a.as_ref().map_or(0, |a| a.modified), a.map_or(0, |a| a.size)));
+            names.push((
+                n,
+                a.as_ref().map_or(0, |a| a.modified),
+                a.map_or(0, |a| a.size),
+            ));
         }
         sort(&mut names);
         if header {
             out.push_str(&format!("{}:\n", directory_file_name(dir)));
         }
         if sw.long {
-            let total: u64 = names.iter().filter_map(|(n, ..)| fs::symlink_metadata(path_of(&format!("{}{n}", file_name_as_directory(dir)))).ok()).map(|m| m.len().div_ceil(1024)).sum();
+            let total: u64 = names
+                .iter()
+                .filter_map(|(n, ..)| {
+                    fs::symlink_metadata(path_of(&format!("{}{n}", file_name_as_directory(dir))))
+                        .ok()
+                })
+                .map(|m| m.len().div_ceil(1024))
+                .sum();
             out.push_str(&format!("total {total}\n"));
         }
         for (n, ..) in &names {
@@ -874,7 +1081,12 @@ pub fn insert_directory(file: &str, switches: &[String], wildcard: bool, full_di
         if sw.recursive {
             for (n, ..) in &names {
                 let sub = format!("{}{n}", file_name_as_directory(dir));
-                if n != "." && n != ".." && path_of(&sub).is_dir() && !fs::symlink_metadata(path_of(&sub)).is_ok_and(|m| m.file_type().is_symlink()) {
+                if n != "."
+                    && n != ".."
+                    && path_of(&sub).is_dir()
+                    && !fs::symlink_metadata(path_of(&sub))
+                        .is_ok_and(|m| m.file_type().is_symlink())
+                {
                     out.push('\n');
                     one(&sub, sw, now, out, true, sort)?;
                 }
@@ -882,13 +1094,25 @@ pub fn insert_directory(file: &str, switches: &[String], wildcard: bool, full_di
         }
         Ok(())
     }
-    one(&expand_file_name(file, None), &sw, now, &mut out, sw.recursive, &sort)?;
+    one(
+        &expand_file_name(file, None),
+        &sw,
+        now,
+        &mut out,
+        sw.recursive,
+        &sort,
+    )?;
     Ok(out)
 }
 
 /// Run an external `ls` (the `insert-directory-program` setting) the way
 /// Forge does and return its output.
-pub fn insert_directory_with(program: &str, file: &str, switches: &[String], full_directory: bool) -> Result<String, String> {
+pub fn insert_directory_with(
+    program: &str,
+    file: &str,
+    switches: &[String],
+    full_directory: bool,
+) -> Result<String, String> {
     let mut cmd = std::process::Command::new(program);
     cmd.args(switches.iter().flat_map(|s| s.split_whitespace()));
     if full_directory && !switches.iter().any(|s| s.contains('d')) {
@@ -918,12 +1142,19 @@ pub fn insert_directory_program() -> String {
 
 /// The listing `insert-directory` makes now, by the program setting or by
 /// Forge's own.
-pub fn directory_listing(file: &str, switches: &[String], wildcard: bool, full_directory: bool) -> Result<String, String> {
+pub fn directory_listing(
+    file: &str,
+    switches: &[String],
+    wildcard: bool,
+    full_directory: bool,
+) -> Result<String, String> {
     let program = insert_directory_program();
     if !program.is_empty() && !wildcard {
         return insert_directory_with(&program, file, switches, full_directory);
     }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
     insert_directory(file, switches, wildcard, full_directory, now)
 }
 
@@ -940,6 +1171,10 @@ mod tests {
         d
     }
 
+    fn text(path: &Path) -> String {
+        path.display().to_string().replace('\\', "/")
+    }
+
     #[test]
     fn names_are_taken_apart() {
         assert_eq!(file_name_directory("/a/b/c.txt").as_deref(), Some("/a/b/"));
@@ -950,20 +1185,34 @@ mod tests {
         assert_eq!(file_name_as_directory(""), "./");
         assert_eq!(directory_file_name("/a/b//"), "/a/b");
         assert_eq!(directory_file_name("/"), "/");
-        assert_eq!(file_name_extension("/a/b.tar.gz", false).as_deref(), Some("gz"));
-        assert_eq!(file_name_extension("/a/b.tar.gz", true).as_deref(), Some(".gz"));
+        assert_eq!(
+            file_name_extension("/a/b.tar.gz", false).as_deref(),
+            Some("gz")
+        );
+        assert_eq!(
+            file_name_extension("/a/b.tar.gz", true).as_deref(),
+            Some(".gz")
+        );
         assert_eq!(file_name_extension("/a/.hidden", false), None);
         assert_eq!(file_name_extension("/a/foo.", false).as_deref(), Some(""));
         assert_eq!(file_name_sans_extension("/a/b.tar.gz"), "/a/b.tar");
         assert_eq!(file_name_sans_extension("/a.d/noext"), "/a.d/noext");
         assert_eq!(file_name_base("/a/b.tar.gz"), "b.tar");
-        assert_eq!(file_name_with_extension("/a/b.txt", ".md").unwrap(), "/a/b.md");
+        assert_eq!(
+            file_name_with_extension("/a/b.txt", ".md").unwrap(),
+            "/a/b.md"
+        );
         assert_eq!(file_name_with_extension("/a/b", "md").unwrap(), "/a/b.md");
         assert!(file_name_with_extension("/a/", "md").is_err());
         assert_eq!(file_name_concat(&["/a", "b", "", "c/"]), "/a/b/c/");
         assert_eq!(file_name_split("/a/b/"), ["", "a", "b", ""]);
-        assert!(file_name_absolute_p("/x") && file_name_absolute_p("~/x") && !file_name_absolute_p("x"));
-        assert_eq!(file_name_parent_directory("/a/b/c").as_deref(), Some("/a/b/"));
+        assert!(
+            file_name_absolute_p("/x") && file_name_absolute_p("~/x") && !file_name_absolute_p("x")
+        );
+        assert_eq!(
+            file_name_parent_directory("/a/b/c").as_deref(),
+            Some("/a/b/")
+        );
         assert_eq!(file_name_parent_directory("/a/b/").as_deref(), Some("/a/"));
         assert_eq!(file_name_parent_directory("/"), None);
     }
@@ -978,6 +1227,7 @@ mod tests {
         assert_eq!(file_relative_name("/a/x", Some("/a/b/c")), "../../x");
         assert_eq!(file_relative_name("/a/b", Some("/a/b")), ".");
         if let Some(h) = home() {
+            let h = expand_file_name(&h, None);
             let h = h.trim_end_matches('/').to_string();
             assert_eq!(expand_file_name("~/x", None), format!("{h}/x"));
             assert_eq!(abbreviate_file_name(&format!("{h}/x")), "~/x");
@@ -992,25 +1242,48 @@ mod tests {
             fs::write(d.join(n), "").unwrap();
         }
         fs::create_dir(d.join("sub")).unwrap();
-        let ds = d.display().to_string();
-        assert_eq!(directory_files(&ds, false, None, false, None).unwrap(), [".", "..", "a.org", "b.txt", "c.txt", "sub"]);
+        let ds = text(&d);
+        assert_eq!(
+            directory_files(&ds, false, None, false, None).unwrap(),
+            [".", "..", "a.org", "b.txt", "c.txt", "sub"]
+        );
         let txt = Regex::new(r"\.txt$").unwrap();
-        assert_eq!(directory_files(&ds, false, Some(&txt), false, None).unwrap(), ["b.txt", "c.txt"]);
-        assert_eq!(directory_files(&ds, true, Some(&txt), false, Some(1)).unwrap(), [format!("{ds}/b.txt")]);
+        assert_eq!(
+            directory_files(&ds, false, Some(&txt), false, None).unwrap(),
+            ["b.txt", "c.txt"]
+        );
+        assert_eq!(
+            directory_files(&ds, true, Some(&txt), false, Some(1)).unwrap(),
+            [format!("{ds}/b.txt")]
+        );
         let nodot = Regex::new(NO_DOT_FILES_REGEXP).unwrap();
-        assert_eq!(directory_files(&ds, false, Some(&nodot), false, None).unwrap().len(), 4);
+        assert_eq!(
+            directory_files(&ds, false, Some(&nodot), false, None)
+                .unwrap()
+                .len(),
+            4
+        );
         assert!(directory_files(&format!("{ds}/missing"), false, None, false, None).is_err());
         let with = directory_files_and_attributes(&ds, false, Some(&txt), false, None).unwrap();
         assert_eq!(with.len(), 2);
         assert_eq!(with[0].1.kind, Kind::File);
-        assert!(directory_files_and_attributes(&ds, false, Some(&nodot), false, None).unwrap().iter().any(|(n, a)| n == "sub" && a.kind == Kind::Dir));
+        assert!(
+            directory_files_and_attributes(&ds, false, Some(&nodot), false, None)
+                .unwrap()
+                .iter()
+                .any(|(n, a)| n == "sub" && a.kind == Kind::Dir)
+        );
         assert!(!directory_empty_p(&ds));
         assert!(directory_empty_p(&d.join("sub").display().to_string()));
         assert!(!directory_empty_p(&d.join("nope").display().to_string()));
         assert!(!directory_empty_p(&d.join("a.org").display().to_string()));
         // The no-dot regexp on an empty directory finds nothing.
         let e = d.join("sub").display().to_string();
-        assert!(directory_files(&e, false, Some(&nodot), false, None).unwrap().is_empty());
+        assert!(
+            directory_files(&e, false, Some(&nodot), false, None)
+                .unwrap()
+                .is_empty()
+        );
         let _ = fs::remove_dir_all(d);
     }
 
@@ -1019,22 +1292,54 @@ mod tests {
         let d = scratch("rec");
         fs::create_dir_all(d.join("x/y")).unwrap();
         fs::create_dir_all(d.join("z")).unwrap();
-        for f in ["b.org", "a.org", "x/m.org", "x/y/n.org", "x/skip.md", "z/o.org"] {
+        for f in [
+            "b.org",
+            "a.org",
+            "x/m.org",
+            "x/y/n.org",
+            "x/skip.md",
+            "z/o.org",
+        ] {
             fs::write(d.join(f), "").unwrap();
         }
-        let ds = d.display().to_string();
+        let ds = text(&d);
         let re = Regex::new(r"\.org$").unwrap();
-        let rel = |v: Vec<String>| v.into_iter().map(|p| p[ds.len() + 1..].to_string()).collect::<Vec<_>>();
-        assert_eq!(rel(directory_files_recursively(&ds, &re, false, None, false)), ["a.org", "b.org", "x/m.org", "x/y/n.org", "z/o.org"]);
+        let rel = |v: Vec<String>| {
+            v.into_iter()
+                .map(|p| p[ds.len() + 1..].to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            rel(directory_files_recursively(&ds, &re, false, None, false)),
+            ["a.org", "b.org", "x/m.org", "x/y/n.org", "z/o.org"]
+        );
         let any = Regex::new("^[xyz]$").unwrap();
-        assert_eq!(rel(directory_files_recursively(&ds, &any, true, None, false)), ["x/y", "x", "z"]);
+        assert_eq!(
+            rel(directory_files_recursively(&ds, &any, true, None, false)),
+            ["x/y", "x", "z"]
+        );
         let skip_x = |p: &str| !p.ends_with("/x");
-        assert_eq!(rel(directory_files_recursively(&ds, &re, false, Some(&skip_x), false)), ["a.org", "b.org", "z/o.org"]);
+        assert_eq!(
+            rel(directory_files_recursively(
+                &ds,
+                &re,
+                false,
+                Some(&skip_x),
+                false
+            )),
+            ["a.org", "b.org", "z/o.org"]
+        );
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(d.join("z"), d.join("link")).unwrap();
-            assert_eq!(directory_files_recursively(&ds, &re, false, None, false).len(), 5);
-            assert_eq!(directory_files_recursively(&ds, &re, false, None, true).len(), 6);
+            assert_eq!(
+                directory_files_recursively(&ds, &re, false, None, false).len(),
+                5
+            );
+            assert_eq!(
+                directory_files_recursively(&ds, &re, false, None, true).len(),
+                6
+            );
         }
         let _ = fs::remove_dir_all(d);
     }
@@ -1045,19 +1350,35 @@ mod tests {
         fs::create_dir_all(d.join("proj/src/deep")).unwrap();
         fs::write(d.join("proj/.git"), "").unwrap();
         fs::write(d.join("proj/src/deep/f.rs"), "").unwrap();
-        let root = format!("{}/proj/", d.canonicalize().unwrap().display());
-        let from_file = d.join("proj/src/deep/f.rs").display().to_string();
-        assert_eq!(locate_dominating_name(&from_file, ".git").map(|r| r.replace(&d.display().to_string(), &d.canonicalize().unwrap().display().to_string())), Some(root.clone()));
-        assert_eq!(locate_dominating_name(&d.join("proj").display().to_string(), ".git").is_some(), true);
-        assert_eq!(locate_dominating_name(&from_file, "no-such-marker-file-xyz"), None);
+        let root = format!("{}/proj/", text(&d.canonicalize().unwrap()));
+        let from_file = text(&d.join("proj/src/deep/f.rs"));
+        assert_eq!(
+            locate_dominating_name(&from_file, ".git")
+                .map(|r| r.replace(&text(&d), &text(&d.canonicalize().unwrap()))),
+            Some(root.clone())
+        );
+        assert!(locate_dominating_name(&text(&d.join("proj")), ".git").is_some());
+        assert_eq!(
+            locate_dominating_name(&from_file, "no-such-marker-file-xyz"),
+            None
+        );
         let pred = locate_dominating_file(&from_file, &|dir| dir.ends_with("src/"));
         assert!(pred.is_some_and(|p| p.ends_with("proj/src/")));
-        let (dir, file) = (d.join("proj").display().to_string(), d.join("proj/src/deep/f.rs").display().to_string());
+        let (dir, file) = (
+            d.join("proj").display().to_string(),
+            d.join("proj/src/deep/f.rs").display().to_string(),
+        );
         assert!(file_in_directory_p(&file, &dir));
         assert!(file_in_directory_p(&dir, &dir));
-        assert!(file_in_directory_p(&d.join("proj/src/new.rs").display().to_string(), &dir));
+        assert!(file_in_directory_p(
+            &d.join("proj/src/new.rs").display().to_string(),
+            &dir
+        ));
         assert!(!file_in_directory_p(&d.display().to_string(), &dir));
-        assert!(!file_in_directory_p(&file, &d.join("missing").display().to_string()));
+        assert!(!file_in_directory_p(
+            &file,
+            &d.join("missing").display().to_string()
+        ));
         let _ = fs::remove_dir_all(d);
     }
 
@@ -1066,20 +1387,53 @@ mod tests {
         let d = scratch("wild");
         fs::create_dir_all(d.join("a")).unwrap();
         fs::create_dir_all(d.join("b")).unwrap();
-        for f in ["a/x.png", "a/y.jpg", "b/z.png", "top.png", "t1.txt", "t2.txt"] {
+        for f in [
+            "a/x.png", "a/y.jpg", "b/z.png", "top.png", "t1.txt", "t2.txt",
+        ] {
             fs::write(d.join(f), "").unwrap();
         }
-        let ds = d.display().to_string();
-        assert_eq!(file_expand_wildcards(&format!("{ds}/*.png"), false, false, None).unwrap(), [format!("{ds}/top.png")]);
-        assert_eq!(file_expand_wildcards(&format!("{ds}/*/*.png"), false, false, None).unwrap(), [format!("{ds}/a/x.png"), format!("{ds}/b/z.png")]);
-        assert_eq!(file_expand_wildcards("*/*.png", false, false, Some(&ds)).unwrap(), ["a/x.png", "b/z.png"]);
-        assert_eq!(file_expand_wildcards("*/*.png", true, false, Some(&ds)).unwrap(), [format!("{ds}/a/x.png"), format!("{ds}/b/z.png")]);
-        assert_eq!(file_expand_wildcards("t?.txt", false, false, Some(&ds)).unwrap(), ["t1.txt", "t2.txt"]);
-        assert_eq!(file_expand_wildcards("t[1].txt", false, false, Some(&ds)).unwrap(), ["t1.txt"]);
-        assert_eq!(file_expand_wildcards("t[!1].txt", false, false, Some(&ds)).unwrap(), ["t2.txt"]);
-        assert_eq!(file_expand_wildcards(r"a/.*\.(png|jpg)$", false, true, Some(&ds)).unwrap(), ["a/x.png", "a/y.jpg"]);
-        assert_eq!(file_expand_wildcards("top.png", false, false, Some(&ds)).unwrap(), ["top.png"]);
-        assert!(file_expand_wildcards("nothing*", false, false, Some(&ds)).unwrap().is_empty());
+        let ds = text(&d);
+        assert_eq!(
+            file_expand_wildcards(&format!("{ds}/*.png"), false, false, None).unwrap(),
+            [format!("{ds}/top.png")]
+        );
+        assert_eq!(
+            file_expand_wildcards(&format!("{ds}/*/*.png"), false, false, None).unwrap(),
+            [format!("{ds}/a/x.png"), format!("{ds}/b/z.png")]
+        );
+        assert_eq!(
+            file_expand_wildcards("*/*.png", false, false, Some(&ds)).unwrap(),
+            ["a/x.png", "b/z.png"]
+        );
+        assert_eq!(
+            file_expand_wildcards("*/*.png", true, false, Some(&ds)).unwrap(),
+            [format!("{ds}/a/x.png"), format!("{ds}/b/z.png")]
+        );
+        assert_eq!(
+            file_expand_wildcards("t?.txt", false, false, Some(&ds)).unwrap(),
+            ["t1.txt", "t2.txt"]
+        );
+        assert_eq!(
+            file_expand_wildcards("t[1].txt", false, false, Some(&ds)).unwrap(),
+            ["t1.txt"]
+        );
+        assert_eq!(
+            file_expand_wildcards("t[!1].txt", false, false, Some(&ds)).unwrap(),
+            ["t2.txt"]
+        );
+        assert_eq!(
+            file_expand_wildcards(r"a/.*\.(png|jpg)$", false, true, Some(&ds)).unwrap(),
+            ["a/x.png", "a/y.jpg"]
+        );
+        assert_eq!(
+            file_expand_wildcards("top.png", false, false, Some(&ds)).unwrap(),
+            ["top.png"]
+        );
+        assert!(
+            file_expand_wildcards("nothing*", false, false, Some(&ds))
+                .unwrap()
+                .is_empty()
+        );
         assert!(file_expand_wildcards("(", false, true, Some(&ds)).is_err());
         let _ = fs::remove_dir_all(d);
     }
@@ -1087,10 +1441,10 @@ mod tests {
     #[test]
     fn directories_are_made_copied_and_deleted() {
         let d = scratch("ops");
-        let ds = d.display().to_string();
+        let ds = text(&d);
         assert!(make_directory(&format!("{ds}/a/b/c"), false).is_err());
-        assert_eq!(make_directory(&format!("{ds}/a/b/c"), true).unwrap(), true);
-        assert_eq!(make_directory(&format!("{ds}/a/b/c"), true).unwrap(), false);
+        assert!(make_directory(&format!("{ds}/a/b/c"), true).unwrap());
+        assert!(!make_directory(&format!("{ds}/a/b/c"), true).unwrap());
         assert!(make_directory(&format!("{ds}/a/b/c"), false).is_err());
         make_empty_file(&format!("{ds}/a/b/c/f.txt"), false).unwrap();
         assert!(make_empty_file(&format!("{ds}/a/b/c/f.txt"), false).is_err());
@@ -1101,9 +1455,13 @@ mod tests {
 
         // Into a directory that exists: as a child.
         fs::create_dir(d.join("dest")).unwrap();
-        let wrote = copy_directory(&format!("{ds}/a"), &format!("{ds}/dest"), false, false).unwrap();
+        let wrote =
+            copy_directory(&format!("{ds}/a"), &format!("{ds}/dest"), false, false).unwrap();
         assert_eq!(wrote, format!("{ds}/dest/a"));
-        assert_eq!(fs::read_to_string(d.join("dest/a/b/c/f.txt")).unwrap(), "hi");
+        assert_eq!(
+            fs::read_to_string(d.join("dest/a/b/c/f.txt")).unwrap(),
+            "hi"
+        );
         // To a new name.
         copy_directory(&format!("{ds}/a"), &format!("{ds}/copy"), false, false).unwrap();
         assert!(d.join("copy/b/c/f.txt").exists());
@@ -1115,8 +1473,18 @@ mod tests {
         copy_directory(&format!("{ds}/a"), &format!("{ds}/p/q/r"), true, false).unwrap();
         assert!(d.join("p/q/r/b").is_dir());
         // Not into itself, not a file.
-        assert!(copy_directory(&format!("{ds}/a"), &format!("{ds}/a/b/inside"), true, false).is_err());
-        assert!(copy_directory(&format!("{ds}/a/b/c/f.txt"), &format!("{ds}/x"), true, false).is_err());
+        assert!(
+            copy_directory(&format!("{ds}/a"), &format!("{ds}/a/b/inside"), true, false).is_err()
+        );
+        assert!(
+            copy_directory(
+                &format!("{ds}/a/b/c/f.txt"),
+                &format!("{ds}/x"),
+                true,
+                false
+            )
+            .is_err()
+        );
 
         assert!(delete_directory(&format!("{ds}/a"), false).is_err());
         delete_directory(&format!("{ds}/a"), true).unwrap();
@@ -1131,7 +1499,7 @@ mod tests {
         fs::write(d.join("small"), "12345").unwrap();
         fs::write(d.join(".hidden"), "").unwrap();
         fs::create_dir(d.join("dir")).unwrap();
-        let ds = d.display().to_string();
+        let ds = text(&d);
         let sw = |s: &str| vec![s.to_string()];
         let plain = insert_directory(&ds, &sw("-1"), false, true, 0).unwrap();
         assert_eq!(plain, "dir\nsmall\n");
@@ -1144,13 +1512,22 @@ mod tests {
         let long = insert_directory(&ds, &sw("-l"), false, true, 0).unwrap();
         let lines: Vec<&str> = long.lines().collect();
         assert!(lines[0].starts_with("total "), "{long}");
-        assert!(lines[1].starts_with('d') && lines[1].ends_with(" dir"), "{long}");
-        assert!(lines[2].starts_with('-') && lines[2].contains(" 5 ") && lines[2].ends_with(" small"), "{long}");
+        assert!(
+            lines[1].starts_with('d') && lines[1].ends_with(" dir"),
+            "{long}"
+        );
+        assert!(
+            lines[2].starts_with('-') && lines[2].contains(" 5 ") && lines[2].ends_with(" small"),
+            "{long}"
+        );
         let class = insert_directory(&ds, &sw("-F1"), false, true, 0).unwrap();
         assert_eq!(class, "dir/\nsmall\n");
         // The directory itself, and a plain file.
         let itself = insert_directory(&ds, &sw("-ld"), false, true, 0).unwrap();
-        assert!(itself.starts_with('d') && itself.trim_end().ends_with(&ds), "{itself}");
+        assert!(
+            itself.starts_with('d') && itself.trim_end().ends_with(&ds),
+            "{itself}"
+        );
         let one = insert_directory(&format!("{ds}/small"), &sw("-l"), false, false, 0).unwrap();
         assert!(one.starts_with('-') && one.trim_end().ends_with("small"));
         // Wildcards.
@@ -1158,7 +1535,10 @@ mod tests {
         assert_eq!(wild.trim_end(), format!("{ds}/small"));
         assert!(insert_directory(&format!("{ds}/nope"), &sw("-l"), false, true, 0).is_err());
         let rec = insert_directory(&ds, &sw("-1R"), false, true, 0).unwrap();
-        assert!(rec.contains(&format!("{ds}:\n")) && rec.contains(&format!("{ds}/dir:\n")), "{rec}");
+        assert!(
+            rec.contains(&format!("{ds}:\n")) && rec.contains(&format!("{ds}/dir:\n")),
+            "{rec}"
+        );
         let _ = fs::remove_dir_all(d);
     }
 

@@ -16,8 +16,8 @@ the echo area, the cursor) and the app draws it as a grid of cells.
 
 ## How it works
 
-- `ForgeApp.swift`: the window, the menus (Cmd-O open, Cmd-V paste),
-  Settings (Option as Meta).
+- `ForgeApp.swift`: the windows and tabs, the menus (Cmd-O open, Cmd-C/Cmd-V
+  clipboard), Settings (Option as Meta).
 - `EditorModel.swift`: owns `Forge` (from the bindings), sends keys,
   text and mouse events, asks for a frame after each and four times a
   second (idle work like messages and auto-save).
@@ -35,5 +35,7 @@ open) and has the JIT entitlements Wasmtime needs to compile plugins.
 
 ## Not yet
 
-Input methods (Japanese, emoji picker), the system clipboard beyond
-Cmd-V, multiple windows/tabs, font settings, drag and drop.
+- macOS text input (IME) integration. Forge's own input methods and emoji
+  commands work; the system's input method does not.
+- Font settings: the app follows the system appearance and the faces Forge
+  sets, but has no font picker of its own.

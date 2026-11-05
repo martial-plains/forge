@@ -324,6 +324,22 @@ impl AgendaState {
 
 /// (Re)build the agenda text for `st` and show it.
 fn rebuild(app: &mut App, mut st: AgendaState) {
+    let selected = if st.buffer == Some(app.active_id()) {
+        let line = app.buf_ref().point().line;
+        st.rendered
+            .refs
+            .get(line)
+            .copied()
+            .flatten()
+            .and_then(|i| st.rendered.entries.get(i))
+            .and_then(|e| {
+                st.ids
+                    .get(e.source)
+                    .map(|id| (*id, e.heading.clone(), e.kind))
+            })
+    } else {
+        None
+    };
     let (today, now_t) = now();
     let mut ids = match &st.restriction {
         Some((id, _)) if app.editor.state.buffers.contains_key(id) => vec![*id],
@@ -489,7 +505,7 @@ fn rebuild(app: &mut App, mut st: AgendaState) {
     st.ids = ids;
     st.rendered = rendered;
     // Marks survive a rebuild; marks for entries that are gone do not.
-    show(app, &mut st);
+    show(app, &mut st, selected);
     app.org.agenda = Some(st);
 }
 
@@ -531,8 +547,8 @@ fn limit_entries(r: &mut Rendered, n: usize) {
         }
     }
     let (mut lines, mut refs, mut dates) = (Vec::new(), Vec::new(), Vec::new());
-    for i in 0..r.lines.len() {
-        if keep[i] {
+    for (i, keep_line) in keep.into_iter().enumerate() {
+        if keep_line {
             lines.push(std::mem::take(&mut r.lines[i]));
             refs.push(r.refs[i]);
             dates.push(r.dates[i]);
@@ -561,7 +577,7 @@ fn clock_summary(sources: &[Source]) -> Vec<String> {
 }
 
 /// Put `st.rendered` in the agenda buffer.
-fn show(app: &mut App, st: &mut AgendaState) {
+fn show(app: &mut App, st: &mut AgendaState, selected: Option<(BufferId, String, ag::Kind)>) {
     let id = match st
         .buffer
         .filter(|id| app.editor.state.buffers.contains_key(id))
@@ -581,10 +597,19 @@ fn show(app: &mut App, st: &mut AgendaState) {
             lines[i].replace_range(0..1, ">");
         }
     }
+    let selected_line = selected.and_then(|(buffer, heading, kind)| {
+        st.rendered.refs.iter().enumerate().find_map(|(line, rf)| {
+            let entry = rf.and_then(|i| st.rendered.entries.get(i))?;
+            (entry.heading == heading
+                && entry.kind == kind
+                && st.ids.get(entry.source) == Some(&buffer))
+            .then_some(line)
+        })
+    });
     let keep_line = if app.active_id() == id {
-        Some(app.buf_ref().point().line)
+        selected_line.or(Some(app.buf_ref().point().line))
     } else {
-        None
+        selected_line
     };
     if let Some(b) = app.editor.state.get_buffer_mut(id) {
         b.set_locked(false);
@@ -757,8 +782,12 @@ fn dispatcher_menu(custom: &[(char, String)]) -> (String, Vec<char>) {
     out.push_str(&"-".repeat(32));
     out.push('\n');
     for i in 0..left.len().max(right.len()) {
-        let l = left.get(i).map_or(String::new(), |(k, d)| format!("{k}   {d}"));
-        let r = right.get(i).map_or(String::new(), |(k, d)| format!("{k}   {d}"));
+        let l = left
+            .get(i)
+            .map_or(String::new(), |(k, d)| format!("{k}   {d}"));
+        let r = right
+            .get(i)
+            .map_or(String::new(), |(k, d)| format!("{k}   {d}"));
         if r.is_empty() {
             out.push_str(&l);
         } else {
@@ -772,7 +801,12 @@ fn dispatcher_menu(custom: &[(char, String)]) -> (String, Vec<char>) {
             out.push_str(&format!("{k}   {spec}\n"));
         }
     }
-    let valid = left.iter().chain(right.iter()).map(|(k, _)| *k).chain(custom.iter().map(|(k, _)| *k)).collect();
+    let valid = left
+        .iter()
+        .chain(right.iter())
+        .map(|(k, _)| *k)
+        .chain(custom.iter().map(|(k, _)| *k))
+        .collect();
     (out, valid)
 }
 
@@ -792,11 +826,20 @@ pub fn command(app: &mut App, cmd: &str) -> bool {
     let back = app.has_arg();
     match cmd {
         "org-agenda" => {
-            let restricted = app.org.agenda.as_ref().and_then(|s| s.restriction.as_ref()).is_some();
+            let restricted = app
+                .org
+                .agenda
+                .as_ref()
+                .and_then(|s| s.restriction.as_ref())
+                .is_some();
             let (text, valid) = dispatcher_menu(&app.org.custom_agenda);
             let prompt = format!(
                 "Press key for agenda command ({}): ",
-                if restricted { "restricted" } else { "unrestricted" }
+                if restricted {
+                    "restricted"
+                } else {
+                    "unrestricted"
+                }
             );
             crate::one_key::open(app, "*Agenda Commands*", &text, &prompt, valid, |app, c| {
                 answer(app, &Ask::AgendaKey, &c.to_string());

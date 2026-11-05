@@ -405,8 +405,12 @@ mod tests {
         b.set_contents("one\ntwo\n");
         let id = app.editor.add_buffer(b);
         app.editor.show_buffer(id);
+        let test_name = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace("::", "-");
         let path = std::env::temp_dir().join(format!(
-            "forge-extras-init-{}-{}.rhai",
+            "forge-extras-init-{}-{test_name}-{}.rhai",
             std::process::id(),
             src.len()
         ));
@@ -502,8 +506,7 @@ mod tests {
 
     fn file_buffer(app: &mut App, path: &std::path::Path) -> BufferId {
         let b = Buffer::from_file(path).unwrap();
-        let id = app.editor.add_buffer(b);
-        id
+        app.editor.add_buffer(b)
     }
 
     #[test]
@@ -587,6 +590,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn vc_follow_symlinks_opens_the_real_file() {
         let dir = std::env::temp_dir().join(format!("forge-follow-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

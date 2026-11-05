@@ -23,16 +23,28 @@ use crate::app::App;
 use crate::org_cmds::Ask;
 
 pub const COMMANDS: &[forge_docs::CommandDoc] = &[
-    forge_docs::CommandDoc::line("canvas-demo", "Draw a sample canvas: shapes, text, arrows, a gradient."),
+    forge_docs::CommandDoc::line(
+        "canvas-demo",
+        "Draw a sample canvas: shapes, text, arrows, a gradient.",
+    ),
     forge_docs::CommandDoc::line("canvas-export", "Save this canvas as a PNG or SVG file."),
-    forge_docs::CommandDoc::line("canvas-list", "List the canvases that exist and who made them."),
+    forge_docs::CommandDoc::line(
+        "canvas-list",
+        "List the canvases that exist and who made them.",
+    ),
     forge_docs::CommandDoc::line("canvas-pan-down", "Move the view of this canvas down."),
     forge_docs::CommandDoc::line("canvas-pan-left", "Move the view of this canvas left."),
     forge_docs::CommandDoc::line("canvas-pan-right", "Move the view of this canvas right."),
     forge_docs::CommandDoc::line("canvas-pan-up", "Move the view of this canvas up."),
     forge_docs::CommandDoc::line("canvas-refresh", "Draw this canvas again."),
-    forge_docs::CommandDoc::line("canvas-renderer", "Say what draws canvases: the GPU (wgpu) or the CPU."),
-    forge_docs::CommandDoc::line("canvas-reset-view", "Show the whole canvas again, unzoomed."),
+    forge_docs::CommandDoc::line(
+        "canvas-renderer",
+        "Say what draws canvases: the GPU (wgpu) or the CPU.",
+    ),
+    forge_docs::CommandDoc::line(
+        "canvas-reset-view",
+        "Show the whole canvas again, unzoomed.",
+    ),
     forge_docs::CommandDoc::line("canvas-zoom-in", "Zoom this canvas in."),
     forge_docs::CommandDoc::line("canvas-zoom-out", "Zoom this canvas out."),
 ];
@@ -63,13 +75,26 @@ const DOUBLE: Duration = Duration::from_millis(400);
 fn temp_path(name: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
-    let safe: String = name.chars().filter(|c| c.is_alphanumeric()).take(16).collect();
-    let ext = if forge_core::canvas::native_scenes() { forge_core::canvas::SCENE_SUFFIX } else { ".png" };
-    std::env::temp_dir().join(format!("forge-canvas-{}-{safe}-{n}{ext}", std::process::id()))
+    let safe: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .take(16)
+        .collect();
+    let ext = if forge_core::canvas::native_scenes() {
+        forge_core::canvas::SCENE_SUFFIX
+    } else {
+        ".png"
+    };
+    std::env::temp_dir().join(format!(
+        "forge-canvas-{}-{safe}-{n}{ext}",
+        std::process::id()
+    ))
 }
 
 fn is_temp(p: &Path) -> bool {
-    p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("forge-canvas-"))
+    p.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("forge-canvas-"))
 }
 
 /// The shape (width over height) of the window showing a canvas's buffer,
@@ -77,10 +102,15 @@ fn is_temp(p: &Path) -> bool {
 fn pane_aspect(app: &App, buffer: BufferId) -> Option<f32> {
     let frame = app.editor.windows.frame();
     let cell = forge_core::org_display::cell_size().map_or(CELL_ASPECT, |(w, h)| (w / h) as f32);
-    app.editor.windows.layout(frame).into_iter().find_map(|(id, r)| {
-        let w = app.editor.windows.get(id)?;
-        (w.buffer == buffer && r.width > 0 && w.height > 0).then(|| f32::from(r.width) * cell / w.height as f32)
-    })
+    app.editor
+        .windows
+        .layout(frame)
+        .into_iter()
+        .find_map(|(id, r)| {
+            let w = app.editor.windows.get(id)?;
+            (w.buffer == buffer && r.width > 0 && w.height > 0)
+                .then(|| f32::from(r.width) * cell / w.height as f32)
+        })
 }
 
 /// Give each canvas the shape of its window, so the picture fills it and
@@ -100,7 +130,8 @@ fn fit_frames(app: &mut App) {
 }
 
 /// Pictures replaced but not yet deleted, oldest first.
-static RETIRED: Mutex<std::collections::VecDeque<PathBuf>> = Mutex::new(std::collections::VecDeque::new());
+static RETIRED: Mutex<std::collections::VecDeque<PathBuf>> =
+    Mutex::new(std::collections::VecDeque::new());
 /// How many replaced pictures stay on disk for a frame still showing one.
 const KEEP_RETIRED: usize = 12;
 
@@ -165,31 +196,51 @@ fn worker() -> &'static std::sync::Arc<Worker> {
             busy: AtomicU64::new(0),
         });
         let theirs = std::sync::Arc::clone(&w);
-        let spawned = std::thread::Builder::new().name("forge-canvas".into()).spawn(move || {
-            loop {
-                let job = {
-                    let mut q = theirs.queue.lock().unwrap_or_else(|e| e.into_inner());
-                    while q.is_empty() {
-                        q = theirs.wake.wait(q).unwrap_or_else(|e| e.into_inner());
-                    }
-                    let job = q.remove(0);
-                    theirs.busy.store(job.token, Ordering::SeqCst);
-                    job
-                };
-                let size = (job.frame.width as u32, job.frame.height as u32);
-                let native = job.path.to_str().is_some_and(|p| p.ends_with(forge_core::canvas::SCENE_SUFFIX));
-                let (png, waiting) = if native {
-                    forge_core::canvas::scene_json_waiting(&job.frame, &job.palette)
-                } else {
-                    forge_core::canvas::render_png_waiting(&job.frame, job.scale, &job.palette)
-                };
-                let drawn = png.is_some_and(|png| std::fs::write(&job.path, png).is_ok());
-                theirs.done.lock().unwrap_or_else(|e| e.into_inner()).push(Done { token: job.token, name: job.name, buffer: job.buffer, path: job.path, size, drawn, waiting });
-                theirs.busy.store(0, Ordering::SeqCst);
-            }
-        });
+        let spawned = std::thread::Builder::new()
+            .name("forge-canvas".into())
+            .spawn(move || {
+                loop {
+                    let job = {
+                        let mut q = theirs.queue.lock().unwrap_or_else(|e| e.into_inner());
+                        while q.is_empty() {
+                            q = theirs.wake.wait(q).unwrap_or_else(|e| e.into_inner());
+                        }
+                        let job = q.remove(0);
+                        theirs.busy.store(job.token, Ordering::SeqCst);
+                        job
+                    };
+                    let size = (job.frame.width as u32, job.frame.height as u32);
+                    let native = job
+                        .path
+                        .to_str()
+                        .is_some_and(|p| p.ends_with(forge_core::canvas::SCENE_SUFFIX));
+                    let (png, waiting) = if native {
+                        forge_core::canvas::scene_json_waiting(&job.frame, &job.palette)
+                    } else {
+                        forge_core::canvas::render_png_waiting(&job.frame, job.scale, &job.palette)
+                    };
+                    let drawn = png.is_some_and(|png| std::fs::write(&job.path, png).is_ok());
+                    theirs
+                        .done
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(Done {
+                            token: job.token,
+                            name: job.name,
+                            buffer: job.buffer,
+                            path: job.path,
+                            size,
+                            drawn,
+                            waiting,
+                        });
+                    theirs.busy.store(0, Ordering::SeqCst);
+                }
+            });
         // Without the thread nothing is drawn; there is nowhere better to say so.
-        debug_assert!(spawned.is_ok(), "canvas: could not start the drawing thread");
+        debug_assert!(
+            spawned.is_ok(),
+            "canvas: could not start the drawing thread"
+        );
         w
     })
 }
@@ -198,10 +249,20 @@ fn worker() -> &'static std::sync::Arc<Worker> {
 /// event loop should look again soon.
 pub fn rendering(app: &App) -> bool {
     let token = app.editor.canvases.token;
-    let Some(w) = WORKER.get().filter(|_| token != 0) else { return false };
+    let Some(w) = WORKER.get().filter(|_| token != 0) else {
+        return false;
+    };
     w.busy.load(Ordering::SeqCst) == token
-        || w.queue.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|j| j.token == token)
-        || w.done.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|d| d.token == token)
+        || w.queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|j| j.token == token)
+        || w.done
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|d| d.token == token)
 }
 
 /// Hand finished pictures to their buffers.
@@ -210,12 +271,16 @@ fn collect(app: &mut App) {
     let token = app.editor.canvases.token;
     let finished: Vec<Done> = {
         let mut all = w.done.lock().unwrap_or_else(|e| e.into_inner());
-        let (mine, rest): (Vec<Done>, Vec<Done>) = std::mem::take(&mut *all).into_iter().partition(|d| d.token == token);
+        let (mine, rest): (Vec<Done>, Vec<Done>) = std::mem::take(&mut *all)
+            .into_iter()
+            .partition(|d| d.token == token);
         *all = rest;
         mine
     };
     for d in finished {
-        if d.waiting && let Ok(mut wt) = WAITING.lock() {
+        if d.waiting
+            && let Ok(mut wt) = WAITING.lock()
+        {
             wt.retain(|(n, _)| *n != d.name);
             wt.push((d.name.clone(), Instant::now()));
         }
@@ -271,7 +336,13 @@ pub fn sync(app: &mut App) {
     if !app.editor.canvases.any_dirty() {
         return;
     }
-    let names: Vec<String> = app.editor.canvases.iter().filter(|(_, c)| c.dirty).map(|(n, _)| n.clone()).collect();
+    let names: Vec<String> = app
+        .editor
+        .canvases
+        .iter()
+        .filter(|(_, c)| c.dirty)
+        .map(|(n, _)| n.clone())
+        .collect();
     let w = worker();
     if app.editor.canvases.token == 0 {
         static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -279,12 +350,22 @@ pub fn sync(app: &mut App) {
     }
     let token = app.editor.canvases.token;
     for name in names {
-        let Some(c) = app.editor.canvases.get_mut(&name) else { continue };
+        let Some(c) = app.editor.canvases.get_mut(&name) else {
+            continue;
+        };
         c.dirty = false;
         c.generation += 1;
         let (buffer, frame) = (c.buffer, c.framed());
         let scale = (MAX_SIDE / frame.width.max(frame.height).max(1.0)).clamp(0.25, 2.0);
-        let job = Job { token, name: name.clone(), buffer, frame, scale, palette: palette.clone(), path: temp_path(&name) };
+        let job = Job {
+            token,
+            name: name.clone(),
+            buffer,
+            frame,
+            scale,
+            palette: palette.clone(),
+            path: temp_path(&name),
+        };
         let mut q = w.queue.lock().unwrap_or_else(|e| e.into_inner());
         // A newer ask for the same canvas replaces one still waiting.
         q.retain(|j| {
@@ -327,7 +408,10 @@ fn locate(app: &App, x: u16, y: u16) -> Option<(WindowId, String, f32, f32)> {
         let name = app.editor.canvases.name_of(w.buffer)?.to_string();
         let c = app.editor.canvases.get(&name)?;
         let (cols, rows) = (f32::from(r.width), w.height as f32);
-        let (cx, cy) = (f32::from(x - r.x) + 0.5, f32::from(y - r.y) - w.header_rows as f32 + 0.5);
+        let (cx, cy) = (
+            f32::from(x - r.x) + 0.5,
+            f32::from(y - r.y) - w.header_rows as f32 + 0.5,
+        );
         if rows < 1.0 || cy < 0.0 || cy > rows {
             return None;
         }
@@ -335,7 +419,11 @@ fn locate(app: &App, x: u16, y: u16) -> Option<(WindowId, String, f32, f32)> {
         let (bw, bh) = (cols * CELL_ASPECT, rows);
         let (fw, fh) = c.size();
         let aspect = (fw / fh.max(1.0)).max(1e-3);
-        let (dw, dh) = if bw / bh > aspect { (bh * aspect, bh) } else { (bw, bw / aspect) };
+        let (dw, dh) = if bw / bh > aspect {
+            (bh * aspect, bh)
+        } else {
+            (bw, bw / aspect)
+        };
         let (ox, oy) = ((bw - dw) / 2.0, (bh - dh) / 2.0);
         let (px, py) = (cx * CELL_ASPECT - ox, cy - oy);
         if px < 0.0 || py < 0.0 || px > dw || py > dh {
@@ -430,14 +518,21 @@ pub fn mouse(app: &mut App, ev: &MouseEvent) -> bool {
             c.scene.hit(x, y)
         });
         let mut last = LAST_PRESS.lock().unwrap_or_else(|e| e.into_inner());
-        if last.as_ref().is_some_and(|(n, t, h)| *n == name && *h == hit && t.elapsed() < DOUBLE) {
+        if last
+            .as_ref()
+            .is_some_and(|(n, t, h)| *n == name && *h == hit && t.elapsed() < DOUBLE)
+        {
             kind = "double";
             *last = None;
         } else {
             *last = Some((name.clone(), Instant::now(), hit));
         }
     }
-    let handles_view = app.editor.canvases.get(&name).is_some_and(|c| c.handles_view);
+    let handles_view = app
+        .editor
+        .canvases
+        .get(&name)
+        .is_some_and(|c| c.handles_view);
     let scrolls = app.editor.canvases.get(&name).is_some_and(|c| c.scroll);
     let on_card = kind == "press"
         && app.editor.canvases.get(&name).is_some_and(|c| {
@@ -445,9 +540,19 @@ pub fn mouse(app: &mut App, ev: &MouseEvent) -> bool {
             c.scene.hit(x, y).is_some_and(|id| id.starts_with("note:"))
         });
     // What the drag in progress is (carried from the press).
-    let mut mode = drag.as_ref().filter(|d| d.name == name).map_or(DragMode::Undecided, |d| d.mode);
-    let since = drag.as_ref().filter(|d| d.name == name && kind != "press").map_or_else(Instant::now, |d| d.since);
-    let on_card = if kind == "press" { on_card } else { drag.as_ref().is_some_and(|d| d.on_card) };
+    let mut mode = drag
+        .as_ref()
+        .filter(|d| d.name == name)
+        .map_or(DragMode::Undecided, |d| d.mode);
+    let since = drag
+        .as_ref()
+        .filter(|d| d.name == name && kind != "press")
+        .map_or_else(Instant::now, |d| d.since);
+    let on_card = if kind == "press" {
+        on_card
+    } else {
+        drag.as_ref().is_some_and(|d| d.on_card)
+    };
     if let Some(c) = app.editor.canvases.get_mut(&name) {
         if kind == "hscroll" {
             // A trackpad's or tilt wheel's sideways travel.
@@ -458,7 +563,9 @@ pub fn mouse(app: &mut App, ev: &MouseEvent) -> bool {
         if scrolls {
             // A page: the wheel scrolls it (ctrl zooms, shift goes sideways).
             match kind {
-                "scroll" if mods.contains(KeyModifiers::CONTROL) => c.zoom_about(fx, fy, if wheel > 0.0 { 1.1 } else { 1.0 / 1.1 }),
+                "scroll" if mods.contains(KeyModifiers::CONTROL) => {
+                    c.zoom_about(fx, fy, if wheel > 0.0 { 1.1 } else { 1.0 / 1.1 })
+                }
                 "scroll" if mods.contains(KeyModifiers::SHIFT) => c.pan(-wheel * 0.08, 0.0),
                 "scroll" => c.pan(0.0, -wheel * 0.12),
                 "press" if button == 1 => mode = DragMode::Undecided,
@@ -469,7 +576,11 @@ pub fn mouse(app: &mut App, ev: &MouseEvent) -> bool {
                             // On a card: a mouse carries it at once, a finger
                             // when it has been held. Anywhere else, the page moves.
                             let touch = TOUCH.load(std::sync::atomic::Ordering::Relaxed);
-                            mode = if on_card && (!touch || since.elapsed() >= HOLD) { DragMode::Carry } else { DragMode::Pan };
+                            mode = if on_card && (!touch || since.elapsed() >= HOLD) {
+                                DragMode::Carry
+                            } else {
+                                DragMode::Pan
+                            };
                         }
                         if mode == DragMode::Pan {
                             c.pan(dx, dy);
@@ -484,7 +595,15 @@ pub fn mouse(app: &mut App, ev: &MouseEvent) -> bool {
     // drag nor the release, so no click or drop follows.
     if scrolls && matches!(kind, "drag" | "release") && button == 1 && mode == DragMode::Pan {
         if kind == "drag" {
-            restore(Some(Drag { name: name.clone(), button, fx, fy, mode, since, on_card }));
+            restore(Some(Drag {
+                name: name.clone(),
+                button,
+                fx,
+                fy,
+                mode,
+                since,
+                on_card,
+            }));
         }
         sync(app);
         return true;
@@ -492,7 +611,8 @@ pub fn mouse(app: &mut App, ev: &MouseEvent) -> bool {
     // A press the finger hasn't decided about yet is held back too, so a
     // swipe that starts on a card doesn't also press it.
     let _ = handles_view;
-    if !scrolls && !handles_view
+    if !scrolls
+        && !handles_view
         && let Some(c) = app.editor.canvases.get_mut(&name)
     {
         match kind {
@@ -525,7 +645,15 @@ pub fn mouse(app: &mut App, ev: &MouseEvent) -> bool {
         alt: mods.contains(KeyModifiers::ALT),
     };
     if matches!(kind, "press" | "double" | "drag") && button != 0 {
-        restore(Some(Drag { name: name.clone(), button, fx, fy, mode, since, on_card }));
+        restore(Some(Drag {
+            name: name.clone(),
+            button,
+            fx,
+            fy,
+            mode,
+            since,
+            on_card,
+        }));
     }
     if let Some(cmd) = app.editor.canvas_event(&name, &pointer) {
         app.run_command(&cmd);
@@ -552,7 +680,10 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             true
         }
         "canvas-renderer" => {
-            app.msg(format!("Canvases are drawn by {}", forge_core::canvas::renderer_name()));
+            app.msg(format!(
+                "Canvases are drawn by {}",
+                forge_core::canvas::renderer_name()
+            ));
             true
         }
         "canvas-list" => {
@@ -593,7 +724,11 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         }
         // The demo's own listener: say what was clicked.
         "canvas-demo-event" => {
-            if let Some(json) = app.editor.canvases.get("demo").and_then(|c| c.last_event.clone())
+            if let Some(json) = app
+                .editor
+                .canvases
+                .get("demo")
+                .and_then(|c| c.last_event.clone())
                 && let Ok(v) = serde_json::from_str::<serde_json::Value>(&json)
                 && matches!(v["kind"].as_str(), Some("press" | "double"))
             {
@@ -612,7 +747,9 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
 }
 
 pub fn answer(app: &mut App, ask: &Ask, input: &str) -> bool {
-    let Ask::CanvasExport(name) = ask else { return false };
+    let Ask::CanvasExport(name) = ask else {
+        return false;
+    };
     let path = input.trim();
     if path.is_empty() {
         return true;
@@ -622,10 +759,15 @@ pub fn answer(app: &mut App, ask: &Ask, input: &str) -> bool {
         return true;
     };
     let path = forge_core::permissions::expand_home(path);
-    let result = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
-        std::fs::write(&path, scene.resolved(&app.editor.canvas_palette()).to_svg()).map_err(|e| e.to_string())
+    let result = if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+    {
+        std::fs::write(&path, scene.resolved(&app.editor.canvas_palette()).to_svg())
+            .map_err(|e| e.to_string())
     } else {
-        forge_core::canvas::render_png_waiting(&scene, 2.0, &app.editor.canvas_palette()).0
+        forge_core::canvas::render_png_waiting(&scene, 2.0, &app.editor.canvas_palette())
+            .0
             .ok_or_else(|| "nothing to draw".to_string())
             .and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()))
     };
@@ -654,7 +796,13 @@ fn list(app: &mut App) {
 pub fn demo_scene() -> Scene {
     let mut s = Scene::new(960.0, 600.0).background("#1e2030");
     s.push(Op::text(40.0, 28.0, "Forge canvas", 34.0, "#ffffff"));
-    s.push(Op::text(42.0, 74.0, "Shapes keep their ids: click one, or the empty background.", 16.0, "#a6adc8"));
+    s.push(Op::text(
+        42.0,
+        74.0,
+        "Shapes keep their ids: click one, or the empty background.",
+        16.0,
+        "#a6adc8",
+    ));
     let card = |x: f32, y: f32, id: &str, title: &str, body: &str, color: &str| {
         Op::group(vec![
             Op::rect(0.0, 0.0, 240.0, 150.0)
@@ -667,13 +815,56 @@ pub fn demo_scene() -> Scene {
         .transformed(Transform::translate(x, y))
         .with_id(id)
     };
-    s.push(card(40.0, 130.0, "notes", "Notes", "Cards are groups: one id, any shapes, moved by a transform.", "#45475a"));
-    s.push(card(360.0, 130.0, "tasks", "Tasks", "Text wraps to the box and is cut with an ellipsis when it must be.", "#3b5a6b"));
-    s.push(card(680.0, 130.0, "ideas", "Ideas", "Wheel zooms, middle-drag pans, and a plugin sees every event.", "#5a4570"));
-    s.push(Op::line(280.0, 205.0, 360.0, 205.0, Stroke::new("#f9e2af", 3.0).arrow()).with_id("a"));
-    s.push(Op::path("M600 205 C 640 205, 640 205, 680 205").stroked(Stroke::new("#a6e3a1", 3.0).dashed(8.0, 6.0).arrow()).with_id("b"));
-    s.push(Op::ellipse(160.0, 440.0, 90.0, 60.0).fill("#89b4fa").stroked(Stroke::new("#ffffff", 2.0)).with_id("ellipse"));
-    s.push(Op::path("M360 500 L 460 380 L 560 500 Z").fill("#f38ba8").with_id("triangle"));
+    s.push(card(
+        40.0,
+        130.0,
+        "notes",
+        "Notes",
+        "Cards are groups: one id, any shapes, moved by a transform.",
+        "#45475a",
+    ));
+    s.push(card(
+        360.0,
+        130.0,
+        "tasks",
+        "Tasks",
+        "Text wraps to the box and is cut with an ellipsis when it must be.",
+        "#3b5a6b",
+    ));
+    s.push(card(
+        680.0,
+        130.0,
+        "ideas",
+        "Ideas",
+        "Wheel zooms, middle-drag pans, and a plugin sees every event.",
+        "#5a4570",
+    ));
+    s.push(
+        Op::line(
+            280.0,
+            205.0,
+            360.0,
+            205.0,
+            Stroke::new("#f9e2af", 3.0).arrow(),
+        )
+        .with_id("a"),
+    );
+    s.push(
+        Op::path("M600 205 C 640 205, 640 205, 680 205")
+            .stroked(Stroke::new("#a6e3a1", 3.0).dashed(8.0, 6.0).arrow())
+            .with_id("b"),
+    );
+    s.push(
+        Op::ellipse(160.0, 440.0, 90.0, 60.0)
+            .fill("#89b4fa")
+            .stroked(Stroke::new("#ffffff", 2.0))
+            .with_id("ellipse"),
+    );
+    s.push(
+        Op::path("M360 500 L 460 380 L 560 500 Z")
+            .fill("#f38ba8")
+            .with_id("triangle"),
+    );
     s.push(Op::text(700.0, 400.0, "Export with w: PNG or SVG.", 18.0, "#f9e2af").with_id("hint"));
     s
 }
@@ -703,7 +894,12 @@ mod tests {
         finish(&mut a);
         let c = a.editor.canvases.get("demo").unwrap();
         assert_eq!(a.buf_ref().major_mode(), forge_core::canvas::MODE);
-        let png = a.buf_ref().image.as_ref().and_then(|s| s.rendered.clone()).expect("drawn");
+        let png = a
+            .buf_ref()
+            .image
+            .as_ref()
+            .and_then(|s| s.rendered.clone())
+            .expect("drawn");
         assert!(png.exists());
         let bytes = std::fs::read(&png).unwrap();
         assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
@@ -712,24 +908,61 @@ mod tests {
             .editor
             .canvas_event(
                 "demo",
-                &Pointer { kind: "press", button: 1, fx: 160.0 / 960.0, fy: 440.0 / 600.0, dy: 0.0, shift: false, ctrl: false, alt: false },
+                &Pointer {
+                    kind: "press",
+                    button: 1,
+                    fx: 160.0 / 960.0,
+                    fy: 440.0 / 600.0,
+                    dy: 0.0,
+                    shift: false,
+                    ctrl: false,
+                    alt: false,
+                },
             )
             .unwrap();
         assert_eq!(cmd, "canvas-demo-event");
-        assert!(a.editor.canvases.get("demo").unwrap().last_event.as_deref().unwrap().contains("\"id\":\"ellipse\""));
+        assert!(
+            a.editor
+                .canvases
+                .get("demo")
+                .unwrap()
+                .last_event
+                .as_deref()
+                .unwrap()
+                .contains("\"id\":\"ellipse\"")
+        );
         a.run_command(&cmd);
-        assert!(a.message.as_deref().unwrap_or("").contains("press on ellipse"), "{:?}", a.message);
+        assert!(
+            a.message
+                .as_deref()
+                .unwrap_or("")
+                .contains("press on ellipse"),
+            "{:?}",
+            a.message
+        );
     }
 
     fn mouse_at(a: &mut App, kind: MouseEventKind) -> bool {
-        mouse(a, &MouseEvent { kind, column: 10, row: 5, modifiers: KeyModifiers::NONE })
+        mouse(
+            a,
+            &MouseEvent {
+                kind,
+                column: 10,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            },
+        )
     }
 
     #[test]
     fn a_swipe_scrolls_a_page_and_a_held_card_is_carried() {
         let mut a = app();
         let mut scene = Scene::new(2000.0, 6000.0);
-        scene.ops.push(Op::rect(0.0, 0.0, 2000.0, 6000.0).with_id("card").with_id("note:0"));
+        scene.ops.push(
+            Op::rect(0.0, 0.0, 2000.0, 6000.0)
+                .with_id("card")
+                .with_id("note:0"),
+        );
         let id = a.editor.canvas_show("me", "page", scene);
         {
             let c = a.editor.canvases.get_mut("page").unwrap();
@@ -745,19 +978,66 @@ mod tests {
         set_touch(false);
         assert!(mouse_at(&mut a, MouseEventKind::Down(MouseButton::Left)));
         a.editor.canvases.get_mut("page").unwrap().last_event = None;
-        mouse(&mut a, &MouseEvent { kind: MouseEventKind::Drag(MouseButton::Left), column: 10, row: 2, modifiers: KeyModifiers::NONE });
-        assert!(a.editor.canvases.get("page").unwrap().last_event.is_some(), "the plugin heard the drag");
-        assert_eq!(a.editor.canvases.get("page").unwrap().view.y, before.y, "the page didn't move");
-        mouse(&mut a, &MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), column: 10, row: 2, modifiers: KeyModifiers::NONE });
+        mouse(
+            &mut a,
+            &MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 10,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(
+            a.editor.canvases.get("page").unwrap().last_event.is_some(),
+            "the plugin heard the drag"
+        );
+        assert_eq!(
+            a.editor.canvases.get("page").unwrap().view.y,
+            before.y,
+            "the page didn't move"
+        );
+        mouse(
+            &mut a,
+            &MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 10,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
         // A quick press and drag with a finger is a swipe: the page moves, nothing is sent.
         set_touch(true);
         assert!(mouse_at(&mut a, MouseEventKind::Down(MouseButton::Left)));
         a.editor.canvases.get_mut("page").unwrap().last_event = None;
-        mouse(&mut a, &MouseEvent { kind: MouseEventKind::Drag(MouseButton::Left), column: 10, row: 2, modifiers: KeyModifiers::NONE });
-        mouse(&mut a, &MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), column: 10, row: 2, modifiers: KeyModifiers::NONE });
+        mouse(
+            &mut a,
+            &MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 10,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        mouse(
+            &mut a,
+            &MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 10,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
         let after = a.editor.canvases.get("page").unwrap();
-        assert!(after.view.y > before.y, "the page scrolled: {:?} -> {:?}", before, after.view);
-        assert!(after.last_event.is_none(), "the plugin heard nothing of the swipe");
+        assert!(
+            after.view.y > before.y,
+            "the page scrolled: {:?} -> {:?}",
+            before,
+            after.view
+        );
+        assert!(
+            after.last_event.is_none(),
+            "the plugin heard nothing of the swipe"
+        );
         set_touch(false);
         // Sideways wheel travel moves it across.
         let x0 = a.editor.canvases.get("page").unwrap().view.x;
@@ -790,7 +1070,11 @@ mod tests {
         finish(&mut a);
         let c = a.editor.canvases.get("demo").unwrap();
         assert!(c.view.zoom > 1.0 && !c.dirty);
-        assert_ne!(a.buf_ref().image.as_ref().unwrap().rendered, first, "drawn again");
+        assert_ne!(
+            a.buf_ref().image.as_ref().unwrap().rendered,
+            first,
+            "drawn again"
+        );
         assert!(execute(&mut a, "canvas-reset-view"));
         assert_eq!(a.editor.canvases.get("demo").unwrap().view.zoom, 1.0);
     }
@@ -803,9 +1087,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         for f in ["out.png", "out.svg"] {
             let p = dir.join(f);
-            assert!(answer(&mut a, &Ask::CanvasExport("demo".into()), &p.display().to_string()));
+            assert!(answer(
+                &mut a,
+                &Ask::CanvasExport("demo".into()),
+                &p.display().to_string()
+            ));
             let bytes = std::fs::read(&p).unwrap();
-            assert!(if f.ends_with("png") { bytes.starts_with(&[0x89]) } else { bytes.starts_with(b"<svg") });
+            assert!(if f.ends_with("png") {
+                bytes.starts_with(&[0x89])
+            } else {
+                bytes.starts_with(b"<svg")
+            });
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -835,8 +1127,15 @@ mod background_tests {
         // A scene that names colour roles, as the Bases and graph plugins' do.
         let pal = forge_canvas::Palette::current();
         let mut scene = Scene::new(400.0, 300.0).background(&pal.bg);
-        scene.ops.push(Op::rect(20.0, 20.0, 200.0, 120.0).fill(&pal.card).stroked(Stroke::new(&pal.line, 2.0)).rounded(12.0));
-        scene.ops.push(Op::text(30.0, 30.0, "A card", 20.0, &pal.fg));
+        scene.ops.push(
+            Op::rect(20.0, 20.0, 200.0, 120.0)
+                .fill(&pal.card)
+                .stroked(Stroke::new(&pal.line, 2.0))
+                .rounded(12.0),
+        );
+        scene
+            .ops
+            .push(Op::text(30.0, 30.0, "A card", 20.0, &pal.fg));
         let id = a.editor.canvas_show("test", "demo", scene);
         a.editor.show_buffer(id);
         finish(&mut a);

@@ -16,6 +16,7 @@ use forge_core::syntax::SyntaxFace;
 use forge_core::{Buffer, BufferId, Pos};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub const BUFFER: &str = "*few*";
@@ -339,30 +340,38 @@ fn start_fetch(app: &mut App, url: &str, method: FetchMethod, mode: Mode, readab
         match std::fs::read(&path) {
             Ok(bytes) => {
                 let (text, truncated) = decode_capped(&bytes, "", true);
+                let url = match file_url(&path) {
+                    Some(url) => url,
+                    None => {
+                        app.error(format!("few: cannot make a URL for {}", path.display()));
+                        return;
+                    }
+                };
                 let html = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
                     e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm")
                 });
-                finish(
-                    app,
-                    &format!("file://{}", path.display()),
-                    mode,
-                    readable,
-                    text,
-                    html,
-                    None,
-                    truncated,
-                );
+                finish(app, &url, mode, readable, text, html, None, truncated);
             }
             Err(e) => app.error(format!("few: cannot read {}: {e}", path.display())),
         }
         return;
     }
-    if let Some(path) = url.strip_prefix("file://") {
+    if url.starts_with("file://") {
         if !matches!(method, FetchMethod::Get) {
             app.error("few: cannot post to a file".to_string());
             return;
         }
-        return load(app, path, mode, readable);
+        let path = match reqwest::Url::parse(url)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+        {
+            Some(path) => path,
+            None => {
+                app.error(format!("few: invalid file URL: {url}"));
+                return;
+            }
+        };
+        return load(app, &path.to_string_lossy(), mode, readable);
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         app.error(format!(
@@ -922,6 +931,15 @@ fn download_images(srcs: &[String]) -> Vec<(String, std::path::PathBuf)> {
         }
     }
     out
+}
+
+fn file_url(path: &Path) -> Option<String> {
+    let path = std::fs::canonicalize(path)
+        .ok()
+        .or_else(|| std::env::current_dir().ok().map(|dir| dir.join(path)))?;
+    reqwest::Url::from_file_path(path)
+        .ok()
+        .map(|url| url.to_string())
 }
 
 /// Pictures that need no downloading: `file://` addresses that exist.

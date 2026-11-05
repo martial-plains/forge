@@ -2825,12 +2825,13 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         "vc-dir" => {
             let default = crate::compile::default_directory(app);
             let d = crate::files::abbreviate(&default);
+            let d = d.trim_end_matches(['/', '\\']);
             ask(
                 app,
                 "VC status for directory: ",
                 Ask::Dir,
                 Vec::new(),
-                &format!("{}/", d.trim_end_matches('/')),
+                &format!("{d}{}", std::path::MAIN_SEPARATOR),
             );
         }
         "project-vc-dir" => {

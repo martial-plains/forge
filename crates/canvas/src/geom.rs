@@ -26,19 +26,41 @@ pub struct Matrix {
 }
 
 impl Matrix {
-    pub const IDENTITY: Matrix = Matrix { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 };
+    pub const IDENTITY: Matrix = Matrix {
+        a: 1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        e: 0.0,
+        f: 0.0,
+    };
 
     pub fn translate(x: f32, y: f32) -> Self {
-        Self { e: x, f: y, ..Self::IDENTITY }
+        Self {
+            e: x,
+            f: y,
+            ..Self::IDENTITY
+        }
     }
 
     pub fn scale(x: f32, y: f32) -> Self {
-        Self { a: x, d: y, ..Self::IDENTITY }
+        Self {
+            a: x,
+            d: y,
+            ..Self::IDENTITY
+        }
     }
 
     pub fn rotate(deg: f32) -> Self {
         let (s, c) = deg.to_radians().sin_cos();
-        Self { a: c, b: s, c: -s, d: c, e: 0.0, f: 0.0 }
+        Self {
+            a: c,
+            b: s,
+            c: -s,
+            d: c,
+            e: 0.0,
+            f: 0.0,
+        }
     }
 
     /// `self` applied after `other` (the child's matrix is `other`).
@@ -54,7 +76,10 @@ impl Matrix {
     }
 
     pub fn apply(&self, p: Point) -> Point {
-        Point::new(self.a * p.x + self.c * p.y + self.e, self.b * p.x + self.d * p.y + self.f)
+        Point::new(
+            self.a * p.x + self.c * p.y + self.e,
+            self.b * p.x + self.d * p.y + self.f,
+        )
     }
 
     pub fn invert(&self) -> Option<Matrix> {
@@ -63,7 +88,14 @@ impl Matrix {
             return None;
         }
         let (a, b, c, d) = (self.d / det, -self.b / det, -self.c / det, self.a / det);
-        Some(Matrix { a, b, c, d, e: -(a * self.e + c * self.f), f: -(b * self.e + d * self.f) })
+        Some(Matrix {
+            a,
+            b,
+            c,
+            d,
+            e: -(a * self.e + c * self.f),
+            f: -(b * self.e + d * self.f),
+        })
     }
 
     /// The average scale, for line widths and font sizes.
@@ -86,7 +118,10 @@ pub enum PathCmd {
 /// (Arcs are not supported.) None on a malformed path.
 pub fn parse_path(d: &str) -> Option<Vec<PathCmd>> {
     let mut out = Vec::new();
-    let mut tokens = Tokens { s: d.as_bytes(), i: 0 };
+    let mut tokens = Tokens {
+        s: d.as_bytes(),
+        i: 0,
+    };
     let mut cur = Point::default();
     let mut start = Point::default();
     let mut last_ctrl: Option<Point> = None;
@@ -145,7 +180,8 @@ pub fn parse_path(d: &str) -> Option<Vec<PathCmd>> {
                 cur = p;
             }
             b'S' => {
-                let p1 = last_ctrl.map_or(cur, |c| Point::new(2.0 * cur.x - c.x, 2.0 * cur.y - c.y));
+                let p1 =
+                    last_ctrl.map_or(cur, |c| Point::new(2.0 * cur.x - c.x, 2.0 * cur.y - c.y));
                 let (p2, p) = (pt(&mut tokens)?, pt(&mut tokens)?);
                 out.push(PathCmd::Cubic(p1, p2, p));
                 last_ctrl = Some(p2);
@@ -158,7 +194,8 @@ pub fn parse_path(d: &str) -> Option<Vec<PathCmd>> {
                 cur = p;
             }
             b'T' => {
-                let p1 = last_ctrl.map_or(cur, |c| Point::new(2.0 * cur.x - c.x, 2.0 * cur.y - c.y));
+                let p1 =
+                    last_ctrl.map_or(cur, |c| Point::new(2.0 * cur.x - c.x, 2.0 * cur.y - c.y));
                 let p = pt(&mut tokens)?;
                 out.push(PathCmd::Quad(p1, p));
                 last_ctrl = Some(p1);
@@ -182,7 +219,9 @@ struct Tokens<'a> {
 
 impl Tokens<'_> {
     fn skip(&mut self) {
-        while self.i < self.s.len() && (self.s[self.i].is_ascii_whitespace() || self.s[self.i] == b',') {
+        while self.i < self.s.len()
+            && (self.s[self.i].is_ascii_whitespace() || self.s[self.i] == b',')
+        {
             self.i += 1;
         }
     }
@@ -196,7 +235,8 @@ impl Tokens<'_> {
             let c = self.s[self.i];
             let ok = c.is_ascii_digit()
                 || (c == b'.' && !seen_dot && !seen_exp)
-                || ((c == b'-' || c == b'+') && (self.i == start || matches!(self.s[self.i - 1], b'e' | b'E')))
+                || ((c == b'-' || c == b'+')
+                    && (self.i == start || matches!(self.s[self.i - 1], b'e' | b'E')))
                 || ((c == b'e' || c == b'E') && !seen_exp && self.i > start);
             if !ok {
                 break;
@@ -209,7 +249,10 @@ impl Tokens<'_> {
             }
             self.i += 1;
         }
-        std::str::from_utf8(&self.s[start..self.i]).ok()?.parse().ok()
+        std::str::from_utf8(&self.s[start..self.i])
+            .ok()?
+            .parse()
+            .ok()
     }
 }
 
@@ -249,8 +292,14 @@ pub fn flatten(cmds: &[PathCmd]) -> Vec<(Vec<Point>, bool)> {
                         let t = i as f32 / 24.0;
                         let u = 1.0 - t;
                         l.0.push(Point::new(
-                            u * u * u * cur.x + 3.0 * u * u * t * c1.x + 3.0 * u * t * t * c2.x + t * t * t * p.x,
-                            u * u * u * cur.y + 3.0 * u * u * t * c1.y + 3.0 * u * t * t * c2.y + t * t * t * p.y,
+                            u * u * u * cur.x
+                                + 3.0 * u * u * t * c1.x
+                                + 3.0 * u * t * t * c2.x
+                                + t * t * t * p.x,
+                            u * u * u * cur.y
+                                + 3.0 * u * u * t * c1.y
+                                + 3.0 * u * t * t * c2.y
+                                + t * t * t * p.y,
                         ));
                     }
                 }
@@ -281,7 +330,14 @@ mod tests {
         assert_eq!(p[3], PathCmd::Line(Point::new(25.0, 15.0)));
         assert_eq!(p[4], PathCmd::Close);
         let c = parse_path("m0 0 c10 0 10 10 0 10").unwrap();
-        assert_eq!(c[1], PathCmd::Cubic(Point::new(10.0, 0.0), Point::new(10.0, 10.0), Point::new(0.0, 10.0)));
+        assert_eq!(
+            c[1],
+            PathCmd::Cubic(
+                Point::new(10.0, 0.0),
+                Point::new(10.0, 10.0),
+                Point::new(0.0, 10.0)
+            )
+        );
         assert!(parse_path("M 1").is_none());
         assert!(parse_path("").is_none());
         let n = parse_path("M-1.5-2.5L.5.5").unwrap();

@@ -78,8 +78,8 @@ pub use bindings::forge::editor::org::AgendaEntry;
 pub use bindings::forge::editor::theme::FaceStyle as ThemeFaceStyle;
 pub use bindings::forge::editor::types::{Position, Span};
 pub use bindings::forge::editor::{
-    canvas, commands, completion, decorations, environment, files, http, images, keymap, kill_ring, kmacro,
-    marks, menus, minibuffer, modes, org, processes, registers, session, theme, xref,
+    canvas, commands, completion, decorations, environment, files, http, images, keymap, kill_ring,
+    kmacro, marks, menus, minibuffer, modes, org, processes, registers, session, theme, xref,
 };
 /// Embeds the plugin's manifest (see forge-plugin-sdk-macros); called by
 /// [`forge_plugin!`].
@@ -630,6 +630,20 @@ pub fn annotate(category: &str, f: impl Fn(&[String]) -> Vec<String> + 'static) 
 /// new selection, and should only move point or show a buffer.
 pub fn on_selection_changed(command: &str) {
     completion::on_selection_changed(command);
+}
+
+/// Run `command` whenever text in an open minibuffer prompt changes. The
+/// command can read the updated value with `minibuffer::input`. Needs Forge
+/// 0.1.30.
+pub fn on_minibuffer_input_changed(command: &str) {
+    minibuffer::on_input_changed(command);
+}
+
+/// Run `command` whenever the selected candidate in an open minibuffer list
+/// changes. The command can read it with `completion::selected`. Needs Forge
+/// 0.1.30.
+pub fn on_minibuffer_selection_changed(command: &str) {
+    minibuffer::on_selection_changed(command);
 }
 
 /// How matching candidates are ordered: "length" (shortest first, then

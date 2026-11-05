@@ -67,7 +67,10 @@ pub const DEFAULT_FILES_ALIASES: &[(&str, &str)] = &[
     ("ch", "*.c *.h"),
     ("c", "*.c"),
     ("cc", "*.cc *.cpp *.cxx *.c++ *.C"),
-    ("cchh", "*.cc *.cpp *.cxx *.c++ *.C *.c *.h *.hh *.hpp *.hxx *.h++ *.H"),
+    (
+        "cchh",
+        "*.cc *.cpp *.cxx *.c++ *.C *.c *.h *.hh *.hpp *.hxx *.h++ *.H",
+    ),
     ("hh", "*.hh *.hpp *.hxx *.h++ *.H"),
     ("h", "*.h"),
     ("l", "ChangeLog* changelog* CHANGELOG*"),
@@ -208,7 +211,7 @@ struct Split {
 
 /// `file:line:`, `file:line:column:` and (under a heading) `line:`.
 static WITH_FILE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^([^\s:][^:\n]*?):(\d+)(?::(\d+))?:(.*)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^([^\s\n]+?):(\d+)(?::(\d+))?:(.*)$").unwrap());
 /// Just `line:`, the lines under a heading.
 static LINE_ONLY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+):(.*)$").unwrap());
 

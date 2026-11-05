@@ -138,9 +138,10 @@ impl Job {
     }
 
     fn excluded(&self, rel: &Path) -> bool {
+        let rel = rel.to_string_lossy().replace('\\', "/");
         get(&self.params, "exclude")
             .and_then(|r| Regex::new(r).ok())
-            .is_some_and(|re| re.is_match(&rel.to_string_lossy()))
+            .is_some_and(|re| re.is_match(&rel))
     }
 
     fn included(&self, rel: &Path) -> bool {
@@ -279,7 +280,7 @@ pub fn sitemap(job: &Job, files: &[PathBuf]) -> String {
         out.push_str(&format!(
             "{}- [[file:{}][{t}]]\n",
             "  ".repeat(depth),
-            rel.to_string_lossy()
+            rel.to_string_lossy().replace('\\', "/")
         ));
     }
     out
@@ -380,10 +381,10 @@ pub fn publish(job: &Job, cache: &Path, force: bool, only: Option<&Path>, today:
         let rel = PathBuf::from(name);
         files.retain(|r| *r != rel);
         let text = sitemap(job, &files);
-        if std::fs::read_to_string(job.base.join(&rel)).ok().as_deref() != Some(text.as_str()) {
-            if let Err(e) = std::fs::write(job.base.join(&rel), &text) {
-                rep.errors.push(format!("Cannot write the sitemap: {e}"));
-            }
+        if std::fs::read_to_string(job.base.join(&rel)).ok().as_deref() != Some(text.as_str())
+            && let Err(e) = std::fs::write(job.base.join(&rel), &text)
+        {
+            rep.errors.push(format!("Cannot write the sitemap: {e}"));
         }
         if !files.contains(&rel) {
             files.push(rel);
@@ -499,7 +500,7 @@ mod tests {
         let names: Vec<String> = js[0]
             .files()
             .iter()
-            .map(|p| p.display().to_string())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .collect();
         assert_eq!(names, ["index.org", "sub/page.org"]);
         assert_eq!(js[1].files(), vec![PathBuf::from("pic.png")]);

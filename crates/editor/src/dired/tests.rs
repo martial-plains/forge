@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::git::*;
 use super::*;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
-fn eza_style_sizes() {
+fn detailed_style_sizes() {
     assert_eq!(human_size(0), "0");
     assert_eq!(human_size(999), "999");
     assert_eq!(human_size(1400), "1.4k");
@@ -13,7 +14,7 @@ fn eza_style_sizes() {
 }
 
 #[test]
-fn dates_are_eza_style() {
+fn dates_use_detailed_style() {
     let now = UNIX_EPOCH + std::time::Duration::from_secs(1_790_000_000); // 2026-09-21
     let recent = now - std::time::Duration::from_secs(86_400);
     assert_eq!(format_date(recent, now, 0), "20 Sep 14:13");
@@ -23,7 +24,7 @@ fn dates_are_eza_style() {
 }
 
 #[test]
-fn render_lays_out_like_eza_and_parses_back() {
+fn render_lays_out_columns_and_parses_back() {
     let dir = std::env::temp_dir().join(format!("forge-dired-render-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("sub")).unwrap();
@@ -32,7 +33,7 @@ fn render_lays_out_like_eza_and_parses_back() {
     fs::write(dir.join(".hidden"), "").unwrap();
     let mut marks = HashMap::new();
     marks.insert(dir.join("b.txt"), '*');
-    // The old listing shows dotfiles; eza hides them by default now.
+    // The old listing shows dotfiles; the column listing hides them by default now.
     let text = render_section(
         &dir,
         &marks,
@@ -46,7 +47,7 @@ fn render_lays_out_like_eza_and_parses_back() {
     b.set_contents(&text);
     assert!(b.line(1).starts_with("  Permissions"));
     assert!(b.line(1).ends_with("Name"));
-    // eza order: case-insensitive, ignoring the leading dot.
+    // Column order: case-insensitive, ignoring the leading dot.
     let names: Vec<String> = (FIRST_ENTRY..b.line_count())
         .filter_map(|l| entry_on_line(&b, l))
         .map(|e| e.name)
@@ -205,7 +206,7 @@ fn dotfiles_are_hidden_until_a_is_pressed() {
             .collect();
         (out, b.line(0).clone())
     };
-    // eza's default: no dotfiles, and the header says nothing.
+    // The default: no dotfiles, and the header says nothing.
     assert_eq!(
         names(View::default()),
         (vec!["shown".to_string()], format!("  {}:", dir.display()))
@@ -303,7 +304,7 @@ fn names_are_coloured_by_what_they_are() {
     assert_eq!(file_type("lib.rs"), Some(DiredFace::Source));
     assert_eq!(file_type("a.o"), Some(DiredFace::Compiled));
     assert_eq!(file_type("notes"), None, "no extension and no known name");
-    // The extension wins, so eza's "built from the source next to it"
+    // The extension wins, so the "built from the source next to it"
     // rule never gets a look in for a .css or a .js.
     assert_eq!(file_type("styles.css"), Some(DiredFace::Source));
     assert_eq!(file_type("scripts.js"), Some(DiredFace::Source));
@@ -403,7 +404,7 @@ fn sizes_are_shaded_by_magnitude() {
 
 #[test]
 fn the_gradient_keeps_the_colour_and_moves_only_its_lightness() {
-    // eza's ramp is on lightness only, from EZA_MIN_LUMINANCE up to 1,
+    // The ramp is on lightness only, from the minimum luminance up to 1,
     // so the smallest value in a listing is half-lit and the largest is
     // nearly white. The hue is kept, so it never turns into a
     // different colour on the way.
@@ -541,6 +542,7 @@ fn the_gradient_spreads_a_listing_out_by_size_and_age() {
 }
 
 #[test]
+#[cfg(unix)]
 fn a_symlinks_target_is_coloured_on_its_own() {
     let dir = std::env::temp_dir().join(format!("forge-dired-link-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -660,8 +662,8 @@ fn a_tree_nests_the_names_under_their_directories() {
     );
     let mut b = Buffer::new("t");
     b.set_contents(&text);
-    // The drawing is eza's, and it stops where a directory ends. Each
-    // directory is in eza's name order, so "deep" comes before "lib.rs".
+    // The drawing stops where a directory ends. Each directory is in
+    // name order, so "deep" comes before "lib.rs".
     let cells = |li: usize| -> String {
         let line: Vec<char> = text.lines().nth(li).unwrap().chars().collect();
         let col = text.lines().nth(1).unwrap().find("Name").unwrap();
@@ -746,6 +748,7 @@ fn listing_app(tag: &str) -> (App, PathBuf) {
     for f in ["a.txt", "b.txt", "c.log", "old.txt~", "run.sh"] {
         fs::write(dir.join(f), format!("content of {f}\n")).unwrap();
     }
+    #[cfg(unix)]
     fs::set_permissions(dir.join("run.sh"), fs::Permissions::from_mode(0o755)).unwrap();
     let mut app = App::new(forge_core::Editor::default());
     let id = app.editor.add_buffer(Buffer::new("scratch"));
@@ -804,21 +807,24 @@ fn links_regexp_renames_chmod_and_shell() {
     assert!(dir.join("a-new.md").exists() && dir.join("b-new.md").exists());
     assert!(!dir.join("a.txt").exists());
     // Symlinks, absolute and relative.
-    extra::answered(
-        &mut a,
-        Extra::Link('S', vec![dir.join("c.log")]),
-        &dir.join("c.sym").display().to_string(),
-    );
-    assert_eq!(fs::read_link(dir.join("c.sym")).unwrap(), dir.join("c.log"));
-    extra::answered(
-        &mut a,
-        Extra::Link('Y', vec![dir.join("c.log")]),
-        &dir.join("sub/c.rel").display().to_string(),
-    );
-    assert_eq!(
-        fs::read_link(dir.join("sub/c.rel")).unwrap(),
-        PathBuf::from("../c.log")
-    );
+    #[cfg(unix)]
+    {
+        extra::answered(
+            &mut a,
+            Extra::Link('S', vec![dir.join("c.log")]),
+            &dir.join("c.sym").display().to_string(),
+        );
+        assert_eq!(fs::read_link(dir.join("c.sym")).unwrap(), dir.join("c.log"));
+        extra::answered(
+            &mut a,
+            Extra::Link('Y', vec![dir.join("c.log")]),
+            &dir.join("sub/c.rel").display().to_string(),
+        );
+        assert_eq!(
+            fs::read_link(dir.join("sub/c.rel")).unwrap(),
+            PathBuf::from("../c.log")
+        );
+    }
     extra::answered(
         &mut a,
         Extra::Link('H', vec![dir.join("c.log")]),
@@ -829,24 +835,27 @@ fn links_regexp_renames_chmod_and_shell() {
         "content of c.log\n"
     );
     // chmod, octal and symbolic.
-    extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "600");
-    assert_eq!(
-        fs::metadata(dir.join("c.log"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
-    extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "u+x,go+r");
-    assert_eq!(
-        fs::metadata(dir.join("c.log"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o744
-    );
+    #[cfg(unix)]
+    {
+        extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "600");
+        assert_eq!(
+            fs::metadata(dir.join("c.log"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        extra::answered(&mut a, Extra::Chmod(vec![dir.join("c.log")]), "u+x,go+r");
+        assert_eq!(
+            fs::metadata(dir.join("c.log"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o744
+        );
+    }
     // Upper-casing.
     goto_path(&mut a, &dir.join("c.log"));
     execute(&mut a, "dired-mark");
@@ -1042,7 +1051,7 @@ fn a_new_listing_looks_like_ls() {
     assert!(a.buf_ref().line(1).contains("Permissions"));
     execute(&mut a, "dired-toggle-ls-style");
     assert!(a.buf_ref().line(1).trim_start().starts_with("total "));
-    // Marks and commands work on ls lines as they do on eza's.
+    // Marks and commands work on ls lines as they do on detailed columns.
     execute(&mut a, "dired-mark-directories");
     assert_eq!(marked(&a, '*'), ["sub"]);
 }
@@ -1095,15 +1104,18 @@ fn a_tether_directory_is_a_real_dired_listing() {
     )
     .unwrap();
     assert!(!dir.join("copy.txt").exists() && dir.join("moved.txt").exists());
-    rfs::chmod(&PathBuf::from(format!("{name}/moved.txt")), "600").unwrap();
-    assert_eq!(
-        fs::metadata(dir.join("moved.txt"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
+    #[cfg(unix)]
+    {
+        rfs::chmod(&PathBuf::from(format!("{name}/moved.txt")), "600").unwrap();
+        assert_eq!(
+            fs::metadata(dir.join("moved.txt"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
     assert!(rfs::exists(&PathBuf::from(format!("{name}/moved.txt"))));
     assert!(rfs::is_dir(&PathBuf::from(format!("{name}/sub"))));
     delete_confirmed(&mut a, vec![PathBuf::from(format!("{name}/moved.txt"))]);

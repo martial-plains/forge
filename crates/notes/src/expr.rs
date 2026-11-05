@@ -55,7 +55,9 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
         let c = cs[i];
         if c.is_whitespace() {
             i += 1;
-        } else if c.is_ascii_digit() || (c == '.' && cs.get(i + 1).is_some_and(char::is_ascii_digit)) {
+        } else if c.is_ascii_digit()
+            || (c == '.' && cs.get(i + 1).is_some_and(char::is_ascii_digit))
+        {
             let start = i;
             while i < cs.len() && (cs[i].is_ascii_digit() || cs[i] == '.') {
                 // `1.days` is a member, not a fraction.
@@ -91,7 +93,11 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
             out.push(Tok::Str(s));
         } else if c.is_alphabetic() || c == '_' {
             let start = i;
-            while i < cs.len() && (cs[i].is_alphanumeric() || cs[i] == '_' || cs[i] == '-' && cs.get(i + 1).is_some_and(|n| n.is_alphanumeric()) && false) {
+            while i < cs.len()
+                && (cs[i].is_alphanumeric()
+                    || cs[i] == '_'
+                    || cs[i] == '-' && cs.get(i + 1).is_some_and(|n| n.is_alphanumeric()) && false)
+            {
                 i += 1;
             }
             out.push(Tok::Id(cs[start..i].iter().collect()));
@@ -146,12 +152,31 @@ impl Parser {
     }
 
     fn eat(&mut self, p: &str) -> bool {
-        if self.peek() == Some(&Tok::P(match p {
-            "==" => "==", "!=" => "!=", "<=" => "<=", ">=" => ">=", "&&" => "&&", "||" => "||",
-            "+" => "+", "-" => "-", "*" => "*", "/" => "/", "%" => "%", "<" => "<", ">" => ">",
-            "!" => "!", "(" => "(", ")" => ")", "[" => "[", "]" => "]", "," => ",", "." => ".",
-            _ => return false,
-        })) {
+        if self.peek()
+            == Some(&Tok::P(match p {
+                "==" => "==",
+                "!=" => "!=",
+                "<=" => "<=",
+                ">=" => ">=",
+                "&&" => "&&",
+                "||" => "||",
+                "+" => "+",
+                "-" => "-",
+                "*" => "*",
+                "/" => "/",
+                "%" => "%",
+                "<" => "<",
+                ">" => ">",
+                "!" => "!",
+                "(" => "(",
+                ")" => ")",
+                "[" => "[",
+                "]" => "]",
+                "," => ",",
+                "." => ".",
+                _ => return false,
+            }))
+        {
             self.i += 1;
             true
         } else {
@@ -160,7 +185,11 @@ impl Parser {
     }
 
     fn expect(&mut self, p: &str) -> Result<(), String> {
-        if self.eat(p) { Ok(()) } else { Err(format!("expected {p}")) }
+        if self.eat(p) {
+            Ok(())
+        } else {
+            Err(format!("expected {p}"))
+        }
     }
 
     fn binary(&mut self, level: usize) -> Result<Expr, String> {
@@ -296,8 +325,19 @@ pub struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    pub fn new(index: &'a Index, note: usize, formulas: &'a BTreeMap<String, String>, now: i64) -> Self {
-        Ctx { index, note, formulas, now, depth: Cell::new(0) }
+    pub fn new(
+        index: &'a Index,
+        note: usize,
+        formulas: &'a BTreeMap<String, String>,
+        now: i64,
+    ) -> Self {
+        Ctx {
+            index,
+            note,
+            formulas,
+            now,
+            depth: Cell::new(0),
+        }
     }
 }
 
@@ -308,9 +348,15 @@ pub fn eval_str(src: &str, ctx: &Ctx) -> Result<Value, String> {
 fn loose_eq(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Str(x) | Value::Link(x), Value::Str(y) | Value::Link(y)) => x == y,
-        (Value::Date(d), Value::Str(s)) | (Value::Str(s), Value::Date(d)) => parse_date(s) == Some(*d),
-        (Value::Num(x), Value::Str(s)) | (Value::Str(s), Value::Num(x)) => s.trim().parse::<f64>() == Ok(*x),
-        (Value::List(x), Value::List(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| loose_eq(p, q)),
+        (Value::Date(d), Value::Str(s)) | (Value::Str(s), Value::Date(d)) => {
+            parse_date(s) == Some(*d)
+        }
+        (Value::Num(x), Value::Str(s)) | (Value::Str(s), Value::Num(x)) => {
+            s.trim().parse::<f64>() == Ok(*x)
+        }
+        (Value::List(x), Value::List(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| loose_eq(p, q))
+        }
         _ => a == b,
     }
 }
@@ -330,8 +376,12 @@ fn arith(op: Op, a: &Value, b: &Value) -> Result<Value, String> {
         (Op::Add, x, Str(y)) if !matches!(x, Date(_) | Dur(_)) => Str(format!("{x}{y}")),
         (Op::Add, List(x), List(y)) => List(x.iter().chain(y).cloned().collect()),
         (Op::Sub, Date(x), Date(y)) => Dur(x - y),
-        (Op::Add, Date(x), y) => Date(x + as_duration(y).ok_or("can only add a duration to a date")?),
-        (Op::Sub, Date(x), y) => Date(x - as_duration(y).ok_or("can only subtract a duration from a date")?),
+        (Op::Add, Date(x), y) => {
+            Date(x + as_duration(y).ok_or("can only add a duration to a date")?)
+        }
+        (Op::Sub, Date(x), y) => {
+            Date(x - as_duration(y).ok_or("can only subtract a duration from a date")?)
+        }
         (Op::Add, Dur(x), Dur(y)) => Dur(x + y),
         (Op::Sub, Dur(x), Dur(y)) => Dur(x - y),
         (Op::Mul, Dur(x), Num(y)) | (Op::Mul, Num(y), Dur(x)) => Dur((*x as f64 * y) as i64),
@@ -339,7 +389,15 @@ fn arith(op: Op, a: &Value, b: &Value) -> Result<Value, String> {
         (Op::Div, Dur(x), Dur(y)) => Num(*x as f64 / *y as f64),
         (_, x, y) => {
             let (Some(p), Some(q)) = (x.as_num(), y.as_num()) else {
-                return if matches!(x, Null) || matches!(y, Null) { Ok(Null) } else { Err(format!("can't do arithmetic on {} and {}", x.type_name(), y.type_name())) };
+                return if matches!(x, Null) || matches!(y, Null) {
+                    Ok(Null)
+                } else {
+                    Err(format!(
+                        "can't do arithmetic on {} and {}",
+                        x.type_name(),
+                        y.type_name()
+                    ))
+                };
             };
             Num(match op {
                 Op::Add => p + q,
@@ -357,12 +415,21 @@ pub fn eval(e: &Expr, ctx: &Ctx) -> Result<Value, String> {
     use Value::*;
     Ok(match e {
         Expr::Lit(v) => v.clone(),
-        Expr::List(items) => List(items.iter().map(|i| eval(i, ctx)).collect::<Result<_, _>>()?),
+        Expr::List(items) => List(
+            items
+                .iter()
+                .map(|i| eval(i, ctx))
+                .collect::<Result<_, _>>()?,
+        ),
         Expr::Ident(name) => match name.as_str() {
             "file" => ctx.index.file_value(ctx.note),
             "note" => Obj(ctx.index.notes[ctx.note].props.clone()),
             "formula" => Obj(BTreeMap::new()),
-            n => ctx.index.notes[ctx.note].props.get(n).cloned().unwrap_or(Null),
+            n => ctx.index.notes[ctx.note]
+                .props
+                .get(n)
+                .cloned()
+                .unwrap_or(Null),
         },
         Expr::Not(x) => Bool(!eval(x, ctx)?.truthy()),
         Expr::Neg(x) => match eval(x, ctx)? {
@@ -371,11 +438,19 @@ pub fn eval(e: &Expr, ctx: &Ctx) -> Result<Value, String> {
         },
         Expr::Bin(Op::And, l, r) => {
             let lv = eval(l, ctx)?;
-            if !lv.truthy() { Bool(false) } else { Bool(eval(r, ctx)?.truthy()) }
+            if !lv.truthy() {
+                Bool(false)
+            } else {
+                Bool(eval(r, ctx)?.truthy())
+            }
         }
         Expr::Bin(Op::Or, l, r) => {
             let lv = eval(l, ctx)?;
-            if lv.truthy() { Bool(true) } else { Bool(eval(r, ctx)?.truthy()) }
+            if lv.truthy() {
+                Bool(true)
+            } else {
+                Bool(eval(r, ctx)?.truthy())
+            }
         }
         Expr::Bin(op, l, r) => {
             let (a, b) = (eval(l, ctx)?, eval(r, ctx)?);
@@ -401,9 +476,16 @@ pub fn eval(e: &Expr, ctx: &Ctx) -> Result<Value, String> {
         Expr::At(x, i) => {
             let (x, i) = (eval(x, ctx)?, eval(i, ctx)?);
             match (&x, &i) {
-                (List(l), n) => n.as_num().and_then(|n| l.get(n as usize)).cloned().unwrap_or(Null),
+                (List(l), n) => n
+                    .as_num()
+                    .and_then(|n| l.get(n as usize))
+                    .cloned()
+                    .unwrap_or(Null),
                 (Obj(o), k) => o.get(&k.to_string()).cloned().unwrap_or(Null),
-                (Str(s), n) => n.as_num().and_then(|n| s.chars().nth(n as usize)).map_or(Null, |c| Str(c.to_string())),
+                (Str(s), n) => n
+                    .as_num()
+                    .and_then(|n| s.chars().nth(n as usize))
+                    .map_or(Null, |c| Str(c.to_string())),
                 _ => Null,
             }
         }
@@ -417,7 +499,13 @@ fn member(obj: &Expr, name: &str, ctx: &Ctx) -> Result<Value, String> {
     if let Expr::Ident(id) = obj {
         match id.as_str() {
             "formula" => return formula(name, ctx),
-            "note" => return Ok(ctx.index.notes[ctx.note].props.get(name).cloned().unwrap_or(Null)),
+            "note" => {
+                return Ok(ctx.index.notes[ctx.note]
+                    .props
+                    .get(name)
+                    .cloned()
+                    .unwrap_or(Null));
+            }
             _ => {}
         }
     }
@@ -442,7 +530,10 @@ fn member(obj: &Expr, name: &str, ctx: &Ctx) -> Result<Value, String> {
 }
 
 fn formula(name: &str, ctx: &Ctx) -> Result<Value, String> {
-    let src = ctx.formulas.get(name).ok_or_else(|| format!("no formula named {name}"))?;
+    let src = ctx
+        .formulas
+        .get(name)
+        .ok_or_else(|| format!("no formula named {name}"))?;
     if ctx.depth.get() > 16 {
         return Err(format!("formula {name} refers to itself"));
     }
@@ -453,7 +544,9 @@ fn formula(name: &str, ctx: &Ctx) -> Result<Value, String> {
 }
 
 fn want_str(args: &[Value], i: usize, what: &str) -> Result<String, String> {
-    args.get(i).map(ToString::to_string).ok_or_else(|| format!("{what} needs an argument"))
+    args.get(i)
+        .map(ToString::to_string)
+        .ok_or_else(|| format!("{what} needs an argument"))
 }
 
 fn call(callee: &Expr, args: &[Expr], ctx: &Ctx) -> Result<Value, String> {
@@ -462,11 +555,22 @@ fn call(callee: &Expr, args: &[Expr], ctx: &Ctx) -> Result<Value, String> {
         Expr::Ident(name) => {
             // `if` evaluates only the branch it takes.
             if name == "if" {
-                let cond = args.first().map(|a| eval(a, ctx)).transpose()?.unwrap_or(Null);
-                let pick = if cond.truthy() { args.get(1) } else { args.get(2) };
+                let cond = args
+                    .first()
+                    .map(|a| eval(a, ctx))
+                    .transpose()?
+                    .unwrap_or(Null);
+                let pick = if cond.truthy() {
+                    args.get(1)
+                } else {
+                    args.get(2)
+                };
                 return pick.map_or(Ok(Null), |a| eval(a, ctx));
             }
-            let a: Vec<Value> = args.iter().map(|x| eval(x, ctx)).collect::<Result<_, _>>()?;
+            let a: Vec<Value> = args
+                .iter()
+                .map(|x| eval(x, ctx))
+                .collect::<Result<_, _>>()?;
             Ok(match name.as_str() {
                 "now" => Date(ctx.now),
                 "today" => Date(ctx.now.div_euclid(DAY) * DAY),
@@ -486,26 +590,49 @@ fn call(callee: &Expr, args: &[Expr], ctx: &Ctx) -> Result<Value, String> {
                 "link" => Link(want_str(&a, 0, "link")?),
                 "min" | "max" => {
                     let nums: Vec<f64> = a.iter().filter_map(Value::as_num).collect();
-                    let pick = if name == "min" { nums.iter().copied().fold(f64::INFINITY, f64::min) } else { nums.iter().copied().fold(f64::NEG_INFINITY, f64::max) };
+                    let pick = if name == "min" {
+                        nums.iter().copied().fold(f64::INFINITY, f64::min)
+                    } else {
+                        nums.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                    };
                     if nums.is_empty() { Null } else { Num(pick) }
                 }
-                "round" => a.first().and_then(Value::as_num).map_or(Null, |n| Num(round_to(n, a.get(1).and_then(Value::as_num).unwrap_or(0.0)))),
-                "floor" => a.first().and_then(Value::as_num).map_or(Null, |n| Num(n.floor())),
-                "ceil" => a.first().and_then(Value::as_num).map_or(Null, |n| Num(n.ceil())),
-                "abs" => a.first().and_then(Value::as_num).map_or(Null, |n| Num(n.abs())),
-                "contains" => Bool(want_str(&a, 0, "contains")?.contains(&want_str(&a, 1, "contains")?)),
+                "round" => a.first().and_then(Value::as_num).map_or(Null, |n| {
+                    Num(round_to(n, a.get(1).and_then(Value::as_num).unwrap_or(0.0)))
+                }),
+                "floor" => a
+                    .first()
+                    .and_then(Value::as_num)
+                    .map_or(Null, |n| Num(n.floor())),
+                "ceil" => a
+                    .first()
+                    .and_then(Value::as_num)
+                    .map_or(Null, |n| Num(n.ceil())),
+                "abs" => a
+                    .first()
+                    .and_then(Value::as_num)
+                    .map_or(Null, |n| Num(n.abs())),
+                "contains" => {
+                    Bool(want_str(&a, 0, "contains")?.contains(&want_str(&a, 1, "contains")?))
+                }
                 other => return Err(format!("no function named {other}")),
             })
         }
         Expr::Member(obj, method) => {
-            if let Expr::Ident(id) = obj.as_ref() {
-                if id == "file" {
-                    let a: Vec<Value> = args.iter().map(|x| eval(x, ctx)).collect::<Result<_, _>>()?;
-                    return file_method(method, &a, ctx);
-                }
+            if let Expr::Ident(id) = obj.as_ref()
+                && id == "file"
+            {
+                let a: Vec<Value> = args
+                    .iter()
+                    .map(|x| eval(x, ctx))
+                    .collect::<Result<_, _>>()?;
+                return file_method(method, &a, ctx);
             }
             let target = eval(obj, ctx)?;
-            let a: Vec<Value> = args.iter().map(|x| eval(x, ctx)).collect::<Result<_, _>>()?;
+            let a: Vec<Value> = args
+                .iter()
+                .map(|x| eval(x, ctx))
+                .collect::<Result<_, _>>()?;
             method_on(&target, method, &a)
         }
         _ => Err("that can't be called".into()),
@@ -531,7 +658,11 @@ fn file_method(name: &str, a: &[Value], ctx: &Ctx) -> Result<Value, String> {
         "hasLink" => {
             let want = want_str(a, 0, "hasLink")?;
             let target = ctx.index.resolve(&want, ctx.note);
-            Bool(ctx.index.outgoing(ctx.note).iter().any(|&j| Some(j) == target || ctx.index.notes[j].name.eq_ignore_ascii_case(&want)))
+            Bool(
+                ctx.index.outgoing(ctx.note).iter().any(|&j| {
+                    Some(j) == target || ctx.index.notes[j].name.eq_ignore_ascii_case(&want)
+                }),
+            )
         }
         "asLink" => Link(note.name.clone()),
         other => return Err(format!("file has no method {other}")),
@@ -554,28 +685,87 @@ fn method_on(v: &Value, name: &str, a: &[Value]) -> Result<Value, String> {
         (Str(s), "trim") => Str(s.trim().to_string()),
         (Str(s), "replace") => Str(s.replace(&arg_s(0)?, &arg_s(1)?)),
         (Str(s), "split") => List(s.split(&arg_s(0)?).map(|p| Str(p.to_string())).collect()),
-        (Str(s), "title") => Str(s.split(' ').map(|w| { let mut c = w.chars(); c.next().map_or(String::new(), |f| f.to_uppercase().chain(c.flat_map(char::to_lowercase)).collect()) }).collect::<Vec<_>>().join(" ")),
+        (Str(s), "title") => Str(s
+            .split(' ')
+            .map(|w| {
+                let mut c = w.chars();
+                c.next().map_or(String::new(), |f| {
+                    f.to_uppercase()
+                        .chain(c.flat_map(char::to_lowercase))
+                        .collect()
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" ")),
         (Str(s), "slice") => {
-            let (from, to) = (a.first().and_then(Value::as_num).unwrap_or(0.0) as usize, a.get(1).and_then(Value::as_num).map(|n| n as usize));
-            Str(s.chars().skip(from).take(to.map_or(usize::MAX, |t| t.saturating_sub(from))).collect())
+            let (from, to) = (
+                a.first().and_then(Value::as_num).unwrap_or(0.0) as usize,
+                a.get(1).and_then(Value::as_num).map(|n| n as usize),
+            );
+            Str(s
+                .chars()
+                .skip(from)
+                .take(to.map_or(usize::MAX, |t| t.saturating_sub(from)))
+                .collect())
         }
         (List(l), "contains") => Bool(l.iter().any(|x| loose_eq(x, &a[0]))),
         (List(l), "containsAny") => Bool(a.iter().any(|w| l.iter().any(|x| loose_eq(x, w)))),
         (List(l), "containsAll") => Bool(a.iter().all(|w| l.iter().any(|x| loose_eq(x, w)))),
-        (List(l), "join") => Str(l.iter().map(ToString::to_string).collect::<Vec<_>>().join(&arg_s(0).unwrap_or_else(|_| ", ".into()))),
-        (List(l), "sort") => { let mut l = l.clone(); l.sort_by(Value::compare); List(l) }
-        (List(l), "reverse") => List(l.iter().rev().cloned().collect()),
-        (List(l), "unique") => { let mut out: Vec<Value> = Vec::new(); for x in l { if !out.iter().any(|y| loose_eq(x, y)) { out.push(x.clone()); } } List(out) }
-        (List(l), "flat") => List(l.iter().flat_map(|x| match x { List(i) => i.clone(), o => vec![o.clone()] }).collect()),
-        (List(l), "slice") => {
-            let (from, to) = (a.first().and_then(Value::as_num).unwrap_or(0.0) as usize, a.get(1).and_then(Value::as_num).map_or(l.len(), |n| n as usize));
-            List(l.iter().skip(from).take(to.saturating_sub(from)).cloned().collect())
+        (List(l), "join") => Str(l
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(&arg_s(0).unwrap_or_else(|_| ", ".into()))),
+        (List(l), "sort") => {
+            let mut l = l.clone();
+            l.sort_by(Value::compare);
+            List(l)
         }
-        (Num(n), "round") => Num(round_to(*n, a.first().and_then(Value::as_num).unwrap_or(0.0))),
+        (List(l), "reverse") => List(l.iter().rev().cloned().collect()),
+        (List(l), "unique") => {
+            let mut out: Vec<Value> = Vec::new();
+            for x in l {
+                if !out.iter().any(|y| loose_eq(x, y)) {
+                    out.push(x.clone());
+                }
+            }
+            List(out)
+        }
+        (List(l), "flat") => List(
+            l.iter()
+                .flat_map(|x| match x {
+                    List(i) => i.clone(),
+                    o => vec![o.clone()],
+                })
+                .collect(),
+        ),
+        (List(l), "slice") => {
+            let (from, to) = (
+                a.first().and_then(Value::as_num).unwrap_or(0.0) as usize,
+                a.get(1)
+                    .and_then(Value::as_num)
+                    .map_or(l.len(), |n| n as usize),
+            );
+            List(
+                l.iter()
+                    .skip(from)
+                    .take(to.saturating_sub(from))
+                    .cloned()
+                    .collect(),
+            )
+        }
+        (Num(n), "round") => Num(round_to(
+            *n,
+            a.first().and_then(Value::as_num).unwrap_or(0.0),
+        )),
         (Num(n), "floor") => Num(n.floor()),
         (Num(n), "ceil") => Num(n.ceil()),
         (Num(n), "abs") => Num(n.abs()),
-        (Num(n), "toFixed") => Str(format!("{:.*}", a.first().and_then(Value::as_num).unwrap_or(0.0) as usize, n)),
+        (Num(n), "toFixed") => Str(format!(
+            "{:.*}",
+            a.first().and_then(Value::as_num).unwrap_or(0.0) as usize,
+            n
+        )),
         (Date(d), "format") => Str(format_date(*d, &arg_s(0)?)),
         (Date(d), "date") => Date(d.div_euclid(DAY) * DAY),
         (Date(d), "time") => Str(format_date(*d, "HH:mm:ss")),
@@ -597,11 +787,18 @@ mod tests {
             ctime: 1_700_000_000_000,
             mtime: 1_700_086_400_000,
         };
-        let b = RawNote { path: "Beta.md".into(), text: "".into(), ..Default::default() };
+        let b = RawNote {
+            path: "Beta.md".into(),
+            text: "".into(),
+            ..Default::default()
+        };
         let formulas = BTreeMap::from([
             ("double".to_string(), "price * 2".to_string()),
             ("loop".to_string(), "formula.loop".to_string()),
-            ("label".to_string(), "if(price > 10, \"dear\", \"cheap\")".to_string()),
+            (
+                "label".to_string(),
+                "if(price > 10, \"dear\", \"cheap\")".to_string(),
+            ),
         ]);
         (Index::build(&[n, b]), formulas)
     }
@@ -647,10 +844,16 @@ mod tests {
 
     #[test]
     fn dates_and_durations() {
-        assert_eq!(ok("(now() - file.mtime).days"), Value::Num(((1_717_977_600_000i64 - 1_700_086_400_000) / DAY) as f64));
+        assert_eq!(
+            ok("(now() - file.mtime).days"),
+            Value::Num(((1_717_977_600_000i64 - 1_700_086_400_000) / DAY) as f64)
+        );
         assert_eq!(ok("due == date(\"2024-06-10\")"), Value::Bool(true));
         assert_eq!(ok("due.year"), Value::Num(2024.0));
-        assert_eq!(ok("due.format(\"DD MMM YYYY\")"), Value::Str("10 Jun 2024".into()));
+        assert_eq!(
+            ok("due.format(\"DD MMM YYYY\")"),
+            Value::Str("10 Jun 2024".into())
+        );
         assert_eq!(ok("due + \"1d\" > due"), Value::Bool(true));
         assert_eq!(ok("(today() - due).days"), Value::Num(0.0));
         assert_eq!(ok("duration(\"2 weeks\").days"), Value::Num(14.0));
@@ -667,7 +870,7 @@ mod tests {
         assert_eq!(ok("authors.containsAll(\"a\", \"c\")"), Value::Bool(false));
         assert_eq!(ok("missing.isEmpty()"), Value::Bool(true));
         assert_eq!(ok("if(true, 1, 1 / 0)"), Value::Num(1.0));
-        assert_eq!(ok("round(3.14159, 2)"), Value::Num(3.14));
+        assert_eq!(ok("round(3.14159, 2)"), Value::Num(314.0 / 100.0));
         assert_eq!(ok("max(1, 9, 3)"), Value::Num(9.0));
         assert!(run("status.nonsense()").is_err());
     }

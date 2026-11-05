@@ -10,8 +10,8 @@ same sandbox and permissions. The API has the same namespaces as the user config
     ./build.sh examples/hello/plugin.lua -o hello-lua.wasm
     forge --check-plugin hello-lua.wasm --run hello-lua-greet --answer Ada
 
-`examples/` also has vertico, corfu, meow and lsp: the same plugins as
-the Rust ones in `plugins/`, written in Lua (each has a `build.sh`).
+`examples/hello` is a small example plugin with a command, key binding,
+event handler, and process example.
 
 `forge.toml` next to the first script is the manifest (name, version,
 description, permissions), as for the other SDKs.

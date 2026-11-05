@@ -869,9 +869,7 @@ mod tests {
             for c in b.commands {
                 assert!(seen.insert(*c), "{c} has two icons");
             }
-            for s in [
-                b.text, b.symbol, b.emoji, b.macos, b.windows, b.linux,
-            ] {
+            for s in [b.text, b.symbol, b.emoji, b.macos, b.windows, b.linux] {
                 assert!(!s.is_empty(), "{} has an empty entry", b.name);
             }
         }
@@ -894,8 +892,10 @@ mod tests {
 
     #[test]
     fn preference_picks_first_supported() {
-        let mut p = Prefs::default();
-        p.platform = Some(Platform::MacOs);
+        let mut p = Prefs {
+            platform: Some(Platform::MacOs),
+            ..Prefs::default()
+        };
         assert_eq!(
             p.resolve("undo", Support::GRAPHICAL),
             Some(Resolved::System {
@@ -912,8 +912,10 @@ mod tests {
 
     #[test]
     fn each_platform_names_its_own_icons() {
-        let mut p = Prefs::default();
-        p.preference = vec![IconType::System];
+        let mut p = Prefs {
+            preference: vec![IconType::System],
+            ..Prefs::default()
+        };
         for (plat, want) in [
             (Platform::MacOs, "square.and.arrow.down"),
             (Platform::Windows, "Save"),

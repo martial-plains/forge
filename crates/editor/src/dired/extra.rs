@@ -4,6 +4,7 @@
 //! files, and editing names in place (wdired).
 use super::*;
 use regex::Regex;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
@@ -85,7 +86,26 @@ fn describe(paths: &[PathBuf]) -> String {
 }
 
 fn is_executable(p: &Path) -> bool {
-    fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    #[cfg(unix)]
+    {
+        fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(windows)]
+    {
+        p.is_file()
+            && p.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "bat" | "cmd" | "com" | "exe" | "sh"
+                    )
+                })
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
 }
 
 pub(super) fn command(
@@ -811,14 +831,37 @@ fn relative(target: &Path, from_dir: &Path) -> PathBuf {
 }
 
 fn make_link(kind: char, src: &Path, dest: &Path) -> io::Result<()> {
+    let is_dir = src.is_dir();
     match kind {
         'H' => fs::hard_link(src, dest),
         'Y' => {
             let from = dest.parent().unwrap_or(Path::new("."));
-            std::os::unix::fs::symlink(relative(src, from), dest)
+            make_symlink(&relative(src, from), dest, is_dir)
         }
-        _ => std::os::unix::fs::symlink(src, dest),
+        _ => make_symlink(src, dest, is_dir),
     }
+}
+
+#[cfg(unix)]
+fn make_symlink(src: &Path, dest: &Path, _is_dir: bool) -> io::Result<()> {
+    std::os::unix::fs::symlink(src, dest)
+}
+
+#[cfg(windows)]
+fn make_symlink(src: &Path, dest: &Path, is_dir: bool) -> io::Result<()> {
+    if is_dir {
+        std::os::windows::fs::symlink_dir(src, dest)
+    } else {
+        std::os::windows::fs::symlink_file(src, dest)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn make_symlink(_src: &Path, _dest: &Path, _is_dir: bool) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "symbolic links are not supported on this platform",
+    ))
 }
 
 fn link_all(app: &mut App, kind: char, sources: Vec<PathBuf>, target: &Path) {
@@ -846,6 +889,7 @@ fn link_all(app: &mut App, kind: char, sources: Vec<PathBuf>, target: &Path) {
 }
 
 /// Apply one chmod clause list to a mode.
+#[cfg(unix)]
 fn chmod_mode(spec: &str, old: u32, is_dir: bool) -> Option<u32> {
     if !spec.is_empty() && spec.chars().all(|c| c.is_digit(8)) {
         return u32::from_str_radix(spec, 8).ok();
@@ -1025,36 +1069,41 @@ pub(super) fn answered(app: &mut App, extra: Extra, input: &str) {
                 Some(f) => app.error(format!("{done} done, {} failed ({f})", failed.len())),
             }
         }
-        Extra::Chmod(paths) => {
-            if t.is_empty() {
-                return;
-            }
-            let (mut done, mut failed) = (0, Vec::new());
-            for p in &paths {
-                if rfs::is_remote(p) {
-                    match rfs::chmod(p, t) {
+        Extra::Chmod(_paths) => {
+            #[cfg(unix)]
+            {
+                if t.is_empty() {
+                    return;
+                }
+                let (mut done, mut failed) = (0, Vec::new());
+                for p in &_paths {
+                    if rfs::is_remote(p) {
+                        match rfs::chmod(p, t) {
+                            Ok(()) => done += 1,
+                            Err(e) => failed.push(format!("{}: {e}", name_of(p))),
+                        }
+                        continue;
+                    }
+                    let Ok(meta) = fs::metadata(p) else {
+                        failed.push(format!("{}: cannot stat", name_of(p)));
+                        continue;
+                    };
+                    let Some(mode) = chmod_mode(t, meta.permissions().mode(), meta.is_dir()) else {
+                        return app.error(format!("Bad mode: {t}"));
+                    };
+                    match fs::set_permissions(p, fs::Permissions::from_mode(mode)) {
                         Ok(()) => done += 1,
                         Err(e) => failed.push(format!("{}: {e}", name_of(p))),
                     }
-                    continue;
                 }
-                let Ok(meta) = fs::metadata(p) else {
-                    failed.push(format!("{}: cannot stat", name_of(p)));
-                    continue;
-                };
-                let Some(mode) = chmod_mode(t, meta.permissions().mode(), meta.is_dir()) else {
-                    return app.error(format!("Bad mode: {t}"));
-                };
-                match fs::set_permissions(p, fs::Permissions::from_mode(mode)) {
-                    Ok(()) => done += 1,
-                    Err(e) => failed.push(format!("{}: {e}", name_of(p))),
+                revert(app, true);
+                match failed.first() {
+                    None => app.msg(format!("Changed the mode of {done} file(s)")),
+                    Some(f) => app.error(format!("{done} done, {} failed ({f})", failed.len())),
                 }
             }
-            revert(app, true);
-            match failed.first() {
-                None => app.msg(format!("Changed the mode of {done} file(s)")),
-                Some(f) => app.error(format!("{done} done, {} failed ({f})", failed.len())),
-            }
+            #[cfg(not(unix))]
+            app.error("Changing file modes is not supported on this platform");
         }
         Extra::Chown(group, paths) => {
             if t.is_empty() {
@@ -1200,27 +1249,29 @@ pub(super) fn answered(app: &mut App, extra: Extra, input: &str) {
             } else {
                 dir.join(typed)
             };
-            let names: Vec<String> = paths
-                .iter()
-                .map(|p| quote(Path::new(&name_of(p))))
-                .collect();
-            let a = quote(&archive);
             let lower = archive.display().to_string().to_lowercase();
-            let cmd = if lower.ends_with(".zip") {
-                format!("zip -r {a} {}", names.join(" "))
+            let mut cmd = if lower.ends_with(".zip") {
+                let mut c = Command::new("zip");
+                c.arg("-r");
+                c
             } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-                format!("tar czf {a} {}", names.join(" "))
+                let mut c = Command::new("tar");
+                c.arg("czf");
+                c
             } else if lower.ends_with(".tar") {
-                format!("tar cf {a} {}", names.join(" "))
+                let mut c = Command::new("tar");
+                c.arg("cf");
+                c
             } else {
                 return app.error("Use .tar.gz, .tgz, .tar or .zip");
             };
-            match Command::new("sh")
-                .arg("-c")
-                .arg(&cmd)
-                .current_dir(&dir)
-                .output()
-            {
+            cmd.arg(&archive);
+            for p in &paths {
+                if let Some(name) = p.file_name() {
+                    cmd.arg(name);
+                }
+            }
+            match cmd.current_dir(&dir).output() {
                 Ok(o) if o.status.success() => {
                     revert(app, true);
                     app.msg(format!("Wrote {}", archive.display()));

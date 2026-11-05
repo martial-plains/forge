@@ -1106,13 +1106,12 @@ pub fn reverse_direction(app: &mut App) {
     for f in &files {
         let first_hunk = f.hunks.first().map_or(f.end, |h| h.header);
         for l in f.start..first_hunk {
-            if let Some(p) = lines[l].strip_prefix("--- ") {
-                if l + 1 < first_hunk
-                    && let Some(q) = lines[l + 1].strip_prefix("+++ ")
-                {
-                    out[l] = format!("--- {q}");
-                    out[l + 1] = format!("+++ {p}");
-                }
+            if let Some(p) = lines[l].strip_prefix("--- ")
+                && l + 1 < first_hunk
+                && let Some(q) = lines[l + 1].strip_prefix("+++ ")
+            {
+                out[l] = format!("--- {q}");
+                out[l + 1] = format!("+++ {p}");
             }
         }
         for h in &f.hunks {

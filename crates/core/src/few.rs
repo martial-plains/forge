@@ -4,6 +4,7 @@
 //! a typed address means. No network here; the editor fetches.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -217,7 +218,11 @@ pub fn normalize_input_with(s: &str, search: &dyn Fn(&str) -> String) -> String 
     if s.starts_with("http://") || s.starts_with("https://") || s.starts_with("file://") {
         return s.to_string();
     }
-    if s.starts_with('/') || s.starts_with("~/") || s.starts_with("./") {
+    if s.starts_with('/')
+        || s.starts_with("~/")
+        || s.starts_with("./")
+        || Path::new(s).is_absolute()
+    {
         return s.to_string();
     }
     let looks_like_host = !s.contains(char::is_whitespace)

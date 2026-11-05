@@ -127,7 +127,10 @@ fn connect(o: &Opts) -> Result<(TcpStream, String), String> {
     })?;
     let v: Value = serde_json::from_str(&text).map_err(|_| "the server file is damaged")?;
     let port = v["port"].as_u64().ok_or("the server file has no port")? as u16;
-    let key = v["key"].as_str().ok_or("the server file has no key")?.to_string();
+    let key = v["key"]
+        .as_str()
+        .ok_or("the server file has no key")?
+        .to_string();
     let s = TcpStream::connect(("127.0.0.1", port))
         .map_err(|e| format!("can't connect to the server on port {port}: {e}"))?;
     Ok((s, key))
@@ -168,7 +171,7 @@ fn alternate(o: &Opts, why: &str) -> ! {
                 .map(|s| s.success())
                 .unwrap_or(false);
             if ok {
-                return run(o);
+                run(o);
             }
             eprintln!("forgeclient: could not start a daemon");
             std::process::exit(1);
@@ -252,7 +255,10 @@ mod tests {
     fn files_take_positions_and_eval_takes_the_rest() {
         let o = p(&["-n", "+4:2", "a.txt", "b.txt"]).unwrap();
         assert!(o.no_wait);
-        assert_eq!(o.files, vec![("a.txt".into(), 4, 2), ("b.txt".into(), 0, 0)]);
+        assert_eq!(
+            o.files,
+            vec![("a.txt".into(), 4, 2), ("b.txt".into(), 0, 0)]
+        );
         let o = p(&["-u", "--eval", "1+1", "-x"]).unwrap();
         assert!(o.suppress);
         assert_eq!(o.exprs, vec!["1+1", "-x"]);

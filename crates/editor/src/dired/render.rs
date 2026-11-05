@@ -129,7 +129,7 @@ pub(super) fn render_ls(
     for line in lines {
         let mark = marks.get(&line.path).copied().unwrap_or(' ');
         let mut perms = line.row.perms.clone();
-        // A plain file is `-` in ls (eza writes a dot).
+        // A plain file is `-` in ls (the column listing writes a dot).
         if perms.starts_with('.') {
             perms.replace_range(..1, "-");
         }
@@ -181,7 +181,7 @@ pub(super) fn names_of(dir: &Path, view: View) -> io::Result<Vec<String>> {
 /// The text of a Dired buffer: the directory, then any subdirectories
 /// listed inline (a subdirectory that can't be read any more is dropped).
 /// A blank line separates the listings. Directories in `trees` are drawn
-/// as eza trees (`i`); everything else uses `view` as is (`T` draws all).
+/// as trees (`i`); everything else uses `view` as is (`T` draws all).
 pub(super) fn render_all(
     dirs: &[PathBuf],
     marks: &HashMap<PathBuf, char>,
@@ -463,7 +463,7 @@ pub(super) fn decorate_entry(b: &Buffer, items: &mut Vec<DecoSpec>, li: usize, c
     // itself, so a click on a Nerd Font icon in front of it counts too;
     // the tree cells in front of that belong to the directories above.
     push_region(items, at(name_col), at(end), ENTRY_REGION);
-    // The target has a colour of its own (eza's `symlink_path`), with the
+    // The target has a colour of its own, with the
     // arrow between them just punctuation.
     if arrow.is_some() {
         push_face(items, at(end), at(end + 4), DiredFace::Dim);

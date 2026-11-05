@@ -371,9 +371,33 @@ fn process_alive(pid: i64) -> bool {
     }
 }
 
+/// Ask Windows whether the process is running (and hasn't exited).
+#[cfg(windows)]
+fn process_alive(pid: i64) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    const STILL_ACTIVE: u32 = 259;
+    let Ok(pid) = u32::try_from(pid) else {
+        return false;
+    };
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+    let mut code = 0;
+    let ok = unsafe { GetExitCodeProcess(handle, &mut code) } != 0;
+    unsafe {
+        CloseHandle(handle);
+    }
+    ok && code == STILL_ACTIVE
+}
+
 /// Without a way to ask, assume the owner is alive: only an explicit
 /// steal clears the lock.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn process_alive(_pid: i64) -> bool {
     true
 }
@@ -434,6 +458,39 @@ mod tests {
         d
     }
 
+    fn long_lived_child() -> std::process::Child {
+        #[cfg(unix)]
+        let mut command = {
+            let mut c = std::process::Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut c = std::process::Command::new("ping");
+            c.args(["-n", "30", "127.0.0.1"]);
+            c
+        };
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+
+    fn finished_pid() -> u32 {
+        #[cfg(unix)]
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        #[cfg(windows)]
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    }
+
     /// Write a lock the way another editor would.
     pub(crate) fn write_foreign_lock(lock: &Path, text: &str) {
         #[cfg(unix)]
@@ -473,24 +530,26 @@ mod tests {
     #[test]
     fn stale_means_dead_here_or_before_this_boot() {
         let host = local_hostname();
-        // A live process that isn't us: pid 1.
-        let live = LockOwner::parse(&format!("someone@{host}.1"));
+        // A live process that isn't us.
+        let mut child = long_lived_child();
+        let live_pid = child.id();
+        let live = LockOwner::parse(&format!("someone@{host}.{live_pid}"));
         assert!(!live.is_stale());
         if let Some(boot) = boot_time() {
-            let rebooted = LockOwner::parse(&format!("someone@{host}.1:{}", boot - 1000));
+            let rebooted = LockOwner::parse(&format!("someone@{host}.{live_pid}:{}", boot - 1000));
             assert!(rebooted.is_stale(), "from before the last boot");
-            let same = LockOwner::parse(&format!("someone@{host}.1:{}", boot + 1));
+            let same = LockOwner::parse(&format!("someone@{host}.{live_pid}:{}", boot + 1));
             assert!(!same.is_stale(), "a second's slack allows");
         }
-        let mut child = std::process::Command::new("true").spawn().unwrap();
-        let dead = child.id();
-        child.wait().unwrap();
+        let dead = finished_pid();
         assert!(LockOwner::parse(&format!("ghost@{host}.{dead}")).is_stale());
         let remote = LockOwner::parse(&format!("ghost@not-{host}.{dead}"));
         assert!(
             !remote.is_stale(),
             "another machine's lock is taken at its word"
         );
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
@@ -527,7 +586,8 @@ mod tests {
         let d = dir("foreign");
         let f = d.join("b.txt");
         let lock = d.join(".#b.txt");
-        let theirs = format!("other-user@{}.1", local_hostname());
+        let mut child = long_lived_child();
+        let theirs = format!("other-user@{}.{}", local_hostname(), child.id());
         write_foreign_lock(&lock, &theirs);
         match acquire(&f, false).unwrap() {
             Attempt::Locked(o) => assert_eq!(o.raw, theirs),
@@ -541,6 +601,8 @@ mod tests {
         assert_eq!(read_lock(&lock).unwrap(), our_lock_text());
         drop(stolen);
         assert!(std::fs::symlink_metadata(&lock).is_err());
+        let _ = child.kill();
+        let _ = child.wait();
         std::fs::remove_dir_all(d).unwrap();
     }
 
@@ -549,9 +611,7 @@ mod tests {
         let d = dir("stale");
         let f = d.join("c.txt");
         let lock = d.join(".#c.txt");
-        let mut child = std::process::Command::new("true").spawn().unwrap();
-        let dead = child.id();
-        child.wait().unwrap();
+        let dead = finished_pid();
         write_foreign_lock(&lock, &format!("ghost@{}.{dead}", local_hostname()));
         let Attempt::Acquired(l) = acquire(&f, false).unwrap() else {
             panic!("a dead owner's lock is reclaimed");
@@ -562,8 +622,11 @@ mod tests {
         assert_eq!(read_lock(&lock).unwrap(), "someone-elses-format");
         std::fs::remove_file(&lock).unwrap();
         // A regular-file lock (what Forge writes where symlinks fail).
-        std::fs::write(&lock, format!("other@{}.1", local_hostname())).unwrap();
+        let mut child = long_lived_child();
+        std::fs::write(&lock, format!("other@{}.{}", local_hostname(), child.id())).unwrap();
         assert!(matches!(acquire(&f, false).unwrap(), Attempt::Locked(_)));
+        let _ = child.kill();
+        let _ = child.wait();
         std::fs::remove_dir_all(d).unwrap();
     }
 
@@ -577,7 +640,8 @@ mod tests {
         };
         // Another editor steals it.
         std::fs::remove_file(&lock).unwrap();
-        let theirs = format!("thief@{}.1", local_hostname());
+        let mut child = long_lived_child();
+        let theirs = format!("thief@{}.{}", local_hostname(), child.id());
         write_foreign_lock(&lock, &theirs);
         assert!(
             matches!(acquire(&f, false).unwrap(), Attempt::Locked(_)),
@@ -585,6 +649,8 @@ mod tests {
         );
         drop(mine);
         assert_eq!(read_lock(&lock).unwrap(), theirs, "the thief keeps it");
+        let _ = child.kill();
+        let _ = child.wait();
         std::fs::remove_dir_all(d).unwrap();
     }
 }

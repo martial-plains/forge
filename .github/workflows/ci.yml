@@ -10,6 +10,67 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  platforms:
+    name: tests and frontend (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install GTK 4 development files
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+
+      - name: Install .NET 10
+        if: runner.os == 'Windows'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Test editor crates
+        run: cargo test -p forge-core -p forge-editor -p forge-terminal -p forge-notes -p forge-docs
+
+      - name: Clippy workspace
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace
+
+      - name: Build GNOME frontend
+        if: runner.os == 'Linux'
+        run: cargo build --release --manifest-path frontends/gnome/Cargo.toml
+
+      - name: Build macOS frontend
+        if: runner.os == 'macOS'
+        run: |
+          scripts/build-apple.sh
+          xcodebuild -project frontends/apple/Forge.xcodeproj -scheme Forge -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build
+
+      - name: Build Windows frontend
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build-windows.ps1
+
+      - name: Build hello plugin for WASI
+        shell: bash
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --manifest-path plugins/hello/Cargo.toml --release --target wasm32-wasip2
+
+      - name: Build Forge and test SDKs
+        shell: bash
+        run: |
+          cargo build --profile fast
+          sdks/test.sh
+
   check:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
@@ -32,6 +93,21 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  licenses:
+    name: Allowed dependency licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check dependency licenses
+        run: cargo deny check licenses
 
   docs:
     name: rustdoc

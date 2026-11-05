@@ -30,7 +30,10 @@ pub fn builtin_image(name: &str) -> Option<std::path::PathBuf> {
         "logo" => include_bytes!("../assets/forge-logo.png"),
         _ => return None,
     };
-    let path = std::env::temp_dir().join(format!("forge-builtin-{name}-{}.png", env!("CARGO_PKG_VERSION")));
+    let path = std::env::temp_dir().join(format!(
+        "forge-builtin-{name}-{}.png",
+        env!("CARGO_PKG_VERSION")
+    ));
     let current = std::fs::metadata(&path).is_ok_and(|m| m.len() == bytes.len() as u64);
     if !current && std::fs::write(&path, bytes).is_err() {
         return None;
@@ -355,11 +358,15 @@ mod tests {
 
     #[test]
     fn parse_path_marks_the_current_directory() {
+        let sep = path_separator();
         assert_eq!(
-            parse_path("/a:/b"),
+            parse_path(&format!("/a{sep}/b")),
             vec![Some("/a".into()), Some("/b".into())]
         );
-        assert_eq!(parse_path(":/a"), vec![None, Some("/a".into())]);
+        assert_eq!(
+            parse_path(&format!("{sep}/a")),
+            vec![None, Some("/a".into())]
+        );
         assert_eq!(parse_path(""), vec![None]);
     }
 

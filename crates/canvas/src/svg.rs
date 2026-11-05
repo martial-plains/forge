@@ -8,7 +8,10 @@ use crate::model::{Align, Op, Paint, Scene, Stroke};
 use crate::text::{measure, wrap};
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 pub fn to_svg(scene: &Scene) -> String {
@@ -18,14 +21,18 @@ pub fn to_svg(scene: &Scene) -> String {
     let mut defs = String::new();
     let mut body = String::new();
     let mut n = 0;
-    let _ = write!(
+    let _ = writeln!(
         out,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">\n",
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">",
         w = scene.width,
         h = scene.height
     );
     if let Some(bg) = &scene.background {
-        let _ = writeln!(body, "<rect width=\"100%\" height=\"100%\" fill=\"{}\"/>", esc(bg));
+        let _ = writeln!(
+            body,
+            "<rect width=\"100%\" height=\"100%\" fill=\"{}\"/>",
+            esc(bg)
+        );
     }
     ops(&scene.ops, &mut body, &mut defs, &mut n);
     if !defs.is_empty() {
@@ -74,8 +81,14 @@ fn color_attr(name: &str, c: &str) -> String {
 }
 
 fn stroke_attr(s: &Option<Stroke>, marker: &mut bool) -> String {
-    let Some(s) = s else { return "stroke=\"none\"".into() };
-    let mut a = format!("{} stroke-width=\"{}\"", color_attr("stroke", &s.color), s.width);
+    let Some(s) = s else {
+        return "stroke=\"none\"".into();
+    };
+    let mut a = format!(
+        "{} stroke-width=\"{}\"",
+        color_attr("stroke", &s.color),
+        s.width
+    );
     if !s.dash.is_empty() {
         let d: Vec<String> = s.dash.iter().map(f32::to_string).collect();
         let _ = write!(a, " stroke-dasharray=\"{}\"", d.join(" "));
@@ -93,29 +106,79 @@ fn stroke_attr(s: &Option<Stroke>, marker: &mut bool) -> String {
 
 fn ops(list: &[Op], out: &mut String, defs: &mut String, n: &mut usize) {
     for op in list {
-        let id = op.id().map(|i| format!(" id=\"{}\"", esc(i))).unwrap_or_default();
+        let id = op
+            .id()
+            .map(|i| format!(" id=\"{}\"", esc(i)))
+            .unwrap_or_default();
         let mut marker = false;
         match op {
-            Op::Rect { x, y, w, h, radius, fill, stroke, .. } => {
+            Op::Rect {
+                x,
+                y,
+                w,
+                h,
+                radius,
+                fill,
+                stroke,
+                ..
+            } => {
                 let f = paint(fill, defs, n);
                 let s = stroke_attr(stroke, &mut marker);
-                let _ = writeln!(out, "<rect{id} x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" rx=\"{radius}\" {f} {s}/>");
+                let _ = writeln!(
+                    out,
+                    "<rect{id} x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" rx=\"{radius}\" {f} {s}/>"
+                );
             }
-            Op::Ellipse { cx, cy, rx, ry, fill, stroke, .. } => {
+            Op::Ellipse {
+                cx,
+                cy,
+                rx,
+                ry,
+                fill,
+                stroke,
+                ..
+            } => {
                 let f = paint(fill, defs, n);
                 let s = stroke_attr(stroke, &mut marker);
-                let _ = writeln!(out, "<ellipse{id} cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" {f} {s}/>");
+                let _ = writeln!(
+                    out,
+                    "<ellipse{id} cx=\"{cx}\" cy=\"{cy}\" rx=\"{rx}\" ry=\"{ry}\" {f} {s}/>"
+                );
             }
-            Op::Line { x1, y1, x2, y2, stroke, .. } => {
+            Op::Line {
+                x1,
+                y1,
+                x2,
+                y2,
+                stroke,
+                ..
+            } => {
                 let s = stroke_attr(&Some(stroke.clone()), &mut marker);
-                let _ = writeln!(out, "<line{id} x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" {s}/>");
+                let _ = writeln!(
+                    out,
+                    "<line{id} x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" {s}/>"
+                );
             }
-            Op::Path { d, fill, stroke, .. } => {
+            Op::Path {
+                d, fill, stroke, ..
+            } => {
                 let f = paint(fill, defs, n);
                 let s = stroke_attr(stroke, &mut marker);
                 let _ = writeln!(out, "<path{id} d=\"{}\" {f} {s}/>", esc(d));
             }
-            Op::Text { x, y, text, size, color, bold, italic, align, max_width, max_lines, .. } => {
+            Op::Text {
+                x,
+                y,
+                text,
+                size,
+                color,
+                bold,
+                italic,
+                align,
+                max_width,
+                max_lines,
+                ..
+            } => {
                 let mut lines = match max_width {
                     Some(w) => wrap(text, *size, *bold, *w),
                     None => text.split('\n').map(str::to_string).collect(),
@@ -129,7 +192,11 @@ fn ops(list: &[Op], out: &mut String, defs: &mut String, n: &mut usize) {
                     Align::Right => "end",
                 };
                 let weight = if *bold { " font-weight=\"bold\"" } else { "" };
-                let style = if *italic { " font-style=\"italic\"" } else { "" };
+                let style = if *italic {
+                    " font-style=\"italic\""
+                } else {
+                    ""
+                };
                 let _ = write!(
                     out,
                     "<text{id} x=\"{x}\" y=\"{y}\" font-family=\"sans-serif\" font-size=\"{size}\" text-anchor=\"{anchor}\"{weight}{style} {}>",
@@ -142,7 +209,16 @@ fn ops(list: &[Op], out: &mut String, defs: &mut String, n: &mut usize) {
                 out.push_str("</text>\n");
                 let _ = measure("", 0.0, false);
             }
-            Op::Image { path, x, y, w, h, fit, opacity, .. } => {
+            Op::Image {
+                path,
+                x,
+                y,
+                w,
+                h,
+                fit,
+                opacity,
+                ..
+            } => {
                 let par = match fit {
                     crate::ImageFit::Stretch => "none",
                     crate::ImageFit::Cover => "xMidYMid slice",
@@ -154,16 +230,29 @@ fn ops(list: &[Op], out: &mut String, defs: &mut String, n: &mut usize) {
                     esc(path)
                 );
             }
-            Op::Group { ops: inner, transform, clip, opacity, .. } => {
+            Op::Group {
+                ops: inner,
+                transform,
+                clip,
+                opacity,
+                ..
+            } => {
                 let mut attrs = String::new();
                 if let Some(t) = transform {
                     let m = t.matrix();
-                    let _ = write!(attrs, " transform=\"matrix({} {} {} {} {} {})\"", m.a, m.b, m.c, m.d, m.e, m.f);
+                    let _ = write!(
+                        attrs,
+                        " transform=\"matrix({} {} {} {} {} {})\"",
+                        m.a, m.b, m.c, m.d, m.e, m.f
+                    );
                 }
                 if let Some([cx, cy, cw, ch]) = clip {
                     *n += 1;
                     let cid = format!("c{n}");
-                    let _ = writeln!(defs, "<clipPath id=\"{cid}\"><rect x=\"{cx}\" y=\"{cy}\" width=\"{cw}\" height=\"{ch}\"/></clipPath>");
+                    let _ = writeln!(
+                        defs,
+                        "<clipPath id=\"{cid}\"><rect x=\"{cx}\" y=\"{cy}\" width=\"{cw}\" height=\"{ch}\"/></clipPath>"
+                    );
                     let _ = write!(attrs, " clip-path=\"url(#{cid})\"");
                 }
                 if *opacity < 1.0 {
@@ -187,10 +276,24 @@ mod tests {
     #[test]
     fn a_scene_becomes_svg() {
         let mut s = Scene::new(100.0, 50.0).background("#fff");
-        s.push(Op::rect(1.0, 2.0, 30.0, 20.0).fill("#ff0000").rounded(3.0).with_id("a&b"));
-        s.push(Op::line(0.0, 0.0, 10.0, 10.0, Stroke::new("blue", 2.0).dashed(4.0, 2.0).arrow()));
+        s.push(
+            Op::rect(1.0, 2.0, 30.0, 20.0)
+                .fill("#ff0000")
+                .rounded(3.0)
+                .with_id("a&b"),
+        );
+        s.push(Op::line(
+            0.0,
+            0.0,
+            10.0,
+            10.0,
+            Stroke::new("blue", 2.0).dashed(4.0, 2.0).arrow(),
+        ));
         s.push(Op::text(5.0, 5.0, "x < y", 12.0, "#000"));
-        s.push(Op::group(vec![Op::ellipse(5.0, 5.0, 2.0, 2.0)]).transformed(Transform::translate(3.0, 4.0)));
+        s.push(
+            Op::group(vec![Op::ellipse(5.0, 5.0, 2.0, 2.0)])
+                .transformed(Transform::translate(3.0, 4.0)),
+        );
         let svg = s.to_svg();
         assert!(svg.starts_with("<svg") && svg.trim_end().ends_with("</svg>"));
         assert!(svg.contains("id=\"a&amp;b\"") && svg.contains("rx=\"3\""));

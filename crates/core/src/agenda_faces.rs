@@ -8,12 +8,22 @@ use crate::syntax::SyntaxFace;
 
 pub const MODE: &str = "org-agenda-mode";
 
-const DAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
 
 fn is_time(tok: &str) -> bool {
     let t = tok.trim_end_matches('.');
     let part = |p: &str| {
-        let Some((h, m)) = p.split_once(':') else { return false };
+        let Some((h, m)) = p.split_once(':') else {
+            return false;
+        };
         (1..=2).contains(&h.len())
             && h.chars().all(|c| c.is_ascii_digit())
             && m.len() == 2
@@ -26,11 +36,16 @@ fn is_tags(tok: &str) -> bool {
     tok.len() > 2
         && tok.starts_with(':')
         && tok.ends_with(':')
-        && tok.chars().all(|c| c.is_alphanumeric() || "_@#%:".contains(c))
+        && tok
+            .chars()
+            .all(|c| c.is_alphanumeric() || "_@#%:".contains(c))
 }
 
 fn is_keyword(tok: &str) -> bool {
-    tok.len() >= 3 && tok.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c == '-')
+    tok.len() >= 3
+        && tok
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == '_' || c == '-')
 }
 
 /// A face per character of `line` (without its newline).
@@ -56,13 +71,23 @@ pub fn line_faces(line: &str) -> Vec<Option<SyntaxFace>> {
         }
         toks.push((s, i, chars[s..i].iter().collect()));
     }
-    let Some((_, _, first)) = toks.first() else { return out };
+    let Some((_, _, first)) = toks.first() else {
+        return out;
+    };
     let indented = chars.first().is_some_and(|c| c.is_whitespace());
 
     // The view's title and the list headings.
     if !indented && DAYS.contains(&first.as_str()) {
         let weekend = matches!(first.as_str(), "Saturday" | "Sunday");
-        paint(0, chars.len(), if weekend { SyntaxFace::Constant } else { SyntaxFace::Function });
+        paint(
+            0,
+            chars.len(),
+            if weekend {
+                SyntaxFace::Constant
+            } else {
+                SyntaxFace::Function
+            },
+        );
         return out;
     }
     if !indented && line.trim_end().ends_with(':') {
@@ -97,7 +122,15 @@ pub fn line_faces(line: &str) -> Vec<Option<SyntaxFace>> {
             paint(s, toks[n + 2].1, SyntaxFace::Attribute);
             n += 2;
         } else if !seen_keyword && is_keyword(t) {
-            paint(s, e, if t == "DONE" { SyntaxFace::String } else { SyntaxFace::Constant });
+            paint(
+                s,
+                e,
+                if t == "DONE" {
+                    SyntaxFace::String
+                } else {
+                    SyntaxFace::Constant
+                },
+            );
             seen_keyword = true;
         } else if t.starts_with("[#") && t.ends_with(']') {
             paint(s, e, SyntaxFace::Attribute);
@@ -149,8 +182,17 @@ mod tests {
 
     #[test]
     fn the_grid_and_the_now_line() {
-        assert_eq!(at("               8:00...... ----------------", "8:00"), Some(Type));
-        assert_eq!(at("               8:00...... ----------------", "----"), Some(Comment));
-        assert_eq!(at("               4:06...... now - - - - -", "now"), Some(Type));
+        assert_eq!(
+            at("               8:00...... ----------------", "8:00"),
+            Some(Type)
+        );
+        assert_eq!(
+            at("               8:00...... ----------------", "----"),
+            Some(Comment)
+        );
+        assert_eq!(
+            at("               4:06...... now - - - - -", "now"),
+            Some(Type)
+        );
     }
 }

@@ -446,6 +446,13 @@ pub fn parse_vc_spec(spec: &str) -> (String, Option<String>) {
 /// The package name a repository gives by default: its last path part
 /// without `.git` (and without a `forge-` prefix).
 pub fn vc_name(repo: &str) -> String {
+    #[cfg(windows)]
+    let last = repo
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\', ':'])
+        .next()
+        .unwrap_or(repo);
+    #[cfg(not(windows))]
     let last = repo
         .trim_end_matches('/')
         .rsplit(['/', ':'])
@@ -634,6 +641,14 @@ mod vc_tests {
         assert_eq!(vc_name("https://github.com/a/forge-lsp.git"), "lsp");
         assert_eq!(vc_name("git@github.com:a/spell"), "spell");
         assert_eq!(vc_name("/src/my-plugin/"), "my-plugin");
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                parse_vc_spec(r"C:\src\forge-demo@v1"),
+                (r"C:\src\forge-demo".into(), Some("v1".into()))
+            );
+            assert_eq!(vc_name(r"C:\src\forge-demo\\"), "demo");
+        }
     }
 
     #[test]

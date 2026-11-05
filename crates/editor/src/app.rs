@@ -521,7 +521,7 @@ impl App {
             forge_docs::Kind::Mode,
             forge_docs::Source::Builtin,
         ));
-        docs.add(crate::docs_bridge::legacy_to_doc_kind("dired-mode", "Dired lists a directory and works on its files, using eza for the columns.\n\nMoving and visiting:\n  RET f e   visit the file          o     visit in another window\n  ^         go up a directory       i     list a subdirectory inline\n  k         remove an inline subdirectory    C-M-n C-M-p   next and previous subdirectory\n\nMarking:\n  m   mark          u   unmark          U   unmark everything\n  d   flag for deletion          x   delete the flagged files          D   delete now\n\nChanging files:\n  C   copy          R   rename or move          +   create a directory          g   refresh\n\nLayout (these change how the listing looks, not the files):\n  s sort (name, size, time...)   r reverse   G directories first   a hidden files\n  T tree view   l tree depth   I inodes   c colour by size   B icons\n  h hide what git ignores   F only files   / only directories\n\nMouse: <mouse-1> visits the name under it, <mouse-2> in another window.\nPress ? for a one-line reminder.", forge_docs::Kind::Mode, forge_docs::Source::Builtin));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind("dired-mode", "Dired lists a directory and works on its files, using detailed columns.\n\nMoving and visiting:\n  RET f e   visit the file          o     visit in another window\n  ^         go up a directory       i     list a subdirectory inline\n  k         remove an inline subdirectory    C-M-n C-M-p   next and previous subdirectory\n\nMarking:\n  m   mark          u   unmark          U   unmark everything\n  d   flag for deletion          x   delete the flagged files          D   delete now\n\nChanging files:\n  C   copy          R   rename or move          +   create a directory          g   refresh\n\nLayout (these change how the listing looks, not the files):\n  s sort (name, size, time...)   r reverse   G directories first   a hidden files\n  T tree view   l tree depth   I inodes   c colour by size   B icons\n  h hide what git ignores   F only files   / only directories\n\nMouse: <mouse-1> visits the name under it, <mouse-2> in another window.\nPress ? for a one-line reminder.", forge_docs::Kind::Mode, forge_docs::Source::Builtin));
         docs.add(crate::docs_bridge::legacy_to_doc_kind(
             "Buffer-menu-mode",
             "Lists the buffers. Switch with C-x b.",
@@ -1084,6 +1084,7 @@ impl App {
     }
 
     pub fn handle_key(&mut self, mut key: KeyEvent) {
+        let prompt_input_before = self.minibuffer.as_ref().map(Minibuffer::current_input);
         // Modifier-bar buttons apply to the next key, before it is recorded
         // or looked up applies a modifier typed on the bar.
         crate::toolbar::apply_pending(self, &mut key);
@@ -1137,6 +1138,12 @@ impl App {
         }
         plugins::after_key(self);
         crate::capf::after_key(self);
+        let prompt_input_after = self.minibuffer.as_ref().map(Minibuffer::current_input);
+        crate::capf::minibuffer_input_changed(
+            self,
+            prompt_input_before.as_deref(),
+            prompt_input_after.as_deref(),
+        );
         crate::files::ask_about_locks(self);
         if !self.editor.kmacro.executing {
             crate::files::count_input(self);
@@ -2688,7 +2695,13 @@ impl App {
             }
         }
         // The `ls` that insert-directory runs (empty: Forge lists itself).
-        forge_core::fileops::set_insert_directory_program(settings.strings.get("insert_directory_program").and_then(|v| v.first()).map_or("", String::as_str));
+        forge_core::fileops::set_insert_directory_program(
+            settings
+                .strings
+                .get("insert_directory_program")
+                .and_then(|v| v.first())
+                .map_or("", String::as_str),
+        );
         if let Some(n) = settings.numbers.get("org_indent_per_level") {
             if (1.0..=8.0).contains(n) {
                 self.editor.org_indent_per_level = *n as usize;

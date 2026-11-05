@@ -60,6 +60,9 @@ impl VcJob {
 enum Stage {
     Fetch,
     Checkout,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Submodules,
+    Commit,
     /// An upgrade of a declared plugin: list what changed before building.
     Review,
     Build,
@@ -145,7 +148,10 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
     let dir = declared.as_ref().and_then(|u| u.git_dir.clone());
     if let Some(d) = &dir {
         let p = std::path::Path::new(d);
-        if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        if p.is_absolute()
+            || p.components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             return app.error(format!("{name}: lisp_dir must stay inside the repository"));
         }
     }
@@ -220,6 +226,15 @@ fn next(app: &mut App) {
 }
 
 fn spawn(app: &mut App, program: Program, dir: PathBuf) -> Result<ProcessId, String> {
+    spawn_with_env(app, program, dir, &[])
+}
+
+fn spawn_with_env(
+    app: &mut App,
+    program: Program,
+    dir: PathBuf,
+    env: &[(String, String)],
+) -> Result<ProcessId, String> {
     let line = match &program {
         Program::Shell(l) => format!("$ {l}\n"),
         Program::Argv(p, a) => format!("$ {p} {}\n", a.join(" ")),
@@ -228,7 +243,7 @@ fn spawn(app: &mut App, program: Program, dir: PathBuf) -> Result<ProcessId, Str
     app.packages
         .vc
         .processes
-        .spawn(program, &dir, false, &[])
+        .spawn(program, &dir, false, env)
         .map_err(|e| e.to_string())
 }
 
@@ -279,6 +294,8 @@ pub fn poll(app: &mut App) {
                     let what = match stage {
                         Stage::Fetch => "git couldn't get the repository",
                         Stage::Checkout => "git couldn't check out that revision",
+                        Stage::Submodules => "git couldn't update submodules",
+                        Stage::Commit => "git couldn't read the checked-out revision",
                         Stage::Review => "git couldn't list the changes",
                         Stage::Build => "the build failed",
                     };
@@ -294,80 +311,64 @@ pub fn poll(app: &mut App) {
 fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
     match stage {
         Stage::Fetch => {
-            // The rev as a remote branch first (fresh after a fetch), else a
-            // tag or commit; no rev: the remote's default branch.
-            let target = match &job.rev {
+            #[cfg(windows)]
+            {
+                let target = job.rev.clone().unwrap_or_else(|| "origin/HEAD".into());
+                let args = vec![
+                    "checkout".to_string(),
+                    "--quiet".into(),
+                    "--detach".into(),
+                    target,
+                ];
+                let r = spawn(app, Program::Argv("git", &args), job.src.clone());
+                step(app, job, Stage::Checkout, r)
+            }
+            #[cfg(not(windows))]
+            {
+                // The rev as a remote branch first (fresh after a fetch), else a
+                // tag or commit; no rev: the remote's default branch.
+                let target = match &job.rev {
                 Some(r) => {
                     let q = shell_quote(r);
                     format!("$(git rev-parse --verify -q origin/{q}^{{commit}} || git rev-parse --verify {q}^{{commit}})")
                 }
                 None => "$(git rev-parse --verify -q origin/HEAD^{commit} || git rev-parse --verify HEAD^{commit})".into(),
             };
-            let script = format!(
-                "set -e; T={target}; git checkout --quiet --detach \"$T\"; \
+                let script = format!(
+                    "set -e; T={target}; git checkout --quiet --detach \"$T\"; \
                  git submodule --quiet update --init --recursive; git rev-parse HEAD"
-            );
-            let r = spawn(app, Program::Shell(&script), job.src.clone());
-            step(app, job, Stage::Checkout, r);
+                );
+                let r = spawn(app, Program::Shell(&script), job.src.clone());
+                step(app, job, Stage::Checkout, r);
+            }
         }
         Stage::Checkout => {
-            job.commit = out.lines().last().unwrap_or("").trim().to_string();
-            let installed = db(app).and_then(|d| d.packages.get(&job.name).cloned());
-            if job.upgrade
-                && installed.as_ref().and_then(|i| i.commit.as_deref()) == Some(job.commit.as_str())
-            {
-                app.msg(format!(
-                    "{} is up to date ({})",
-                    job.name,
-                    short(&job.commit)
-                ));
-                app.packages.vc.current = None;
-                return next(app);
-            }
-            let root = job.root();
-            let planned = package::build_plan(&root, &job.name);
-            let plan = match (planned, &job.build) {
-                (Ok(mut p), Some(cmd)) => {
-                    p.command = Some(cmd.clone());
-                    p.output = root.join(".forge-build").join(format!("{}.wasm", p.name));
-                    p.how = "make in the declaration".into();
-                    p
-                }
-                (Err(_), Some(cmd)) => package::BuildPlan {
-                    name: job.name.clone(),
-                    command: Some(cmd.clone()),
-                    output: root.join(".forge-build").join(format!("{}.wasm", job.name)),
-                    how: "make in the declaration".into(),
-                },
-                (Ok(mut p), None) => {
-                    if !job.features.is_empty()
-                        && p.how == "Cargo.toml"
-                        && let Some(c) = p.command.as_mut()
-                    {
-                        c.push_str(&format!(" --features {}", shell_quote(&job.features.join(","))));
-                    }
-                    p
-                }
-                (Err(e), None) => return fail(app, &job, &e),
-            };
-            job.name = plan.name.clone();
-            job.plan = Some(plan);
-            // Upgrading a declared plugin: review the commits since the
-            // locked one before building (a changed permission set asks
-            // again when it loads).
-            if job.upgrade
-                && let Some(old) = locked_commit(&job.name).filter(|o| *o != job.commit)
+            #[cfg(windows)]
             {
                 let args = vec![
-                    "log".to_string(),
-                    "--oneline".to_string(),
-                    "--no-decorate".to_string(),
-                    format!("{old}..{}", job.commit),
+                    "submodule".to_string(),
+                    "--quiet".into(),
+                    "update".into(),
+                    "--init".into(),
+                    "--recursive".into(),
                 ];
                 let r = spawn(app, Program::Argv("git", &args), job.src.clone());
-                return step(app, job, Stage::Review, r);
+                step(app, job, Stage::Submodules, r)
             }
-            choose_build(app, job, installed);
+            #[cfg(not(windows))]
+            {
+                job.commit = out.lines().last().unwrap_or("").trim().to_string();
+                checkout_complete(app, job);
+            }
+        }
+        Stage::Submodules => {
+            let args = vec!["rev-parse".to_string(), "HEAD".into()];
+            let r = spawn(app, Program::Argv("git", &args), job.src.clone());
+            step(app, job, Stage::Commit, r);
+        }
+        Stage::Commit => {
+            job.commit = out.trim().to_string();
+            checkout_complete(app, job);
         }
         Stage::Review => {
             job.review = Some(out);
@@ -376,6 +377,68 @@ fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
         }
         Stage::Build => install_output(app, job),
     }
+}
+
+fn checkout_complete(app: &mut App, mut job: VcJob) {
+    let installed = db(app).and_then(|d| d.packages.get(&job.name).cloned());
+    if job.upgrade
+        && installed.as_ref().and_then(|i| i.commit.as_deref()) == Some(job.commit.as_str())
+    {
+        app.msg(format!(
+            "{} is up to date ({})",
+            job.name,
+            short(&job.commit)
+        ));
+        app.packages.vc.current = None;
+        return next(app);
+    }
+    let root = job.root();
+    let planned = package::build_plan(&root, &job.name);
+    let plan = match (planned, &job.build) {
+        (Ok(mut p), Some(cmd)) => {
+            p.command = Some(cmd.clone());
+            p.output = root.join(".forge-build").join(format!("{}.wasm", p.name));
+            p.how = "make in the declaration".into();
+            p
+        }
+        (Err(_), Some(cmd)) => package::BuildPlan {
+            name: job.name.clone(),
+            command: Some(cmd.clone()),
+            output: root.join(".forge-build").join(format!("{}.wasm", job.name)),
+            how: "make in the declaration".into(),
+        },
+        (Ok(mut p), None) => {
+            if !job.features.is_empty()
+                && p.how == "Cargo.toml"
+                && let Some(c) = p.command.as_mut()
+            {
+                c.push_str(&format!(
+                    " --features {}",
+                    shell_quote(&job.features.join(","))
+                ));
+            }
+            p
+        }
+        (Err(e), None) => return fail(app, &job, &e),
+    };
+    job.name = plan.name.clone();
+    job.plan = Some(plan);
+    // Upgrading a declared plugin: review the commits since the
+    // locked one before building (a changed permission set asks
+    // again when it loads).
+    if job.upgrade
+        && let Some(old) = locked_commit(&job.name).filter(|o| *o != job.commit)
+    {
+        let args = vec![
+            "log".to_string(),
+            "--oneline".to_string(),
+            "--no-decorate".to_string(),
+            format!("{old}..{}", job.commit),
+        ];
+        let r = spawn(app, Program::Argv("git", &args), job.src.clone());
+        return step(app, job, Stage::Review, r);
+    }
+    choose_build(app, job, installed);
 }
 
 /// The locked commit of a declared plugin, if any (forge-lock.toml).
@@ -459,15 +522,25 @@ fn build(app: &mut App, job: VcJob) {
     if let Some(parent) = plan.output.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let script = format!(
-        "OUT={}; export OUT; {command}",
-        shell_quote(&plan.output.display().to_string())
-    );
     app.msg(format!("Building {}...", job.name));
     if let Some(id) = app.editor.find_buffer(BUFFER) {
         crate::compile::display_buffer(app, id);
     }
-    let r = spawn(app, Program::Shell(&script), job.root());
+    #[cfg(windows)]
+    let r = spawn_with_env(
+        app,
+        Program::Shell(&command),
+        job.root(),
+        &[("OUT".into(), plan.output.display().to_string())],
+    );
+    #[cfg(not(windows))]
+    let r = {
+        let script = format!(
+            "OUT={}; export OUT; {command}",
+            shell_quote(&plan.output.display().to_string())
+        );
+        spawn(app, Program::Shell(&script), job.root())
+    };
     step(app, job, Stage::Build, r);
 }
 

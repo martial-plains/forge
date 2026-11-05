@@ -394,7 +394,7 @@ pub const DIRED_MODE_BINDINGS: &[(&str, &str)] = &[
     ("R", "dired-do-rename"),
     ("+", "dired-create-directory"),
     ("g", "dired-revert"),
-    // The layout toggles, like eza's own flags. `s` cycles --sort,
+    // The layout toggles, like the options they mirror. `s` cycles --sort,
     // `T` switches --tree for everything, and the rest switch their part
     // on and off. `i` lists one directory inline as a tree.
     ("s", "dired-toggle-sort"),
@@ -462,7 +462,7 @@ pub const DIRED_MODE_BINDINGS: &[(&str, &str)] = &[
     ("=", "dired-diff"),
     ("y", "dired-show-file-type"),
     ("w", "dired-copy-filename-as-kill"),
-    // own keys come first. The eza layout toggles that used to sit
+    // own keys come first. The layout toggles that used to sit
     // on some of them live under C-c C-: a all, d dirs first, t tree, c
     // colour scale, g git-ignore, f only files, l tree level, k kill the
     // inline listing.
@@ -1318,7 +1318,10 @@ mod tests {
             let key = KeyEvent::new(KeyCode::BackTab, mods);
             assert_eq!(describe_key(&key, false).as_deref(), Some("<backtab>"));
         }
-        let ctrl = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT | KeyModifiers::CONTROL);
+        let ctrl = KeyEvent::new(
+            KeyCode::BackTab,
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        );
         assert_eq!(describe_key(&ctrl, false).as_deref(), Some("C-<backtab>"));
         let left = KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT);
         assert_eq!(describe_key(&left, false).as_deref(), Some("S-<left>"));

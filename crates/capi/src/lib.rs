@@ -36,7 +36,9 @@ fn give(s: String) -> *mut c_char {
 /// `files` must be null or a valid C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn forge_new(files: *const c_char, no_config: i32) -> *mut Handle {
-    let files: Vec<String> = text(files).and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default();
+    let files: Vec<String> = text(files)
+        .and_then(|j| serde_json::from_str(j).ok())
+        .unwrap_or_default();
     match Forge::new_grid(files, no_config != 0) {
         Ok(f) => Box::into_raw(Box::new(Handle(f))),
         Err(e) => {
@@ -121,10 +123,17 @@ pub extern "C" fn forge_key(h: *mut Handle, kind: i32, ch: u32, flags: i32) {
         KEY_PAGE_UP => Key::PageUp,
         KEY_PAGE_DOWN => Key::PageDown,
         KEY_INSERT => Key::Insert,
-        k if (KEY_F1..KEY_F1 + 12).contains(&k) => Key::F { n: (k - KEY_F1 + 1) as u8 },
+        k if (KEY_F1..KEY_F1 + 12).contains(&k) => Key::F {
+            n: (k - KEY_F1 + 1) as u8,
+        },
         _ => return,
     };
-    f.key(KeyInput { key, control: flags & 1 != 0, meta: flags & 2 != 0, shift: flags & 4 != 0 });
+    f.key(KeyInput {
+        key,
+        control: flags & 1 != 0,
+        meta: flags & 2 != 0,
+        shift: flags & 4 != 0,
+    });
 }
 
 /// Text from an input method or a paste.
@@ -206,7 +215,9 @@ pub unsafe extern "C" fn forge_dialog_result(h: *mut Handle, id: u32, path: *con
 /// with `forge_string_free`.
 #[unsafe(no_mangle)]
 pub extern "C" fn forge_kill_top(h: *mut Handle) -> *mut c_char {
-    handle(h).and_then(|f| pollster::block_on(f.kill_top())).map_or(std::ptr::null_mut(), give)
+    handle(h)
+        .and_then(|f| pollster::block_on(f.kill_top()))
+        .map_or(std::ptr::null_mut(), give)
 }
 
 pub fn grid_value(g: &Grid) -> Value {
@@ -244,7 +255,9 @@ pub fn grid_value(g: &Grid) -> Value {
 /// result with `forge_string_free`.
 #[unsafe(no_mangle)]
 pub extern "C" fn forge_grid_json(h: *mut Handle, cols: u16, rows: u16, dark: i32) -> *mut c_char {
-    let Some(f) = handle(h) else { return std::ptr::null_mut() };
+    let Some(f) = handle(h) else {
+        return std::ptr::null_mut();
+    };
     let g = pollster::block_on(f.grid(cols, rows, dark != 0));
     give(grid_value(&g).to_string())
 }
@@ -259,32 +272,44 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("c.txt");
         std::fs::write(&file, "from c\n").unwrap();
-        let files = CString::new(serde_json::to_string(&[file.display().to_string()]).unwrap()).unwrap();
+        let files =
+            CString::new(serde_json::to_string(&[file.display().to_string()]).unwrap()).unwrap();
         let h = unsafe { forge_new(files.as_ptr(), 1) };
         assert!(!h.is_null());
         for c in "ab".chars() {
             forge_key(h, KEY_CHAR, c as u32, 0);
         }
         let json = forge_grid_json(h, 60, 12, 1);
-        let s = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_string();
+        let s = unsafe { CStr::from_ptr(json) }
+            .to_str()
+            .unwrap()
+            .to_string();
         unsafe { forge_string_free(json) };
         let v: Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["cols"], 60);
         assert_eq!(v["title"], "c.txt");
         assert_eq!(v["modified"], true, "the typed text changed the buffer");
-        let all: String = v["runs"].as_array().unwrap().iter().map(|r| r[3].as_str().unwrap()).collect::<Vec<_>>().join("|");
+        let all: String = v["runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r[3].as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join("|");
         assert!(all.contains("abfrom c"), "{all}");
         // A picker request comes through the grid and is answered by id.
         let cmd = CString::new("find-file-dialog").unwrap();
         unsafe { forge_run_command(h, cmd.as_ptr()) };
         let json = forge_grid_json(h, 60, 12, 1);
-        let v: Value = serde_json::from_str(unsafe { CStr::from_ptr(json) }.to_str().unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(json) }.to_str().unwrap()).unwrap();
         unsafe { forge_string_free(json) };
         assert_eq!(v["dialog"]["kind"], "open_file");
         let id = v["dialog"]["id"].as_u64().unwrap() as u32;
         unsafe { forge_dialog_result(h, id, std::ptr::null()) };
         let json = forge_grid_json(h, 60, 12, 1);
-        let v: Value = serde_json::from_str(unsafe { CStr::from_ptr(json) }.to_str().unwrap()).unwrap();
+        let v: Value =
+            serde_json::from_str(unsafe { CStr::from_ptr(json) }.to_str().unwrap()).unwrap();
         unsafe { forge_string_free(json) };
         assert!(v["dialog"].is_null(), "cancelled");
         unsafe { forge_free(h) };

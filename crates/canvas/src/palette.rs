@@ -67,7 +67,11 @@ impl Palette {
             soft: s("#a6adc8"),
             dim: s("#7f849c"),
             tag: s("#b4befe"),
-            accents: ["#89b4fa", "#f9e2af", "#a6e3a1", "#f38ba8", "#cba6f7", "#fab387", "#94e2d5", "#f5c2e7"].map(s),
+            accents: [
+                "#89b4fa", "#f9e2af", "#a6e3a1", "#f38ba8", "#cba6f7", "#fab387", "#94e2d5",
+                "#f5c2e7",
+            ]
+            .map(s),
         }
     }
 
@@ -87,7 +91,11 @@ impl Palette {
             soft: s("#6c6f85"),
             dim: s("#8c8fa1"),
             tag: s("#7287fd"),
-            accents: ["#1e66f5", "#df8e1d", "#40a02b", "#d20f39", "#8839ef", "#fe640b", "#179299", "#ea76cb"].map(s),
+            accents: [
+                "#1e66f5", "#df8e1d", "#40a02b", "#d20f39", "#8839ef", "#fe640b", "#179299",
+                "#ea76cb",
+            ]
+            .map(s),
         }
     }
 
@@ -97,12 +105,21 @@ impl Palette {
     /// the eight slots in order, the defaults for the mode filling the rest.
     pub fn derive(bg: Color, fg: Color, accents: &[Option<Color>]) -> Palette {
         let dark = luminance(bg) < 0.5;
-        let base = if dark { Palette::dark() } else { Palette::light() };
+        let base = if dark {
+            Palette::dark()
+        } else {
+            Palette::light()
+        };
         let mix = |t: f32| mix(bg, fg, t);
         let black = Color::new(0, 0, 0);
         let p = Palette {
             bg: bg.hex_rgb(),
-            sunken: if dark { self::mix(bg, black, 0.25) } else { self::mix(bg, black, 0.04) }.hex_rgb(),
+            sunken: if dark {
+                self::mix(bg, black, 0.25)
+            } else {
+                self::mix(bg, black, 0.04)
+            }
+            .hex_rgb(),
             card: mix(0.12).hex_rgb(),
             chip: mix(0.2).hex_rgb(),
             line: mix(0.3).hex_rgb(),
@@ -130,7 +147,10 @@ impl Palette {
     /// The roles as `(name, #rrggbb)` pairs, for the plugin API.
     pub fn to_pairs(&self) -> Vec<(String, String)> {
         let mut v = vec![
-            ("mode".to_string(), s(if self.dark { "dark" } else { "light" })),
+            (
+                "mode".to_string(),
+                s(if self.dark { "dark" } else { "light" }),
+            ),
             ("bg".into(), self.bg.clone()),
             ("sunken".into(), self.sunken.clone()),
             ("card".into(), self.card.clone()),
@@ -144,7 +164,12 @@ impl Palette {
             ("dim".into(), self.dim.clone()),
             ("tag".into(), self.tag.clone()),
         ];
-        v.extend(self.accents.iter().enumerate().map(|(i, c)| (format!("accent{i}"), c.clone())));
+        v.extend(
+            self.accents
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (format!("accent{i}"), c.clone())),
+        );
         v
     }
 
@@ -152,7 +177,11 @@ impl Palette {
     /// out keeps the dark (or, for a `mode` of light, the light) default.
     pub fn from_pairs(pairs: &[(String, String)]) -> Palette {
         let light = pairs.iter().any(|(k, v)| k == "mode" && v == "light");
-        let mut p = if light { Palette::light() } else { Palette::dark() };
+        let mut p = if light {
+            Palette::light()
+        } else {
+            Palette::dark()
+        };
         for (k, v) in pairs {
             if Color::parse(v).is_none() {
                 continue;
@@ -170,7 +199,11 @@ impl Palette {
                 "soft" => &mut p.soft,
                 "dim" => &mut p.dim,
                 "tag" => &mut p.tag,
-                other => match other.strip_prefix("accent").and_then(|n| n.parse::<usize>().ok()).and_then(|n| p.accents.get_mut(n)) {
+                other => match other
+                    .strip_prefix("accent")
+                    .and_then(|n| n.parse::<usize>().ok())
+                    .and_then(|n| p.accents.get_mut(n))
+                {
                     Some(a) => a,
                     None => continue,
                 },
@@ -221,7 +254,9 @@ impl Palette {
             "soft" => &self.soft,
             "dim" => &self.dim,
             "tag" => &self.tag,
-            other => self.accents.get(other.strip_prefix("accent")?.parse::<usize>().ok()?)?,
+            other => self
+                .accents
+                .get(other.strip_prefix("accent")?.parse::<usize>().ok()?)?,
         })
     }
 
@@ -258,7 +293,11 @@ pub fn luminance(c: Color) -> f32 {
 
 /// `a` blended `t` of the way to `b`.
 pub fn mix(a: Color, b: Color, t: f32) -> Color {
-    let m = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round().clamp(0.0, 255.0) as u8;
+    let m = |x: u8, y: u8| {
+        (f32::from(x) + (f32::from(y) - f32::from(x)) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
     Color::new(m(a.r, b.r), m(a.g, b.g), m(a.b, b.b))
 }
 
@@ -271,22 +310,51 @@ mod tests {
         for p in [Palette::dark(), Palette::light()] {
             assert_eq!(Palette::from_pairs(&p.to_pairs()), p);
         }
-        let odd = vec![("fg".to_string(), "not a colour".to_string()), ("mystery".to_string(), "#123456".to_string()), ("accent99".to_string(), "#123456".to_string())];
+        let odd = vec![
+            ("fg".to_string(), "not a colour".to_string()),
+            ("mystery".to_string(), "#123456".to_string()),
+            ("accent99".to_string(), "#123456".to_string()),
+        ];
         assert_eq!(Palette::from_pairs(&odd), Palette::dark());
     }
 
     #[test]
     fn a_themes_page_and_text_make_surfaces_that_sit_on_it() {
-        let dark = Palette::derive(Color::new(0x28, 0x2c, 0x34), Color::new(0xab, 0xb2, 0xbf), &[Some(Color::new(1, 2, 3)), None]);
-        assert!(dark.dark && dark.bg == "#282c34" && dark.fg == "#abb2bf" && dark.strong == "#ffffff");
+        let dark = Palette::derive(
+            Color::new(0x28, 0x2c, 0x34),
+            Color::new(0xab, 0xb2, 0xbf),
+            &[Some(Color::new(1, 2, 3)), None],
+        );
+        assert!(
+            dark.dark && dark.bg == "#282c34" && dark.fg == "#abb2bf" && dark.strong == "#ffffff"
+        );
         assert_eq!(dark.accents[0], "#010203");
-        assert_eq!(dark.accents[1], Palette::dark().accents[1], "unset slots keep the default");
+        assert_eq!(
+            dark.accents[1],
+            Palette::dark().accents[1],
+            "unset slots keep the default"
+        );
         // Cards are lighter than the page, lines lighter still, in a dark theme.
         let l = |h: &str| luminance(Color::parse(h).unwrap());
-        assert!(l(&dark.sunken) < l(&dark.bg) && l(&dark.bg) < l(&dark.card) && l(&dark.card) < l(&dark.line) && l(&dark.line) < l(&dark.fg));
-        let light = Palette::derive(Color::new(0xfa, 0xfa, 0xfa), Color::new(0x38, 0x3a, 0x42), &[]);
-        assert!(!light.dark && light.strong == "#000000" && light.accents == Palette::light().accents);
-        assert!(l(&light.fg) < l(&light.dim) && l(&light.dim) < l(&light.line) && l(&light.line) < l(&light.bg));
+        assert!(
+            l(&dark.sunken) < l(&dark.bg)
+                && l(&dark.bg) < l(&dark.card)
+                && l(&dark.card) < l(&dark.line)
+                && l(&dark.line) < l(&dark.fg)
+        );
+        let light = Palette::derive(
+            Color::new(0xfa, 0xfa, 0xfa),
+            Color::new(0x38, 0x3a, 0x42),
+            &[],
+        );
+        assert!(
+            !light.dark && light.strong == "#000000" && light.accents == Palette::light().accents
+        );
+        assert!(
+            l(&light.fg) < l(&light.dim)
+                && l(&light.dim) < l(&light.line)
+                && l(&light.line) < l(&light.bg)
+        );
     }
 
     #[test]
@@ -301,7 +369,12 @@ mod tests {
     #[test]
     fn roles_resolve_to_a_palettes_colours() {
         let (t, dark, light) = (Palette::tokens(), Palette::dark(), Palette::light());
-        for (token, want_d, want_l) in [(&t.bg, &dark.bg, &light.bg), (&t.card, &dark.card, &light.card), (&t.accents[3], &dark.accents[3], &light.accents[3]), (&t.tag, &dark.tag, &light.tag)] {
+        for (token, want_d, want_l) in [
+            (&t.bg, &dark.bg, &light.bg),
+            (&t.card, &dark.card, &light.card),
+            (&t.accents[3], &dark.accents[3], &light.accents[3]),
+            (&t.tag, &dark.tag, &light.tag),
+        ] {
             assert_eq!(dark.lookup(token), Some(want_d.as_str()));
             assert_eq!(light.lookup(token), Some(want_l.as_str()));
         }
@@ -309,7 +382,11 @@ mod tests {
         assert_eq!(dark.lookup("@nonsense"), None);
         assert_eq!(dark.lookup("@accent99"), None);
         let mut scene = crate::Scene::new(10.0, 10.0).background(&t.bg);
-        scene.ops.push(crate::Op::rect(0.0, 0.0, 5.0, 5.0).fill(&t.card).stroked(crate::Stroke::new(&t.line, 1.0)));
+        scene.ops.push(
+            crate::Op::rect(0.0, 0.0, 5.0, 5.0)
+                .fill(&t.card)
+                .stroked(crate::Stroke::new(&t.line, 1.0)),
+        );
         scene.ops.push(crate::Op::text(0.0, 0.0, "x", 10.0, &t.fg));
         assert!(scene.has_roles());
         let lit = scene.resolved(&light);
