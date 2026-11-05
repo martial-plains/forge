@@ -306,7 +306,7 @@ fn a_project_scope_binds_for_a_directory() {
                 forge.keymap.set("C-c p", "goto-line", #{{ project: "{}" }});
                 forge.notify("root: " + forge.project.root());
                 "#,
-            dir.display()
+            dir.display().to_string().replace('\\', "/")
         ),
     );
     ok(&out);
@@ -1490,7 +1490,7 @@ fn env_reads_writes_and_feeds_processes() {
             });
             assert(forge.env.get("FORGE_TEST_A") == "one");
             // parse_path: an empty part is the current directory (false).
-            let parts = forge.env.parse_path(":/usr/bin");
+            let parts = forge.env.parse_path(forge.env.path_separator() + "/usr/bin");
             assert(parts[0] == false && parts[1] == "/usr/bin");
             // all()/initial() are lists of KEY=VALUE.
             assert(forge.env.all().len() > 0 && forge.env.initial().len() > 0);

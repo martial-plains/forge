@@ -23,11 +23,21 @@ fn quoted(r: &Remote) -> String {
     tether::rp(&r.path)
 }
 
+/// The local path a name with only `local` hops stands for.
+#[cfg(windows)]
+fn local(p: &Path) -> Option<PathBuf> {
+    remote(p).and_then(|r| tether::local_path(&r))
+}
+
 fn run(r: &Remote, script: &str) -> io::Result<Vec<u8>> {
     tether::run(&r.hops, script, None, 30).map_err(io_err)
 }
 
 pub(super) fn exists(p: &Path) -> bool {
+    #[cfg(windows)]
+    if let Some(l) = local(p) {
+        return l.exists();
+    }
     match remote(p) {
         Some(r) => run(
             &r,
@@ -39,6 +49,10 @@ pub(super) fn exists(p: &Path) -> bool {
 }
 
 pub(super) fn is_dir(p: &Path) -> bool {
+    #[cfg(windows)]
+    if let Some(l) = local(p) {
+        return fs::metadata(&l).map(|m| m.is_dir()).unwrap_or(false);
+    }
     match remote(p) {
         Some(r) => run(&r, &format!("test -d {}", quoted(&r))).is_ok(),
         None => fs::symlink_metadata(p).map(|m| m.is_dir()).unwrap_or(false),
@@ -47,6 +61,14 @@ pub(super) fn is_dir(p: &Path) -> bool {
 
 /// `rmdir` for a directory (which must be empty), else `rm`.
 pub(super) fn remove(p: &Path, dir: bool) -> io::Result<()> {
+    #[cfg(windows)]
+    if let Some(l) = local(p) {
+        return if dir {
+            fs::remove_dir(&l)
+        } else {
+            fs::remove_file(&l)
+        };
+    }
     match remote(p) {
         Some(r) => {
             let tool = if dir { "rmdir" } else { "rm" };
@@ -58,6 +80,10 @@ pub(super) fn remove(p: &Path, dir: bool) -> io::Result<()> {
 }
 
 pub(super) fn mkdir(p: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if let Some(l) = local(p) {
+        return fs::create_dir_all(&l);
+    }
     match remote(p) {
         Some(r) => run(&r, &format!("mkdir -p -- {}", quoted(&r))).map(|_| ()),
         None => fs::create_dir_all(p),
@@ -67,6 +93,10 @@ pub(super) fn mkdir(p: &Path) -> io::Result<()> {
 /// Move `a` to `b`. On one machine that is `mv`; between machines (or to and
 /// from a local path) a file is copied across and the original removed.
 pub(super) fn rename(a: &Path, b: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if let (Some(x), Some(y)) = (local(a), local(b)) {
+        return fs::rename(x, y);
+    }
     match (remote(a), remote(b)) {
         (None, None) => fs::rename(a, b),
         (Some(x), Some(y)) if x.hops == y.hops => {
@@ -80,6 +110,14 @@ pub(super) fn rename(a: &Path, b: &Path) -> io::Result<()> {
 }
 
 fn remove_tree(p: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if let Some(l) = local(p) {
+        return if l.is_dir() {
+            fs::remove_dir_all(&l)
+        } else {
+            fs::remove_file(&l)
+        };
+    }
     match remote(p) {
         Some(r) => run(&r, &format!("rm -rf -- {}", quoted(&r))).map(|_| ()),
         None if p.is_dir() => fs::remove_dir_all(p),
@@ -89,6 +127,10 @@ fn remove_tree(p: &Path) -> io::Result<()> {
 
 /// Copy `a` to `b`, a directory with everything in it.
 pub(super) fn copy(a: &Path, b: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if let (Some(x), Some(y)) = (local(a), local(b)) {
+        return super::command::copy_recursive(&x, &y);
+    }
     match (remote(a), remote(b)) {
         (None, None) => super::command::copy_recursive(a, b),
         (Some(x), Some(y)) if x.hops == y.hops => {
@@ -125,6 +167,17 @@ pub(super) fn copy(a: &Path, b: &Path) -> io::Result<()> {
 
 /// The parent of a directory that may be remote.
 pub(super) fn parent(p: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    if let Some(r) = remote(p)
+        && let Some(l) = tether::local_path(&r)
+    {
+        let up = l.parent()?;
+        let mut dir = r.with_path(up.to_string_lossy().into_owned()).display();
+        if !dir.ends_with('/') {
+            dir.push('/');
+        }
+        return Some(PathBuf::from(dir));
+    }
     match remote(p) {
         Some(r) => {
             let path = r.path.trim_end_matches('/');
@@ -146,6 +199,7 @@ pub(super) fn parent(p: &Path) -> Option<PathBuf> {
 }
 
 /// `chmod MODE path` on a remote file; the mode is whatever `chmod` takes.
+#[cfg(unix)]
 pub(super) fn chmod(p: &Path, mode: &str) -> io::Result<()> {
     let r = remote(p).ok_or_else(|| io_err("not a remote file".into()))?;
     if mode.is_empty()
@@ -198,6 +252,39 @@ fn parse_ls_line(line: &str) -> Option<(Row, String)> {
 
 /// A remote directory as `ls -l` shows it, in Dired's `ls` layout.
 pub(super) fn render(dir: &Path, marks: &HashMap<PathBuf, char>, view: View) -> io::Result<String> {
+    #[cfg(windows)]
+    if let Some(l) = local(dir) {
+        let now = std::time::SystemTime::now();
+        let mut lines: Vec<Line> = fs::read_dir(&l)?
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let plain = e.file_name().to_string_lossy().into_owned();
+                (!plain.starts_with('.') || view.all)
+                    .then_some(plain)
+                    .filter(|plain| !view.omit || !super::render::omitted(plain))
+                    .map(|plain| {
+                        let mut row = super::listing::make_row(&e.path(), &plain, view.icons, now, None);
+                        if row.perms.starts_with('.') {
+                            row.perms.replace_range(..1, "-");
+                        }
+                        Line {
+                            path: dir.join(&plain),
+                            plain,
+                            row,
+                            branches: Vec::new(),
+                        }
+                    })
+            })
+            .collect();
+        lines.sort_by(|a, b| a.plain.cmp(&b.plain));
+        if view.dirs_first {
+            lines.sort_by_key(|l| !l.row.perms.starts_with('d'));
+        }
+        if view.reverse {
+            lines.reverse();
+        }
+        return Ok(super::render::render_ls(dir, marks, view, &lines));
+    }
     let r = remote(dir).ok_or_else(|| io_err("not a remote directory".into()))?;
     let flag = if view.all { "A" } else { "" };
     let out = run(&r, &format!("LC_ALL=C ls -l{flag} -- {}", quoted(&r)))?;

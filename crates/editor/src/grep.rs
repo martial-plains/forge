@@ -211,7 +211,7 @@ struct Split {
 
 /// `file:line:`, `file:line:column:` and (under a heading) `line:`.
 static WITH_FILE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^([^\s:][^:\n]*?):(\d+)(?::(\d+))?:(.*)$").unwrap());
+    LazyLock::new(|| Regex::new(r"^([^\s\n]+?):(\d+)(?::(\d+))?:(.*)$").unwrap());
 /// Just `line:`, the lines under a heading.
 static LINE_ONLY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+):(.*)$").unwrap());
 

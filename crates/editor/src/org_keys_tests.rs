@@ -295,12 +295,17 @@ fn agenda_keys_shift_dates_and_reach_the_usual_commands() {
             .get_contents()
             .contains("<2026-11-05 Thu>")
     );
-    key(&mut a, "n");
     key(&mut a, "C-c ,");
     assert!(
-        prompt(&a).unwrap().starts_with("Priority"),
-        "{:?}",
         prompt(&a)
+            .as_deref()
+            .is_some_and(|p| p.starts_with("Priority")),
+        "prompt: {:?}; message: {:?}; buffer: {} at {:?}; agenda:\n{}",
+        prompt(&a),
+        a.message,
+        a.buf_ref().name(),
+        a.buf_ref().point(),
+        agenda_view(&a)
     );
 }
 

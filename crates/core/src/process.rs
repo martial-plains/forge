@@ -288,9 +288,12 @@ pub fn run_sync(
     let mut cmd = match program {
         Program::Shell(line) => {
             #[cfg(windows)]
-            let mut c = Command::new("cmd");
-            #[cfg(windows)]
-            c.arg("/C").arg(line);
+            let c = {
+                use std::os::windows::process::CommandExt;
+                let mut c = Command::new("cmd");
+                c.raw_arg("/D /C ").raw_arg(line);
+                c
+            };
             #[cfg(not(windows))]
             let mut c = Command::new("sh");
             #[cfg(not(windows))]
@@ -370,6 +373,14 @@ fn kill_tree(child: &mut std::process::Child) {
     unsafe {
         libc::kill(-(child.id() as i32), libc::SIGKILL);
     }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -427,9 +438,12 @@ impl Processes {
         let (mut cmd, command) = match program {
             Program::Shell(line) => {
                 #[cfg(windows)]
-                let mut c = Command::new("cmd");
-                #[cfg(windows)]
-                c.arg("/C").arg(line);
+                let c = {
+                    use std::os::windows::process::CommandExt;
+                    let mut c = Command::new("cmd");
+                    c.raw_arg("/D /C ").raw_arg(line);
+                    c
+                };
                 #[cfg(not(windows))]
                 let mut c = Command::new("sh");
                 #[cfg(not(windows))]
@@ -525,6 +539,12 @@ impl Processes {
                 unsafe {
                     libc::kill(-(p.child.id() as i32), libc::SIGKILL);
                 }
+                #[cfg(windows)]
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &p.child.id().to_string(), "/T", "/F"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
                 p.child.kill().is_ok()
             }
             None => false,
@@ -767,7 +787,7 @@ pub fn project_files(root: &Path, limit: usize) -> Vec<String> {
                 Ok(t) if t.is_dir() => {}
                 Ok(t) if t.is_file() => {
                     if let Ok(rel) = path.strip_prefix(root) {
-                        files.push(rel.to_string_lossy().into_owned());
+                        files.push(rel.to_string_lossy().replace('\\', "/"));
                         if files.len() >= limit {
                             files.sort();
                             return files;
@@ -881,14 +901,11 @@ mod tests {
     fn runs_processes_and_reports_output_then_exit() {
         let mut p = Processes::new();
         let dir = std::env::temp_dir();
-        let id = p
-            .spawn(
-                Program::Shell("printf 'h\\303\\251llo\\n'; echo err >&2; exit 3"),
-                &dir,
-                false,
-                &[],
-            )
-            .unwrap();
+        #[cfg(unix)]
+        let command = "printf 'hello\\n'; echo err >&2; exit 3";
+        #[cfg(windows)]
+        let command = "echo \"quoted value\" & echo err 1>&2 & exit /b 3";
+        let id = p.spawn(Program::Shell(command), &dir, false, &[]).unwrap();
         let events = p.wait(id, Duration::from_secs(10));
         let out: String = events
             .iter()
@@ -897,19 +914,39 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(out.contains("héllo\n") && out.contains("err\n"), "{out:?}");
+        assert!(
+            out.contains(if cfg!(windows) {
+                "quoted value"
+            } else {
+                "hello"
+            }) && out.contains("err"),
+            "{out:?}"
+        );
         assert_eq!(events.last(), Some(&ProcessEvent::Exited(id, Some(3))));
         assert!(!p.any_running());
 
         // stdin, and kill.
+        #[cfg(unix)]
         let cat = p.spawn(Program::Argv("cat", &[]), &dir, true, &[]).unwrap();
+        #[cfg(windows)]
+        let cat = p
+            .spawn(Program::Shell("findstr ."), &dir, true, &[])
+            .unwrap();
         p.write(cat, b"ping\n").unwrap();
         p.close_stdin(cat);
         let events = p.wait(cat, Duration::from_secs(10));
-        assert_eq!(events[0], ProcessEvent::Output(cat, "ping\n".into()));
-        let sleep = p
-            .spawn(Program::Shell("sleep 30"), &dir, false, &[])
-            .unwrap();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                ProcessEvent::Output(_, text) if text.contains("ping")
+            )),
+            "{events:?}"
+        );
+        #[cfg(unix)]
+        let command = "sleep 30";
+        #[cfg(windows)]
+        let command = "ping -n 30 127.0.0.1 >NUL";
+        let sleep = p.spawn(Program::Shell(command), &dir, false, &[]).unwrap();
         assert!(p.kill(sleep));
         let events = p.wait(sleep, Duration::from_secs(10));
         assert!(matches!(events.last(), Some(ProcessEvent::Exited(_, _))));

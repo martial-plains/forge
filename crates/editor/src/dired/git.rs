@@ -97,6 +97,8 @@ pub(super) fn git_info(dir: &Path) -> Option<GitInfo> {
     }
     let root = String::from_utf8(git_output(dir, &["rev-parse", "--show-toplevel"])?).ok()?;
     let root = PathBuf::from(root.trim());
+    // `git` writes a plain path; a listing's directory may be verbatim.
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
     let status = git_output(
         dir,
         &[

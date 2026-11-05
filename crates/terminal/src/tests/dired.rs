@@ -9,6 +9,17 @@ fn eza_app() -> App {
     app_with_init("forge.opt[\"dired_listing\"] = \"eza\";\n").0
 }
 
+fn is_section_header(line: &str) -> bool {
+    let Some(path) = line.strip_prefix("  ") else {
+        return false;
+    };
+    path.starts_with(['/', '\\'])
+        || (path.as_bytes().len() >= 3
+            && path.as_bytes()[0].is_ascii_alphabetic()
+            && path.as_bytes()[1] == b':'
+            && matches!(path.as_bytes()[2], b'/' | b'\\'))
+}
+
 #[test]
 fn dired_marks_deletes_and_is_read_only() {
     let dir = std::env::temp_dir().join(format!("forge-dired-e2e-{}", std::process::id()));
@@ -242,7 +253,7 @@ fn dired_lists_subdirectories_inline() {
     press(&mut app, "C-M-n");
     press(&mut app, "k");
     let headers = (0..app.buf_ref().line_count())
-        .filter(|&l| app.buf_ref().line(l).starts_with("  /"))
+        .filter(|&l| is_section_header(&app.buf_ref().line(l)))
         .count();
     assert_eq!(headers, 1);
     assert!(app.buf_ref().line(point(&app).line).ends_with("sub"));
@@ -395,7 +406,7 @@ fn dired_t_draws_a_tree_and_says_so_about_the_inline_listings() {
         app.message
     );
     let headers = (0..app.buf_ref().line_count())
-        .filter(|&l| app.buf_ref().line(l).starts_with("  /"))
+        .filter(|&l| is_section_header(&app.buf_ref().line(l)))
         .count();
     assert_eq!(headers, 1, "a tree is one listing");
     let _ = std::fs::remove_dir_all(&dir);

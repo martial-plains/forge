@@ -234,13 +234,20 @@ pub fn file_relative_name(f: &str, dir: Option<&str>) -> String {
 /// `(abbreviate-file-name F)`: F with the home directory as `~`.
 pub fn abbreviate_file_name(f: &str) -> String {
     if let Some(h) = home() {
+        let h = expand_file_name(&h, None);
         let h = h.trim_end_matches(is_sep);
+        let f = if file_name_absolute_p(f) {
+            expand_file_name(f, None)
+        } else {
+            f.to_string()
+        };
         if f == h {
             return "~".into();
         }
         if let Some(rest) = f.strip_prefix(h).filter(|r| r.starts_with(is_sep)) {
             return format!("~{rest}");
         }
+        return f;
     }
     f.to_string()
 }
@@ -368,8 +375,12 @@ fn mode_string(meta: &fs::Metadata, kind: Kind) -> String {
         } else {
             'w'
         };
-        format!("{lead}r{w}x------")
+        format!("{lead}r{w}-r{w}-r{w}-")
     }
+}
+
+fn path_text(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// `(file-attributes F)`, without following a final symbolic link.
@@ -402,7 +413,7 @@ pub fn file_attributes(f: &str) -> io::Result<Attrs> {
         mode: mode_string(&meta, kind),
         target: (kind == Kind::Link).then(|| {
             fs::read_link(&p)
-                .map(|t| t.display().to_string())
+                .map(|t| path_text(&t))
                 .unwrap_or_default()
         }),
     })
@@ -628,9 +639,12 @@ pub fn file_expand_wildcards(
     } else {
         pattern.to_string()
     };
-    let comps: Vec<&str> = pat.split(is_sep).collect();
+    // In a regexp, `\` escapes the next character, so it can't also be a
+    // path separator there.
+    let sep = |c: char| c == '/' || (!regexp && cfg!(windows) && c == '\\');
+    let comps: Vec<&str> = pat.split(sep).collect();
     let n = comps.len();
-    let mut hits: Vec<String> = vec![if pat.starts_with(is_sep) {
+    let mut hits: Vec<String> = vec![if pat.starts_with(sep) {
         "/".to_string()
     } else {
         String::new()
@@ -783,7 +797,7 @@ pub fn copy_directory(
         ));
     }
     copy_tree(&src, &dst)?;
-    Ok(dst.display().to_string())
+    Ok(path_text(&dst))
 }
 
 /// `(delete-directory D RECURSIVE)`: remove a directory; without
@@ -1160,6 +1174,10 @@ mod tests {
         d
     }
 
+    fn text(path: &Path) -> String {
+        path.display().to_string().replace('\\', "/")
+    }
+
     #[test]
     fn names_are_taken_apart() {
         assert_eq!(file_name_directory("/a/b/c.txt").as_deref(), Some("/a/b/"));
@@ -1212,6 +1230,7 @@ mod tests {
         assert_eq!(file_relative_name("/a/x", Some("/a/b/c")), "../../x");
         assert_eq!(file_relative_name("/a/b", Some("/a/b")), ".");
         if let Some(h) = home() {
+            let h = expand_file_name(&h, None);
             let h = h.trim_end_matches('/').to_string();
             assert_eq!(expand_file_name("~/x", None), format!("{h}/x"));
             assert_eq!(abbreviate_file_name(&format!("{h}/x")), "~/x");
@@ -1226,7 +1245,7 @@ mod tests {
             fs::write(d.join(n), "").unwrap();
         }
         fs::create_dir(d.join("sub")).unwrap();
-        let ds = d.display().to_string();
+        let ds = text(&d);
         assert_eq!(
             directory_files(&ds, false, None, false, None).unwrap(),
             [".", "..", "a.org", "b.txt", "c.txt", "sub"]
@@ -1286,7 +1305,7 @@ mod tests {
         ] {
             fs::write(d.join(f), "").unwrap();
         }
-        let ds = d.display().to_string();
+        let ds = text(&d);
         let re = Regex::new(r"\.org$").unwrap();
         let rel = |v: Vec<String>| {
             v.into_iter()
@@ -1334,16 +1353,14 @@ mod tests {
         fs::create_dir_all(d.join("proj/src/deep")).unwrap();
         fs::write(d.join("proj/.git"), "").unwrap();
         fs::write(d.join("proj/src/deep/f.rs"), "").unwrap();
-        let root = format!("{}/proj/", d.canonicalize().unwrap().display());
-        let from_file = d.join("proj/src/deep/f.rs").display().to_string();
+        let root = format!("{}/proj/", text(&d.canonicalize().unwrap()));
+        let from_file = text(&d.join("proj/src/deep/f.rs"));
         assert_eq!(
-            locate_dominating_name(&from_file, ".git").map(|r| r.replace(
-                &d.display().to_string(),
-                &d.canonicalize().unwrap().display().to_string()
-            )),
+            locate_dominating_name(&from_file, ".git")
+                .map(|r| r.replace(&text(&d), &text(&d.canonicalize().unwrap()))),
             Some(root.clone())
         );
-        assert!(locate_dominating_name(&d.join("proj").display().to_string(), ".git").is_some());
+        assert!(locate_dominating_name(&text(&d.join("proj")), ".git").is_some());
         assert_eq!(
             locate_dominating_name(&from_file, "no-such-marker-file-xyz"),
             None
@@ -1378,7 +1395,7 @@ mod tests {
         ] {
             fs::write(d.join(f), "").unwrap();
         }
-        let ds = d.display().to_string();
+        let ds = text(&d);
         assert_eq!(
             file_expand_wildcards(&format!("{ds}/*.png"), false, false, None).unwrap(),
             [format!("{ds}/top.png")]
@@ -1427,7 +1444,7 @@ mod tests {
     #[test]
     fn directories_are_made_copied_and_deleted() {
         let d = scratch("ops");
-        let ds = d.display().to_string();
+        let ds = text(&d);
         assert!(make_directory(&format!("{ds}/a/b/c"), false).is_err());
         assert!(make_directory(&format!("{ds}/a/b/c"), true).unwrap());
         assert!(!make_directory(&format!("{ds}/a/b/c"), true).unwrap());
@@ -1485,7 +1502,7 @@ mod tests {
         fs::write(d.join("small"), "12345").unwrap();
         fs::write(d.join(".hidden"), "").unwrap();
         fs::create_dir(d.join("dir")).unwrap();
-        let ds = d.display().to_string();
+        let ds = text(&d);
         let sw = |s: &str| vec![s.to_string()];
         let plain = insert_directory(&ds, &sw("-1"), false, true, 0).unwrap();
         assert_eq!(plain, "dir\nsmall\n");

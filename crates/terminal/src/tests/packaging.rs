@@ -16,10 +16,12 @@ fn compile_next_error_shell_commands_and_projects() {
 
     // M-x compile: runs in the project root, output streams in.
     press(&mut app, "M-x compile RET");
-    answer(
-        &mut app,
-        "printf 'src/a.c:2:9: error: undeclared\\n  --> src/b.c:1:5\\n'; exit 2",
-    );
+    let command = if cfg!(windows) {
+        "echo src/a.c:2:9: error: undeclared & echo src/b.c:1:5: error: second & exit /b 2"
+    } else {
+        "printf 'src/a.c:2:9: error: undeclared\\n  --> src/b.c:1:5\\n'; exit 2"
+    };
+    answer(&mut app, command);
     finish_jobs(&mut app);
     let out = app
         .editor
@@ -53,9 +55,19 @@ fn compile_next_error_shell_commands_and_projects() {
     finish_jobs(&mut app);
     assert_eq!(app.message.as_deref(), Some("hi there"));
     press(&mut app, "M-< C-u M-!");
-    answer(&mut app, "printf '// top\\n'");
+    let command = if cfg!(windows) {
+        "echo // top"
+    } else {
+        "printf '// top\\n'"
+    };
+    answer(&mut app, command);
     finish_jobs(&mut app);
-    assert!(text(&app).starts_with("// top\nint x;"), "{}", text(&app));
+    let expected = if cfg!(windows) {
+        "// top\nint x;"
+    } else {
+        "// top\nint x;"
+    };
+    assert!(text(&app).starts_with(expected), "{}", text(&app));
     press(&mut app, "C-x C-s");
     let _ = std::fs::remove_file(dir.join("src/a.c~"));
 
@@ -71,7 +83,11 @@ fn compile_next_error_shell_commands_and_projects() {
         .get_buffer(app.editor.find_buffer("*grep*").unwrap())
         .unwrap()
         .get_contents();
-    assert!(grep.contains("src/a.c:3:int y = needle;"), "{grep}");
+    assert!(
+        grep.replace('\\', "/")
+            .contains("src/a.c:3:int y = needle;"),
+        "{grep}"
+    );
     press(&mut app, "M-g n");
     assert_eq!((app.buf_ref().name(), point(&app).line), ("a.c", 2));
     std::fs::remove_dir_all(&dir).unwrap();
@@ -124,56 +140,61 @@ fn packages_install_list_and_delete() {
         app.message
     );
 
-    // Over HTTP, if python3 can serve the directory.
-    let port = 20000 + (std::process::id() % 20000) as u16;
+    // Serve the index and component locally without external tooling.
     let wasm = demo_plugin_file(&dir.join("repo"));
     std::fs::write(
         dir.join("repo/index.toml"),
         forge_core::package::entry_for(&wasm, None).unwrap(),
     )
     .unwrap();
-    let server = std::process::Command::new("python3")
-        .args([
-            "-m",
-            "http.server",
-            &port.to_string(),
-            "--bind",
-            "127.0.0.1",
-            "--directory",
-        ])
-        .arg(dir.join("repo"))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    if let Ok(mut server) = server {
-        let up = (0..100).any(|_| {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
-        });
-        assert!(up, "python3 -m http.server didn't start");
-        if up {
-            app.packages.indexes = vec![format!("http://127.0.0.1:{port}/index.toml")];
-            app.packages.index = None;
-            press(&mut app, "M-x package-install RET");
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-            while app.minibuffer.is_none() && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                app.on_idle();
-            }
-            press(&mut app, "demo RET");
-            while !dir.join("plugins/demo.wasm").exists() && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                app.on_idle();
-            }
-            assert_eq!(
-                app.message.as_deref(),
-                Some("Installed demo 0.0.0"),
-                "{:?}",
-                app.message
-            );
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let repo = dir.join("repo");
+    let server = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 1024];
+            let n = std::io::Read::read(&mut stream, &mut request).unwrap();
+            let path = String::from_utf8_lossy(&request[..n])
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .to_string();
+            let body = match path.as_str() {
+                "/index.toml" => std::fs::read(repo.join("index.toml")).unwrap(),
+                "/demo.wasm" => std::fs::read(repo.join("demo.wasm")).unwrap(),
+                _ => panic!("unexpected package URL path: {path}"),
+            };
+            use std::io::Write;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
         }
-        let _ = server.kill();
+    });
+    app.packages.indexes = vec![format!("http://127.0.0.1:{port}/index.toml")];
+    app.packages.index = None;
+    press(&mut app, "M-x package-install RET");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while app.minibuffer.is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        app.on_idle();
     }
+    press(&mut app, "demo RET");
+    while !dir.join("plugins/demo.wasm").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        app.on_idle();
+    }
+    assert_eq!(
+        app.message.as_deref(),
+        Some("Installed demo 0.0.0"),
+        "{:?}",
+        app.message
+    );
+    server.join().unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -210,7 +231,7 @@ fn packages_from_version_control() {
     git(&["commit", "-q", "-m", "prebuilt"]);
     git(&["tag", "v1"]);
     // SAFETY: tests that read FORGE_DATA_DIR are only this one.
-    unsafe { std::env::set_var("FORGE_DATA_DIR", dir.join("data")) };
+    unsafe { std::env::set_var("FORGE_DATA_DIR", dir.join("data with spaces")) };
     let mut app = app_with("");
     app.plugin_cache = None;
     app.packages.plugin_dir = Some(dir.join("plugins"));
@@ -239,15 +260,20 @@ fn packages_from_version_control() {
         app.message
     );
     assert!(crate::plugins::loaded_names(&app).contains(&"demo".to_string()));
-    assert!(dir.join("data/vc/demo/.git").exists());
+    assert!(dir.join("data with spaces/vc/demo/.git").exists());
     let db = forge_core::package::InstalledDb::load(&dir.join("plugins"));
     assert_eq!(db.packages["demo"].rev.as_deref(), Some("v1"));
 
     // A build command is asked about first.
     std::fs::rename(&wasm, repo.join("demo.bin")).unwrap();
+    let build = if cfg!(windows) {
+        "copy /Y demo.bin \"%OUT%\" >nul"
+    } else {
+        "cp demo.bin \"$OUT\""
+    };
     std::fs::write(
         repo.join("forge-package.toml"),
-        "build = \"cp demo.bin \\\"$OUT\\\"\"\n",
+        format!("build = {build:?}\n"),
     )
     .unwrap();
     git(&["add", "-A"]);
@@ -256,27 +282,35 @@ fn packages_from_version_control() {
     press(&mut app, "M-x package-vc-upgrade RET demo RET");
     wait(&mut app, &|a| a.minibuffer.is_some());
     assert!(
+        app.minibuffer.is_some(),
+        "message: {:?}\n{}",
+        app.message,
+        buffer_text(&app, "*Package Build*")
+    );
+    assert!(
         app.minibuffer
             .as_ref()
             .unwrap()
             .prompt
-            .contains("with `cp demo.bin"),
+            .contains(&format!("with `{build}")),
         "{:?}",
         app.message
     );
     press(&mut app, "y");
-    wait(&mut app, &|a| {
-        a.message
-            .as_deref()
-            .is_some_and(|m| m.starts_with("Installed"))
+    let plugins = dir.join("plugins");
+    wait(&mut app, &|_| {
+        forge_core::package::InstalledDb::load(&plugins)
+            .packages
+            .get("demo")
+            .is_some_and(|p| p.build.as_deref() == Some(build))
     });
-    let db = forge_core::package::InstalledDb::load(&dir.join("plugins"));
-    assert!(
-        db.packages["demo"]
-            .build
-            .as_deref()
-            .unwrap()
-            .starts_with("cp demo.bin")
+    let db = forge_core::package::InstalledDb::load(&plugins);
+    assert_eq!(
+        db.packages["demo"].build.as_deref(),
+        Some(build),
+        "stored build command: {:?}\n{}",
+        app.message,
+        buffer_text(&app, "*Package Build*")
     );
 
     // Nothing new: up to date. Declining a build leaves things as they were.
@@ -286,9 +320,14 @@ fn packages_from_version_control() {
             .as_deref()
             .is_some_and(|m| m.contains("up to date"))
     });
+    let changed_build = if cfg!(windows) {
+        "copy /Y demo.bin \"%OUT%\" >nul && ver >nul"
+    } else {
+        "cp demo.bin \"$OUT\" && true"
+    };
     std::fs::write(
         repo.join("forge-package.toml"),
-        "build = \"cp demo.bin \\\"$OUT\\\" && true\"\n",
+        format!("build = {changed_build:?}\n"),
     )
     .unwrap();
     git(&["commit", "-q", "-am", "new build"]);
@@ -299,6 +338,6 @@ fn packages_from_version_control() {
     assert_eq!(app.message.as_deref(), Some("Not building demo"));
 
     press(&mut app, "M-x package-delete RET demo RET");
-    assert!(!dir.join("data/vc/demo").exists());
+    assert!(!dir.join("data with spaces/vc/demo").exists());
     std::fs::remove_dir_all(&dir).unwrap();
 }

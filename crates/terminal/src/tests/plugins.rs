@@ -341,7 +341,14 @@ fn line_numbers_and_decoration_messages() {
 
 #[test]
 fn plugins_ask_before_getting_permissions() {
-    let dir = std::env::temp_dir().join(format!("forge-perm-ui-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "forge-perm-ui-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     let data = dir.join("templates");
     let path = demo_with_manifest(&dir, &data);
     let mut app = app_with("");
@@ -362,7 +369,7 @@ fn plugins_ask_before_getting_permissions() {
     assert!(
         t.contains(&format!(
             "files: read {} (greeting templates)",
-            data.display()
+            data.display().to_string().replace('\\', "/")
         )),
         "{t}"
     );
@@ -440,7 +447,14 @@ fn a_plugin_without_a_manifest_loads_without_asking() {
 
 #[test]
 fn several_plugins_asking_take_turns() {
-    let dir = std::env::temp_dir().join(format!("forge-perm-queue-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "forge-perm-queue-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     let data = dir.join("t");
     let a = demo_with_manifest(&dir, &data);
     // A second copy under another name, asking the same.
@@ -463,6 +477,7 @@ fn several_plugins_asking_take_turns() {
     );
     press(&mut app, "C-g");
     assert!(app.minibuffer.is_none());
+    drop(app);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

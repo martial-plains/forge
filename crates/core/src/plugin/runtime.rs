@@ -4718,6 +4718,9 @@ mod tests {
             logged(&p),
             [dir.canonicalize().unwrap().display().to_string()]
         );
+        // Let go of the granted directory before removing it (Windows keeps
+        // its handle open otherwise).
+        drop(p);
 
         // A granted directory that doesn't exist is skipped with a warning.
         let gone = Grants {
@@ -4739,6 +4742,7 @@ mod tests {
                 "no directories"
             ]
         );
+        drop(p);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

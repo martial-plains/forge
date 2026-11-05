@@ -1249,27 +1249,29 @@ pub(super) fn answered(app: &mut App, extra: Extra, input: &str) {
             } else {
                 dir.join(typed)
             };
-            let names: Vec<String> = paths
-                .iter()
-                .map(|p| quote(Path::new(&name_of(p))))
-                .collect();
-            let a = quote(&archive);
             let lower = archive.display().to_string().to_lowercase();
-            let cmd = if lower.ends_with(".zip") {
-                format!("zip -r {a} {}", names.join(" "))
+            let mut cmd = if lower.ends_with(".zip") {
+                let mut c = Command::new("zip");
+                c.arg("-r");
+                c
             } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-                format!("tar czf {a} {}", names.join(" "))
+                let mut c = Command::new("tar");
+                c.arg("czf");
+                c
             } else if lower.ends_with(".tar") {
-                format!("tar cf {a} {}", names.join(" "))
+                let mut c = Command::new("tar");
+                c.arg("cf");
+                c
             } else {
                 return app.error("Use .tar.gz, .tgz, .tar or .zip");
             };
-            match Command::new("sh")
-                .arg("-c")
-                .arg(&cmd)
-                .current_dir(&dir)
-                .output()
-            {
+            cmd.arg(&archive);
+            for p in &paths {
+                if let Some(name) = p.file_name() {
+                    cmd.arg(name);
+                }
+            }
+            match cmd.current_dir(&dir).output() {
                 Ok(o) if o.status.success() => {
                     revert(app, true);
                     app.msg(format!("Wrote {}", archive.display()));

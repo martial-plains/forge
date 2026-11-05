@@ -24,41 +24,52 @@ pub(super) fn env() -> &'static Env {
                 Some(sign * (h * 3600 + m * 60))
             })
             .unwrap_or(0);
-        let mut users = HashMap::new();
-        // macOS keeps ordinary users out of /etc/passwd, so ask `id` too.
-        if let Ok(passwd) = fs::read_to_string("/etc/passwd") {
-            for line in passwd.lines() {
-                let mut f = line.split(':');
-                if let (Some(name), _, Some(uid)) = (f.next(), f.next(), f.next())
-                    && let Ok(uid) = uid.parse()
-                {
-                    users.entry(uid).or_insert_with(|| name.to_string());
+        #[cfg(unix)]
+        let (users, groups) = {
+            let mut users = HashMap::new();
+            // macOS keeps ordinary users out of /etc/passwd, so ask `id` too.
+            if let Ok(passwd) = fs::read_to_string("/etc/passwd") {
+                for line in passwd.lines() {
+                    let mut f = line.split(':');
+                    if let (Some(name), _, Some(uid)) = (f.next(), f.next(), f.next())
+                        && let Ok(uid) = uid.parse()
+                    {
+                        users.entry(uid).or_insert_with(|| name.to_string());
+                    }
                 }
             }
-        }
-        if let (Some(uid), Some(name)) = (run("id", &["-u"]), run("id", &["-un"]))
-            && let Ok(uid) = uid.parse()
-        {
-            users.insert(uid, name);
-        }
-        let mut groups = HashMap::new();
-        if let Ok(text) = fs::read_to_string("/etc/group") {
-            for line in text.lines() {
-                let mut f = line.split(':');
-                if let (Some(name), _, Some(gid)) = (f.next(), f.next(), f.next())
-                    && let Ok(gid) = gid.parse()
-                {
-                    groups.entry(gid).or_insert_with(|| name.to_string());
+            if let (Some(uid), Some(name)) = (run("id", &["-u"]), run("id", &["-un"]))
+                && let Ok(uid) = uid.parse()
+            {
+                users.insert(uid, name);
+            }
+            let mut groups = HashMap::new();
+            if let Ok(text) = fs::read_to_string("/etc/group") {
+                for line in text.lines() {
+                    let mut f = line.split(':');
+                    if let (Some(name), _, Some(gid)) = (f.next(), f.next(), f.next())
+                        && let Ok(gid) = gid.parse()
+                    {
+                        groups.entry(gid).or_insert_with(|| name.to_string());
+                    }
                 }
             }
-        }
-        // macOS keeps its groups in the directory service too.
-        if let (Some(gid), Some(name)) = (run("id", &["-g"]), run("id", &["-gn"]))
-            && let Ok(gid) = gid.parse()
+            // macOS keeps its groups in the directory service too.
+            if let (Some(gid), Some(name)) = (run("id", &["-g"]), run("id", &["-gn"]))
+                && let Ok(gid) = gid.parse()
+            {
+                groups.entry(gid).or_insert(name);
+            }
+            (users, groups)
+        };
+        #[cfg(unix)]
         {
-            groups.entry(gid).or_insert(name);
+            Env { tz, users, groups }
         }
-        Env { tz, users, groups }
+        #[cfg(not(unix))]
+        {
+            Env { tz }
+        }
     })
 }
 pub(super) fn icons_enabled() -> bool {

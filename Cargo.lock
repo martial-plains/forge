@@ -1734,6 +1734,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wat",
+ "windows-sys 0.61.2",
  "wit-component 0.259.0",
  "wit-parser 0.259.0",
 ]

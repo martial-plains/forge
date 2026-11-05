@@ -237,6 +237,19 @@ pub fn parse_path(p: &Path) -> Option<Remote> {
     parse(p.to_str()?)
 }
 
+/// The local path a Tether name stands for, when every hop is `local`.
+pub(crate) fn local_path(r: &Remote) -> Option<PathBuf> {
+    if !r.hops.iter().all(|h| h.method == "local") {
+        return None;
+    }
+    // A verbatim Windows path only understands `\`; names grown from a
+    // listing can carry `/`.
+    #[cfg(windows)]
+    return Some(PathBuf::from(r.path.replace('/', "\\")));
+    #[cfg(not(windows))]
+    Some(PathBuf::from(&r.path))
+}
+
 /// Make a path absolute and tidy `.` and `..`.
 fn normalize(path: &str) -> String {
     let mut out: Vec<&str> = Vec::new();
@@ -327,19 +340,49 @@ fn decode(s: &str) -> Option<String> {
 
 /// Where the local copy of a remote file lives.
 pub fn mirror_path(r: &Remote) -> PathBuf {
-    mirror_root()
-        .join(encode(&r.prefix()))
-        .join(r.path.trim_start_matches('/'))
+    let root = mirror_root().join(encode(&r.prefix()));
+    #[cfg(windows)]
+    if local_path(r).is_some() {
+        let path = r.path.replace('\\', "/");
+        if let Some((drive, rest)) = path.split_once(":/") {
+            return root.join(format!("{drive}%3A")).join(rest);
+        }
+    }
+    root.join(r.path.trim_start_matches('/'))
 }
 
 /// The remote file a mirror stands for, from its location alone.
 pub fn from_mirror(p: &Path) -> Option<Remote> {
-    let rel = p.strip_prefix(mirror_root()).ok()?;
+    let root = mirror_root();
+    #[cfg(windows)]
+    let (root, p) = match (std::fs::canonicalize(&root), std::fs::canonicalize(p)) {
+        (Ok(root), Ok(p)) => (root, p),
+        _ => (root, p.to_path_buf()),
+    };
+    #[cfg(not(windows))]
+    let (root, p) = (root, p.to_path_buf());
+    let rel = p.strip_prefix(root).ok()?;
     let mut comps = rel.components();
     let first = comps.next()?.as_os_str().to_str()?;
     let prefix = decode(first)?;
     let rest: PathBuf = comps.collect();
-    let rest = rest.to_str()?;
+    let rest = rest.to_string_lossy();
+    #[cfg(windows)]
+    let rest = {
+        let mut rest = rest.replace('\\', "/");
+        if rest.len() >= 5
+            && rest.as_bytes()[0].is_ascii_alphabetic()
+            && rest.as_bytes()[1..5].eq_ignore_ascii_case(b"%3A/")
+        {
+            rest.replace_range(1..5, ":\\");
+            rest = rest.replace('/', "\\");
+        }
+        rest
+    };
+    #[cfg(windows)]
+    if rest.len() >= 2 && rest.as_bytes()[0].is_ascii_alphabetic() && rest.as_bytes()[1] == b':' {
+        return parse(&format!("/{prefix}:{rest}"));
+    }
     parse(&format!("/{prefix}:/{rest}"))
 }
 
@@ -741,6 +784,18 @@ const TRANSFER: u64 = 300;
 
 /// Turn `~`, a relative name or `..` into an absolute path on the remote.
 pub fn resolve(r: &Remote) -> Result<Remote, String> {
+    #[cfg(windows)]
+    if local_path(r).is_some() {
+        let p = PathBuf::from(&r.path);
+        let abs = if p.is_absolute() {
+            p
+        } else {
+            std::env::current_dir()
+                .map_err(|e| e.to_string())?
+                .join(p)
+        };
+        return Ok(r.with_path(abs.to_string_lossy().into_owned()));
+    }
     if r.path.starts_with('/') {
         return Ok(r.with_path(normalize(&r.path)));
     }
@@ -762,6 +817,25 @@ pub fn resolve(r: &Remote) -> Result<Remote, String> {
 }
 
 pub fn stat(r: &Remote) -> Result<Kind, String> {
+    #[cfg(windows)]
+    if let Some(p) = local_path(r) {
+        return match std::fs::metadata(&p) {
+            Ok(m) if m.is_dir() => Ok(Kind::Dir),
+            Ok(m) => {
+                let mtime = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs() as i64);
+                Ok(Kind::File(Stamp {
+                    mtime,
+                    size: m.len(),
+                }))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Kind::Missing),
+            Err(e) => Err(e.to_string()),
+        };
+    }
     let p = rp(&r.path);
     let script = format!(
         "p={p}; if [ -d \"$p\" ]; then echo d; elif [ -e \"$p\" ]; then echo f; \
@@ -784,12 +858,25 @@ pub fn stat(r: &Remote) -> Result<Kind, String> {
 }
 
 pub fn read(r: &Remote) -> Result<Vec<u8>, String> {
+    #[cfg(windows)]
+    if let Some(p) = local_path(r) {
+        return std::fs::read(p).map_err(|e| e.to_string());
+    }
     run(&r.hops, &format!("cat -- {}", rp(&r.path)), None, TRANSFER)
 }
 
 /// Replace the remote file atomically, keeping its permissions. Symlinks are
 /// followed, so the link itself survives.
 pub fn write(r: &Remote, data: Vec<u8>) -> Result<(), String> {
+    #[cfg(windows)]
+    if let Some(p) = local_path(r) {
+        let tmp = p.with_file_name(format!(".tether.{}.tmp", std::process::id()));
+        std::fs::write(&tmp, data).map_err(|e| e.to_string())?;
+        if p.exists() {
+            std::fs::remove_file(&p).map_err(|e| e.to_string())?;
+        }
+        return std::fs::rename(&tmp, &p).map_err(|e| e.to_string());
+    }
     let p = rp(&r.path);
     let script = format!(
         "p={p}; q=$(readlink -f \"$p\" 2>/dev/null) && [ -n \"$q\" ] && p=$q; \
@@ -817,15 +904,47 @@ pub fn list(r: &Remote) -> Result<Vec<String>, String> {
     {
         return Ok(v.clone());
     }
-    let d = rp(&r.path);
-    let script = format!("LC_ALL=C ls -1ApL -- {d} 2>/dev/null || LC_ALL=C ls -1Ap -- {d}");
-    let out = run(&r.hops, &script, None, 20)?;
-    let mut names: Vec<String> = String::from_utf8_lossy(&out)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect();
-    names.sort();
+    #[cfg(windows)]
+    let names: Vec<String> = if let Some(p) = local_path(r) {
+        let mut names: Vec<String> = std::fs::read_dir(p)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .map(|e| {
+                let dir = e.path().is_dir();
+                let mut name = e.file_name().to_string_lossy().into_owned();
+                if dir {
+                    name.push('/');
+                }
+                name
+            })
+            .collect();
+        names.sort();
+        names
+    } else {
+        let d = rp(&r.path);
+        let script = format!("LC_ALL=C ls -1ApL -- {d} 2>/dev/null || LC_ALL=C ls -1Ap -- {d}");
+        let out = run(&r.hops, &script, None, 20)?;
+        let mut names: Vec<String> = String::from_utf8_lossy(&out)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names
+    };
+    #[cfg(not(windows))]
+    let names: Vec<String> = {
+        let d = rp(&r.path);
+        let script = format!("LC_ALL=C ls -1ApL -- {d} 2>/dev/null || LC_ALL=C ls -1Ap -- {d}");
+        let out = run(&r.hops, &script, None, 20)?;
+        let mut names: Vec<String> = String::from_utf8_lossy(&out)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names
+    };
     if let Ok(mut c) = cache.lock() {
         c.insert(key, (Instant::now(), names.clone()));
     }
@@ -844,16 +963,27 @@ fn forget_listings() {
 
 static STAMPS: OnceLock<Mutex<HashMap<PathBuf, Option<Stamp>>>> = OnceLock::new();
 
+fn stamp_key(mirror: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        std::fs::canonicalize(mirror).unwrap_or_else(|_| mirror.to_path_buf())
+    }
+    #[cfg(not(windows))]
+    {
+        mirror.to_path_buf()
+    }
+}
+
 fn set_stamp(mirror: &Path, stamp: Option<Stamp>) {
     if let Ok(mut m) = STAMPS.get_or_init(Default::default).lock() {
-        m.insert(mirror.to_path_buf(), stamp);
+        m.insert(stamp_key(mirror), stamp);
     }
 }
 
 /// `Some(None)`: fetched while the file did not exist. `None`: never fetched
 /// in this run (a restored session).
 fn get_stamp(mirror: &Path) -> Option<Option<Stamp>> {
-    STAMPS.get()?.lock().ok()?.get(mirror).copied()
+    STAMPS.get()?.lock().ok()?.get(&stamp_key(mirror)).copied()
 }
 
 /// Copy the remote file into its mirror; returns the mirror's path.
@@ -1061,6 +1191,9 @@ pub fn ensure_auth(app: &mut App, dir: &Path, retry: Retry) -> bool {
     let Some(r) = parse_path(dir) else {
         return true;
     };
+    if local_path(&r).is_some() {
+        return true;
+    }
     match run(&r.hops, "true", None, QUICK) {
         Ok(_) => true,
         Err(e) => {
@@ -1073,6 +1206,11 @@ pub fn ensure_auth(app: &mut App, dir: &Path, retry: Retry) -> bool {
 /// The local command that runs `command` in the remote directory `dir`, the
 /// environment it needs, and the stdin lines (sudo passwords) to feed it.
 pub fn job_command(dir: &Remote, command: &str) -> (Vec<String>, Vec<(String, String)>, Vec<u8>) {
+    #[cfg(windows)]
+    if let Some(p) = local_path(dir) {
+        let script = format!("cd /d \"{}\" && {}", p.display(), command);
+        return (vec!["cmd".into(), "/C".into(), script], Vec::new(), Vec::new());
+    }
     let script = format!("cd {} && {{ {}\n}}", rp(&dir.path), command);
     let (env, lines) = auth_for(&dir.hops);
     (argv(&dir.hops, &script), env, lines)
@@ -1271,7 +1409,9 @@ pub fn complete(input: &str) -> Option<Vec<String>> {
                 .collect(),
         );
     }
-    let (dir_part, prefix) = match input.rfind('/') {
+    let local = cfg!(windows) && method == "local";
+    let split = input.rfind(|c: char| c == '/' || (local && c == '\\'));
+    let (dir_part, prefix) = match split {
         Some(i) => (&input[..=i], &input[i + 1..]),
         None => return Some(Vec::new()),
     };
@@ -1583,6 +1723,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn failures_are_readable_and_time_out() {
         let r = local("/definitely/not/here");
         let e = run(&r.hops, "cat /definitely/not/here", None, 5).unwrap_err();
@@ -1654,7 +1795,15 @@ mod tests {
         assert_eq!(remote_of_buffer(&a).unwrap().display(), name);
         a.buf().insert_str("more ");
         crate::commands::save(&mut a);
-        assert_eq!(std::fs::read_to_string(&file).unwrap(), "more first\n");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "more first\n",
+            "message={:?}, prompt={:?}, buffer={:?}, modified={}",
+            a.message,
+            a.minibuffer.as_ref().map(|mb| &mb.prompt),
+            a.buf_ref().get_contents(),
+            a.buf_ref().is_modified()
+        );
         assert!(!a.buf_ref().is_modified());
 
         // Someone else changes the file: the next save asks first.
@@ -1723,6 +1872,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn passwords_change_the_command_line() {
         let r = parse("/ssh:pwuser@pwhost:/x").unwrap();
         let before = argv(&r.hops, "true");
@@ -1798,6 +1948,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn shell_commands_run_in_the_remote_directory() {
         let dir = scratch("shell");
         std::fs::write(dir.join("marker.txt"), "x").unwrap();

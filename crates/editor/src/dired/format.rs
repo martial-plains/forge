@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+#[cfg(unix)]
 use super::env::*;
 use super::*;
 
@@ -86,7 +87,7 @@ pub(super) fn format_date(mtime: SystemTime, now: SystemTime, tz: i64) -> String
     }
 }
 #[cfg(unix)]
-pub(super) fn mode_string(m: &fs::Metadata) -> String {
+pub(super) fn mode_string(_name: &str, m: &fs::Metadata) -> String {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     let ft = m.file_type();
     let kind = if ft.is_dir() {
@@ -129,7 +130,7 @@ pub(super) fn mode_string(m: &fs::Metadata) -> String {
     .collect()
 }
 #[cfg(not(unix))]
-pub(super) fn mode_string(m: &fs::Metadata) -> String {
+pub(super) fn mode_string(name: &str, m: &fs::Metadata) -> String {
     let kind = if m.is_dir() {
         'd'
     } else if m.file_type().is_symlink() {
@@ -138,7 +139,25 @@ pub(super) fn mode_string(m: &fs::Metadata) -> String {
         '.'
     };
     let w = if m.permissions().readonly() { '-' } else { 'w' };
-    format!("{kind}r{w}xr{w}xr{w}x")
+    let x = if m.is_dir() || executable_name(name) {
+        'x'
+    } else {
+        '-'
+    };
+    format!("{kind}r{w}{x}r-{x}r-{x}")
+}
+/// Windows has no executable bit, so a file counts as executable by name.
+#[cfg(not(unix))]
+pub(super) fn executable_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "bat" | "cmd" | "com" | "exe" | "sh" | "ps1"
+            )
+        })
 }
 /// `ls -l`'s date: "Oct 12 14:13" for the last six months, else
 /// "Oct 12  2023".
@@ -175,7 +194,7 @@ pub(super) fn group_of(m: &fs::Metadata) -> String {
 }
 #[cfg(not(unix))]
 pub(super) fn group_of(_: &fs::Metadata) -> String {
-    String::new()
+    "-".into()
 }
 /// Disk blocks in 1K units, for the "total" line.
 #[cfg(unix)]
@@ -198,7 +217,7 @@ pub(super) fn owner(m: &fs::Metadata) -> String {
 }
 #[cfg(not(unix))]
 pub(super) fn owner(_: &fs::Metadata) -> String {
-    String::new()
+    "-".into()
 }
 pub(super) fn is_icon(c: char) -> bool {
     ('\u{e000}'..='\u{f8ff}').contains(&c)
@@ -363,7 +382,14 @@ pub(super) fn inode(m: &fs::Metadata) -> String {
     use std::os::unix::fs::MetadataExt;
     m.ino().to_string()
 }
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub(super) fn inode(m: &fs::Metadata) -> String {
+    // Windows has no inode; the creation time is a stable number per file
+    // and is all the column is used for here.
+    use std::os::windows::fs::MetadataExt;
+    m.creation_time().to_string()
+}
+#[cfg(not(any(unix, windows)))]
 pub(super) fn inode(_: &fs::Metadata) -> String {
     String::new()
 }

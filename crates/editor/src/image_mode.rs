@@ -53,7 +53,13 @@ pub fn image_files(dir: &Path) -> Vec<PathBuf> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && is_image(p))
+        .filter(|p| {
+            p.is_file()
+                && is_image(p)
+                && !p
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(".#"))
+        })
         .collect();
     out.sort();
     out

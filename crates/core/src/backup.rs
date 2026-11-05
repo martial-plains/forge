@@ -81,9 +81,10 @@ pub struct Config {
 /// The directories whose files aren't backed up by default: $TMPDIR (or
 /// /tmp) and, on Unix, /dev/shm.
 pub fn default_temporary_dirs() -> Vec<PathBuf> {
-    let mut v = vec![std::env::temp_dir()];
     #[cfg(unix)]
-    v.push(PathBuf::from("/dev/shm"));
+    let v = vec![std::env::temp_dir(), PathBuf::from("/dev/shm")];
+    #[cfg(not(unix))]
+    let v = vec![std::env::temp_dir()];
     v.into_iter()
         .map(|d| d.canonicalize().unwrap_or(d))
         .collect()

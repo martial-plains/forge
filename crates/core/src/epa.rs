@@ -169,10 +169,12 @@ pub fn encrypt(plaintext: &[u8], epa: &Epa) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::buffer::Buffer;
 
     /// A stand-in for gpg: "encrypts" by reversing the bytes of stdin,
     /// "decrypts" by reversing the file, and lists a public-key packet.
+    #[cfg(unix)]
     fn fake_gpg(dir: &Path) -> std::path::PathBuf {
         let script = dir.join("fakegpg");
         std::fs::write(

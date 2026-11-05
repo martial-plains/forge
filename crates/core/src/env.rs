@@ -358,11 +358,15 @@ mod tests {
 
     #[test]
     fn parse_path_marks_the_current_directory() {
+        let sep = path_separator();
         assert_eq!(
-            parse_path("/a:/b"),
+            parse_path(&format!("/a{sep}/b")),
             vec![Some("/a".into()), Some("/b".into())]
         );
-        assert_eq!(parse_path(":/a"), vec![None, Some("/a".into())]);
+        assert_eq!(
+            parse_path(&format!("{sep}/a")),
+            vec![None, Some("/a".into())]
+        );
         assert_eq!(parse_path(""), vec![None]);
     }
 

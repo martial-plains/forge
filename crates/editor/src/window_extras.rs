@@ -405,8 +405,12 @@ mod tests {
         b.set_contents("one\ntwo\n");
         let id = app.editor.add_buffer(b);
         app.editor.show_buffer(id);
+        let test_name = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace("::", "-");
         let path = std::env::temp_dir().join(format!(
-            "forge-extras-init-{}-{}.rhai",
+            "forge-extras-init-{}-{test_name}-{}.rhai",
             std::process::id(),
             src.len()
         ));

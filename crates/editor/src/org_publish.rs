@@ -228,16 +228,14 @@ mod tests {
         std::fs::create_dir_all(d.join("src")).unwrap();
         std::fs::write(d.join("src/a.org"), "#+TITLE: A\n\nHi\n").unwrap();
         let init = d.join("init.rhai");
+        let config_dir = d.to_string_lossy().replace('\\', "/");
         std::fs::write(
             &init,
             format!(
-                "forge.opt[\"org_publish_projects\"] = [\"n :base-directory {0}/src :publishing-directory {0}/out\"];\n",
-                d.display()
+                "forge.opt[\"org_publish_projects\"] = [\"n :base-directory {config_dir}/src :publishing-directory {config_dir}/out\"];\n",
             ),
         )
         .unwrap();
-        // SAFETY: tests in this crate don't read the cache dir elsewhere.
-        unsafe { std::env::set_var("FORGE_CACHE_DIR", d.join("cache")) };
         let mut app = App::new(forge_core::Editor::default());
         let id = app.editor.add_buffer(Buffer::new("t.org"));
         app.editor.show_buffer(id);

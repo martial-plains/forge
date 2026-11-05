@@ -311,7 +311,9 @@ pub enum DiredAction {
 struct Env {
     /// Seconds east of UTC (from `date +%z`; UTC if that fails).
     tz: i64,
+    #[cfg(unix)]
     users: HashMap<u32, String>,
+    #[cfg(unix)]
     groups: HashMap<u32, String>,
 }
 
@@ -336,7 +338,7 @@ impl GitInfo {
         let Ok(rel) = path.strip_prefix(&self.root) else {
             return "--".into();
         };
-        let rel = rel.to_string_lossy();
+        let rel = rel.to_string_lossy().replace('\\', "/");
         // Anything inside an ignored directory is ignored too.
         let mut prefix = String::new();
         for part in rel.split('/') {
@@ -348,7 +350,7 @@ impl GitInfo {
                 return "-I".into();
             }
         }
-        let (staged, unstaged) = self.status.get(&*rel).copied().unwrap_or(('-', '-'));
+        let (staged, unstaged) = self.status.get(rel.as_str()).copied().unwrap_or(('-', '-'));
         format!("{staged}{unstaged}")
     }
 }

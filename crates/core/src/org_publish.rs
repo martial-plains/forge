@@ -138,9 +138,10 @@ impl Job {
     }
 
     fn excluded(&self, rel: &Path) -> bool {
+        let rel = rel.to_string_lossy().replace('\\', "/");
         get(&self.params, "exclude")
             .and_then(|r| Regex::new(r).ok())
-            .is_some_and(|re| re.is_match(&rel.to_string_lossy()))
+            .is_some_and(|re| re.is_match(&rel))
     }
 
     fn included(&self, rel: &Path) -> bool {
@@ -279,7 +280,7 @@ pub fn sitemap(job: &Job, files: &[PathBuf]) -> String {
         out.push_str(&format!(
             "{}- [[file:{}][{t}]]\n",
             "  ".repeat(depth),
-            rel.to_string_lossy()
+            rel.to_string_lossy().replace('\\', "/")
         ));
     }
     out
@@ -499,7 +500,7 @@ mod tests {
         let names: Vec<String> = js[0]
             .files()
             .iter()
-            .map(|p| p.display().to_string())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
             .collect();
         assert_eq!(names, ["index.org", "sub/page.org"]);
         assert_eq!(js[1].files(), vec![PathBuf::from("pic.png")]);

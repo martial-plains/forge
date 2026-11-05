@@ -2482,6 +2482,22 @@ pub(crate) fn expand_path(input: &str) -> PathBuf {
     {
         return PathBuf::from(home).join(input.trim_start_matches('~').trim_start_matches('/'));
     }
+    #[cfg(windows)]
+    {
+        let input = input
+            .strip_prefix("/\\\\?\\")
+            .or_else(|| {
+                let bytes = input.as_bytes();
+                (bytes.len() >= 3
+                    && bytes[0] == b'/'
+                    && bytes[1].is_ascii_alphabetic()
+                    && bytes[2] == b':')
+                    .then(|| &input[1..])
+            })
+            .unwrap_or(input);
+        return PathBuf::from(input.replace('/', "\\"));
+    }
+    #[cfg(not(windows))]
     PathBuf::from(input)
 }
 
@@ -3354,6 +3370,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn the_gui_starts_in_home_when_launched_from_root() {
         let old = std::env::current_dir().unwrap();
         std::env::set_current_dir("/").unwrap();
