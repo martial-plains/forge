@@ -18,8 +18,8 @@
   :END:
 
 Forge is an editor in a classic keyboard-driven tradition: a small core of buffers,
-windows and keymaps, configured with Rhai and extended by packages written
-in Lua and WebAssembly.
+windows and keymaps, configured with Rhai and extended by WebAssembly plugins,
+with SDKs for Rust, JavaScript/TypeScript, Python, C and Lua.
 Everything you can do at the keyboard is a named *command*, so commands can
 be bound to keys, run by name, documented, and remapped without touching the
 code that implements them.

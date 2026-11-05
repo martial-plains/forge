@@ -21,16 +21,6 @@ struct Opt {
 /// Every option the `forge` binary accepts, in the order the help lists them.
 const OPTIONS: &[Opt] = &[
     Opt {
-        flags: "\\-q, \\-\\-no-config",
-        arg: None,
-        desc: "don't run ~/.config/forge/init.rhai",
-    },
-    Opt {
-        flags: "\\-\\-chdir",
-        arg: Some("DIR"),
-        desc: "change to DIR before opening files",
-    },
-    Opt {
         flags: "\\-\\-file",
         arg: Some("FILE"),
         desc: "visit FILE (same as a positional file name)",
@@ -51,9 +41,80 @@ const OPTIONS: &[Opt] = &[
         desc: "go to LINE (and optional zero-based COLUMN) in the next file",
     },
     Opt {
+        flags: "\\-l, \\-\\-load",
+        arg: Some("FILE"),
+        desc: "run FILE as a Rhai script",
+    },
+    Opt {
+        flags: "\\-\\-eval, \\-\\-execute",
+        arg: Some("EXPR"),
+        desc: "evaluate the Rhai expression EXPR",
+    },
+    Opt {
+        flags: "\\-f, \\-\\-funcall",
+        arg: Some("CMD"),
+        desc: "run the command CMD",
+    },
+    Opt {
+        flags: "\\-\\-insert",
+        arg: Some("FILE"),
+        desc: "insert the contents of FILE at point",
+    },
+    Opt {
+        flags: "\\-L, \\-\\-directory",
+        arg: Some("DIR"),
+        desc: "load the plugins (.wasm files) in DIR",
+    },
+    Opt {
         flags: "\\-\\-plugin",
         arg: Some("FILE"),
         desc: "load a plugin (a .wasm component); may be repeated",
+    },
+    Opt {
+        flags: "\\-\\-kill",
+        arg: None,
+        desc: "exit after the actions",
+    },
+    Opt {
+        flags: "\\-q, \\-\\-no-init-file, \\-\\-no-config",
+        arg: None,
+        desc: "don't run init.rhai or read the saved session",
+    },
+    Opt {
+        flags: "\\-Q, \\-\\-quick",
+        arg: None,
+        desc: "same as \\-q",
+    },
+    Opt {
+        flags: "\\-\\-init-directory",
+        arg: Some("DIR"),
+        desc: "use DIR as the config directory (init.rhai, themes, plugins, grants)",
+    },
+    Opt {
+        flags: "\\-u, \\-\\-user",
+        arg: Some("USER"),
+        desc: "use the config directory of USER's home",
+    },
+    Opt {
+        flags: "\\-\\-chdir",
+        arg: Some("DIR"),
+        desc: "change to DIR before opening files",
+    },
+    Opt {
+        flags: "\\-\\-batch, \\-batch",
+        arg: None,
+        desc: "run the actions without a screen and exit; messages go to standard error, \
+               and the exit status is 1 on an error",
+    },
+    Opt {
+        flags: "\\-\\-script",
+        arg: Some("FILE"),
+        desc: "the same as \\-\\-batch \\-l FILE",
+    },
+    Opt {
+        flags: "\\-\\-daemon[=NAME], \\-\\-bg-daemon[=NAME], \\-\\-fg-daemon[=NAME]",
+        arg: None,
+        desc: "start as an edit server, in the background (the first two) or in this process",
     },
     Opt {
         flags: "\\-\\-check-plugin",
@@ -150,13 +211,30 @@ mod tests {
     fn roff_lists_every_option_the_cli_documents() {
         let roff = to_roff();
         for flag in [
+            "\\-\\-no-init-file",
             "\\-\\-no-config",
+            "\\-\\-quick",
+            "\\-\\-init-directory",
+            "\\-\\-user",
             "\\-\\-chdir",
             "\\-\\-file",
             "\\-\\-find-file",
             "\\-\\-visit",
             "+LINE",
+            "\\-\\-load",
+            "\\-\\-eval",
+            "\\-\\-execute",
+            "\\-\\-funcall",
+            "\\-\\-insert",
+            "\\-\\-directory",
             "\\-\\-plugin",
+            "\\-\\-kill",
+            "\\-\\-batch",
+            "\\-batch",
+            "\\-\\-script",
+            "\\-\\-daemon",
+            "\\-\\-bg-daemon",
+            "\\-\\-fg-daemon",
             "\\-\\-check-plugin",
             "\\-\\-headless",
             "\\-\\-package-entry",
