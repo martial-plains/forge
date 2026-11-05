@@ -62,12 +62,7 @@ fn compile_next_error_shell_commands_and_projects() {
     };
     answer(&mut app, command);
     finish_jobs(&mut app);
-    let expected = if cfg!(windows) {
-        "// top\nint x;"
-    } else {
-        "// top\nint x;"
-    };
-    assert!(text(&app).starts_with(expected), "{}", text(&app));
+    assert!(text(&app).starts_with("// top\nint x;"), "{}", text(&app));
     press(&mut app, "C-x C-s");
     let _ = std::fs::remove_file(dir.join("src/a.c~"));
 

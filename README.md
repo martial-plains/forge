@@ -245,16 +245,16 @@ files, `C`, `R` and `D` copy, rename and delete the marked files (or the one
 under point), `+` makes a directory and `g` reads the directory again.
 Clicking a name visits it too, as `RET` does, while a drag out of one is
 still a selection.
-`i` on a directory lists just that one inline as an eza tree, below its
-parent in its own section (like dired's `i`, but drawn with eza's `├── `
+`i` on a directory lists just that one inline as a tree, below its
+parent in its own section (like dired's `i`, but drawn with `├── `
 cells); `C-M-n`/`C-M-p` move between sections and `k` removes the section
 point is in. `T` draws everything as a tree instead.
 Deleting asks first, never overwrites, and only removes empty directories.
 
-The listing looks like `eza -l --header`: permissions, size, owner and date
-columns in eza's colors, sorted ignoring case and leading dots, and a Nerd
+The listing uses a detailed long format: permissions, size, owner and date
+columns in Dired's colors, sorted ignoring case and leading dots, and a Nerd
 Font icon before each name (`FORGE_DIRED_ICONS=0` turns them off). Names are
-colored by what they are the way eza colors them — by kind (directories bold
+colored by what they are — by kind (directories bold
 blue, executables bold green, links cyan), and otherwise by name and
 extension into its file types (images and videos purple, music cyan,
 cryptography and documents green, archives red, temporary files dimmed,
@@ -262,15 +262,15 @@ compiled files yellow, build files bold underlined yellow like `Makefile` and
 `Cargo.toml`, source files bold yellow). Sizes are shaded by magnitude, so
 the columns read green below a megabyte and then yellow, red and purple.
 Symlinks show `name -> target` with the target in its own color.
-The listing is eza's in its defaults too: dotfiles are hidden and the
+The listing has its own defaults too: dotfiles are hidden and the
 columns have no inode numbers.
 
 `s`, `a`, `G`, `T`, `I`, `c`, `r`, `h`, `F`, `/`, `B` and `l` switch
-the listing the way eza's flags do, and whichever of them are off the
+the listing the way those options do, and whichever of them are off the
 default are written into the buffer's first line, so reverting and
 reopening the directory keep the layout:
 
-| Key | Command                    | eza             |
+| Key | Command                    | Option          |
 |-----|----------------------------|-----------------|
 | `s` | `dired-toggle-sort`        | `--sort=name,date,size,extension` (cycles) |
 | `a` | `dired-toggle-hidden`      | `--all`         |
@@ -287,11 +287,11 @@ reopening the directory keep the layout:
 | `l` | `dired-tree-set-level`     | `--level`       |
 
 `T` draws everything as a tree, recursing into every subdirectory with
-eza's `├── ` cells (down to eight levels, `l` sets how many); `i` draws
+`├── ` cells (down to eight levels, `l` sets how many); `i` draws
 just the directory on that line that way, inline below its parent. While
 `T` is on there are no inline subdirectories to add, and those commands
 say so. `c` shades sizes and dates against each other across the listing, the way
-eza's `--color-scale` does: the size and date columns are read back out of the
+`--color-scale` does: the size and date columns are read back out of the
 text and each value's lightness is moved along an Oklab ramp, so the largest
 and newest stand out without the hue shifting.
 
@@ -300,7 +300,7 @@ a split. That isn't special-cased to Dired: each name is a region with keys of
 its own (`dired-entry`), so `{ region = "dired-entry" }` in init.lua rebinds
 what a click does there.
 
-Inside a git repository a `Git` column shows eza's two letters, staged then
+Inside a git repository a `Git` column shows two letters, staged then
 unstaged (`N` new, `M` modified, `D` deleted, `R` renamed, `T` type change,
 `U` conflicted, `I` ignored), and a directory shows the worst status inside
 it (`FORGE_DIRED_GIT=0` turns the column off). `forge .` or `forge DIR` starts in Dired.

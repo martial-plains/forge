@@ -104,7 +104,7 @@ pub(super) fn layout_for(b: &Buffer, header: usize) -> Option<Layout> {
     }
 }
 /// A listing's header line, like "  /home/me/src:" — or with "  [by date,
-/// all, tree]" after it for everything that isn't as eza has it.
+/// all, tree]" after it for everything that isn't at its default.
 pub(super) fn parse_header_line(line: &str) -> Option<(PathBuf, View)> {
     if !line.starts_with("  ") {
         return None;

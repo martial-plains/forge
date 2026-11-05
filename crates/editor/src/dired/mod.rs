@@ -3,7 +3,7 @@
 //! and visiting a directory with C-x C-f.
 //!
 //! A Dired buffer is plain text in `dired-mode` (derived from special-mode)
-//! laid out like `eza -l --header`, with a mark column in front:
+//! laid out as a detailed long listing, with a mark column in front:
 //!
 //! ```text
 //!   /home/me/project:
@@ -17,18 +17,18 @@
 //! own. How the listing is laid out goes there too: `s` cycles `--sort`,
 //! `i`/`T` switch `--tree`, and `a`, `G`, `I`, `c`, `r`, `h`, `F`, `/`,
 //! `B` (plus `l` for `--level`) each turn their part the other way round,
-//! and a listing with all of them as eza has them by default writes only
+//! and a listing with all of them at their defaults writes only
 //! the colon above. Anything that isn't the default is listed in brackets,
 //! so reverting and reopening keep the whole layout.
 //!
 //! Colors are decorations (`DiredFace`) computed from the text, so a mark
 //! edit just redecorates. That is also what lets the gradient work: the
 //! size and date columns are read back out of the listing and measured
-//! against each other, which is eza's `--color-scale`. Names start at the
+//! against each other, which is what `--color-scale` does. Names start at the
 //! "Name" column and may be preceded by a Nerd Font icon
 //! (`FORGE_DIRED_ICONS=0` turns them off) and followed by ` -> target` for
 //! symlinks, which has a color of its own. In a tree the names start after
-//! eza's `├── ` cells instead, and each one is the path through every
+//! `├── ` cells instead, and each one is the path through every
 //! directory above it.
 
 use crate::app::App;
@@ -58,16 +58,16 @@ const PERMS_W: usize = 11;
 const HIDDEN_DETAILS: &str = "  (details hidden)";
 const DATE_W: usize = "Date Modified".len();
 
-/// How deep a tree goes. eza needs `--level` for this; a listing that
+/// How deep a tree goes (`--level`); a listing that
 /// never came back out would swallow the buffer, so it stops here.
 const TREE_MAX_DEPTH: usize = 8;
 
-/// How a Dired buffer is ordered. `s` cycles through them (eza's
-/// `--sort`); like the rest of [`View`] the choice lives in the buffer's
+/// How a Dired buffer is ordered. `s` cycles through them (`--sort`);
+/// like the rest of [`View`] the choice lives in the buffer's
 /// first line, so reverting and reopening keep it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Sort {
-    /// Like eza: ignoring case and leading dots.
+    /// Ignoring case and leading dots.
     Name,
     /// Newest first.
     Date,
@@ -97,36 +97,36 @@ impl Sort {
     }
 }
 
-/// How a Dired buffer is laid out. The parts are eza's options and, like
-/// the sort order, live in the buffer's first line, so reverting and
-/// reopening keep them. The defaults are eza's: dotfiles hidden, sizes
+/// How a Dired buffer is laid out. The parts are the layout options and,
+/// like the sort order, live in the buffer's first line, so reverting and
+/// reopening keep them. The defaults are: dotfiles hidden, sizes
 /// shaded by magnitude.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct View {
     sort: Sort,
-    /// Show `.`-files (eza's `--all`).
+    /// Show `.`-files (`--all`).
     all: bool,
-    /// Directories before everything else (eza's `--group-directories-first`).
+    /// Directories before everything else (`--group-directories-first`).
     dirs_first: bool,
-    /// Recurse into subdirectories and draw them as a tree (eza's `--tree`).
+    /// Recurse into subdirectories and draw them as a tree (`--tree`).
     /// A tree replaces the inline subdirectories `i` inserts.
     tree: bool,
-    /// The inode column (eza's `--inode`).
+    /// The inode column (`--inode`).
     inode: bool,
-    /// Shade sizes and dates by magnitude (eza's `--color-scale`).
+    /// Shade sizes and dates by magnitude (`--color-scale`).
     scale: bool,
-    /// Reverse the sort order (eza's `--reverse`).
+    /// Reverse the sort order (`--reverse`).
     reverse: bool,
-    /// Hide git-ignored files (eza's `--git-ignore`).
+    /// Hide git-ignored files (`--git-ignore`).
     git_ignore: bool,
-    /// Only directories (eza's `-D`).
+    /// Only directories (`-D`).
     only_dirs: bool,
-    /// Only files (eza's `-f`).
+    /// Only files (`-f`).
     only_files: bool,
-    /// Nerd Font icons before names (eza's `--icons`; `FORGE_DIRED_ICONS=0`
+    /// Nerd Font icons before names (`--icons`; `FORGE_DIRED_ICONS=0`
     /// turns them off entirely).
     icons: bool,
-    /// How deep a tree goes (eza's `--level`).
+    /// How deep a tree goes (`--level`).
     level: usize,
     /// The columns between the type and the name (`dired-hide-details-mode`
     /// turns them off).
@@ -136,7 +136,7 @@ struct View {
     /// This listing shows no entries (`dired-hide-subdir`).
     hidden: bool,
     /// `ls -l` lines, as Dired shows them (permissions, links,
-    /// owner, group, bytes, date, name), instead of eza's columns.
+    /// owner, group, bytes, date, name), instead of detailed columns.
     ls: bool,
 }
 
@@ -165,11 +165,11 @@ impl Default for View {
 
 impl View {
     /// What a new Dired buffer starts as: `ls -al` lines shows
-    /// them, unless `forge.opt.dired_listing` is "eza".
+    /// them, unless `forge.opt.dired_listing` is "columns".
     fn initial(app: &App) -> View {
-        let eza = crate::org_flow::setting_string(app, "dired_listing")
-            .is_some_and(|s| s.eq_ignore_ascii_case("eza"));
-        if eza {
+        let columns = crate::org_flow::setting_string(app, "dired_listing")
+            .is_some_and(|s| s.eq_ignore_ascii_case("columns"));
+        if columns {
             return View::default();
         }
         View {
@@ -224,7 +224,7 @@ impl View {
     }
 
     /// What goes after the directory on the first line: just a colon when
-    /// everything is as eza has it by default, else a bracketed list of
+    /// everything is at its default, else a bracketed list of
     /// what was changed.
     fn suffix(self) -> String {
         let mut parts = Vec::new();
@@ -300,7 +300,7 @@ pub enum DiredAction {
     Copy(Vec<PathBuf>),
     Rename(Vec<PathBuf>),
     CreateDirectory(PathBuf),
-    /// Tree depth for eza's `--level` (1..=8).
+    /// Tree depth for `--level` (1..=8).
     TreeLevel,
     /// A prompt of the commands in `extra`.
     Extra(Extra),
@@ -317,13 +317,13 @@ struct Env {
     groups: HashMap<u32, String>,
 }
 
-/// The month names eza writes dates with.
+/// The month names used in dates.
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
 /// What `git status` says about the files under a repository, so each
-/// listed file can get eza's two-letter Git column: staged, then unstaged.
+/// listed file can get the two-letter Git column: staged, then unstaged.
 struct GitInfo {
     root: PathBuf,
     /// Path from the root (and every directory above it) to its letters.
@@ -383,7 +383,7 @@ struct Row {
     name: String,
 }
 
-/// One cell of a tree, as eza draws them.
+/// One cell of a tree.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Branch {
     /// Rightmost, but the directory goes on.
@@ -669,7 +669,7 @@ impl Listing<'_> {
     }
 }
 
-/// The smallest and largest of a column over one listing: what eza's
+/// The smallest and largest of a column over one listing: what
 /// `--color-scale` measures a value against.
 #[derive(Clone, Copy)]
 struct Range {
@@ -708,7 +708,7 @@ impl Range {
     }
 }
 
-/// `EZA_MIN_LUMINANCE`, eza's default: no shade is darker than this.
+/// The minimum luminance: no shade is darker than this.
 const MIN_LUMINANCE: f64 = 0.5;
 
 /// The keymap a listing entry's name brings with it, so clicking one runs
@@ -1039,7 +1039,7 @@ pub fn answered(app: &mut App, action: DiredAction, input: &str) {
                 let mut view = current_view(app.buf_ref());
                 view.level = n;
                 // A level only means something in a tree, so asking for one
-                // turns the tree on, like eza's --tree --level.
+                // turns the tree on, like --tree --level.
                 view.tree = true;
                 let dir = match current_dir(app) {
                     Some(d) => d,

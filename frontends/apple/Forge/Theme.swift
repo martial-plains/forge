@@ -65,7 +65,7 @@ enum Theme {
         }
     }
 
-    /// A Dired face (the name without its "dired-" prefix), as eza colours it.
+    /// A Dired face (the name without its "dired-" prefix).
     static func dired(_ part: String) -> FaceStyle {
         func fg(_ c: NSColor, bold: Bool = false) -> FaceStyle { FaceStyle(foreground: c, bold: bold) }
         switch part {
@@ -199,7 +199,7 @@ enum Theme {
         case "org-modern-horizontal-rule": return FaceStyle(foreground: .tertiaryLabelColor)
         case "org-modern-target":
             return FaceStyle(foreground: .systemTeal, background: NSColor.gray.withAlphaComponent(0.25))
-        // Dired follows eza's colours: bold blue directories, bold green
+        // Dired follows its default colours: bold blue directories, bold green
         // executables, cyan links, yellow/red/green r/w/x, sizes shaded by
         // magnitude, blue dates, purple inodes, underlined column headers.
         // `term` cells carry their own colours: term:<fg>:<bg>:<attrs>,

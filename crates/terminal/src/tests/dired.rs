@@ -3,10 +3,10 @@
 
 use super::*;
 
-/// An app whose Dired listings use the eza layout these tests were written
-/// for (the default is `ls -l`).
-fn eza_app() -> App {
-    app_with_init("forge.opt[\"dired_listing\"] = \"eza\";\n").0
+/// An app whose Dired listings use the detailed column layout these tests
+/// were written for (the default is `ls -l`).
+fn columns_app() -> App {
+    app_with_init("forge.opt[\"dired_listing\"] = \"columns\";\n").0
 }
 
 fn is_section_header(line: &str) -> bool {
@@ -14,7 +14,7 @@ fn is_section_header(line: &str) -> bool {
         return false;
     };
     path.starts_with(['/', '\\'])
-        || (path.as_bytes().len() >= 3
+        || (path.len() >= 3
             && path.as_bytes()[0].is_ascii_alphabetic()
             && path.as_bytes()[1] == b':'
             && matches!(path.as_bytes()[2], b'/' | b'\\'))
@@ -27,7 +27,7 @@ fn dired_marks_deletes_and_is_read_only() {
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     std::fs::write(dir.join("a.txt"), "a").unwrap();
     std::fs::write(dir.join("b.txt"), "b").unwrap();
-    let mut app = eza_app();
+    let mut app = columns_app();
     crate::dired::open(&mut app, &dir);
     assert_eq!(app.buf_ref().major_mode(), "dired-mode");
     // Line 0 is the directory, line 1 the column headers, then the files.
@@ -66,7 +66,7 @@ fn find_file_on_a_directory_opens_dired() {
     let dir = std::env::temp_dir().join(format!("forge-dired-ff-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let mut app = eza_app();
+    let mut app = columns_app();
     press(&mut app, "C-x C-f");
     type_path(&mut app, &dir);
     press(&mut app, "RET");
@@ -83,7 +83,7 @@ fn vertical_find_file_can_open_a_directory_in_dired() {
     let typed = format!("{}/", dir.display());
 
     // C-x C-f on "dir/": the first row is "./", and RET opens Dired there.
-    let mut app = eza_app();
+    let mut app = columns_app();
     app.editor.completion.vertical = Some((5, "test".into()));
     press(&mut app, "C-x C-f");
     app.minibuffer.as_mut().unwrap().input = typed.clone();
@@ -97,7 +97,7 @@ fn vertical_find_file_can_open_a_directory_in_dired() {
     let _ = std::fs::remove_dir_all(&only_sub);
     std::fs::create_dir_all(only_sub.join("sub")).unwrap();
     let typed = format!("{}/", only_sub.display());
-    let mut app = eza_app();
+    let mut app = columns_app();
     app.editor.completion.vertical = Some((5, "test".into()));
     press(&mut app, "M-x dired RET");
     app.minibuffer.as_mut().unwrap().input = typed;
@@ -123,7 +123,7 @@ fn find_file_lists_short_names_with_metadata() {
     std::fs::write(&current, "current").unwrap();
 
     // Visiting a file there, C-x C-f starts with its directory, traditional.
-    let mut app = eza_app();
+    let mut app = columns_app();
     let (id, _) = app.editor.open_file(&current).unwrap();
     app.switch_to(id);
     app.editor.completion.vertical = Some((10, "test".into()));
@@ -178,7 +178,7 @@ fn dired_s_toggles_the_sort_order() {
         f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
             .unwrap();
     }
-    let mut app = eza_app();
+    let mut app = columns_app();
     crate::dired::open(&mut app, &dir);
     assert!(app.buf_ref().line(2).ends_with("a.txt"));
     press(&mut app, "s");
@@ -202,12 +202,12 @@ fn dired_lists_subdirectories_inline() {
     std::fs::create_dir_all(dir.join("sub")).unwrap();
     std::fs::write(dir.join("file.txt"), "f").unwrap();
     std::fs::write(dir.join("sub").join("x.txt"), "x").unwrap();
-    let mut app = eza_app();
+    let mut app = columns_app();
     crate::dired::open(&mut app, &dir);
     // Lines: 0 dir, 1 columns, 2 file.txt, 3 sub.
     press(&mut app, "n");
     assert!(app.buf_ref().line(3).ends_with("sub"));
-    // `i` inserts sub's listing below as an eza tree, in its own section,
+    // `i` inserts sub's listing below as a tree, in its own section,
     // and goes there (`T` draws everything; `i` draws just this one).
     press(&mut app, "i");
     assert_eq!(app.buf_ref().line(4), "");
@@ -272,9 +272,9 @@ fn dired_a_g_i_and_c_switch_the_listing_over() {
     std::fs::create_dir_all(dir.join("zsub")).unwrap();
     std::fs::write(dir.join("a.txt"), "a").unwrap();
     std::fs::write(dir.join(".dotfile"), "d").unwrap();
-    let mut app = eza_app();
+    let mut app = columns_app();
     crate::dired::open(&mut app, &dir);
-    // eza's defaults: no dotfiles, no inode column, no gradient.
+    // The defaults: no dotfiles, no inode column, no gradient.
     assert!(!text(&app).contains(".dotfile"));
     assert!(app.buf_ref().line(1).starts_with("  Permissions"));
     assert!(!app.buf_ref().line(1).contains("Inode"));
@@ -336,7 +336,7 @@ fn dired_t_draws_a_tree_and_says_so_about_the_inline_listings() {
     std::fs::write(dir.join("top.txt"), "t").unwrap();
     std::fs::write(dir.join("sub/inner.txt"), "i").unwrap();
     std::fs::write(dir.join("sub/deep/bottom.txt"), "b").unwrap();
-    let mut app = eza_app();
+    let mut app = columns_app();
     crate::dired::open(&mut app, &dir);
     assert!(!text(&app).contains('└'));
     press(&mut app, "C-c C-t");
@@ -352,7 +352,7 @@ fn dired_t_draws_a_tree_and_says_so_about_the_inline_listings() {
         })
         .filter(|s: &String| !s.trim().is_empty())
         .collect();
-    // With the Nerd Font icons taken out, the drawing is eza's. "sub" sorts
+    // With the Nerd Font icons taken out, the drawing is the standard one. "sub" sorts
     // before "top.txt", so neither directory is last and their children hang
     // off a line rather than a blank.
     let clean: Vec<String> = body
@@ -420,7 +420,7 @@ fn clicking_a_name_in_a_dired_listing_opens_it() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("clicked.txt"), "hello").unwrap();
     std::fs::write(dir.join("other.txt"), "hello").unwrap();
-    let mut app = eza_app();
+    let mut app = columns_app();
     crate::dired::open(&mut app, &dir);
     let ev = |kind, col, row| MouseEvent {
         kind,
@@ -496,7 +496,7 @@ fn a_clicks_binding_is_a_key_a_user_can_take_over() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.txt"), "hello").unwrap();
-    let mut app = eza_app();
+    let mut app = columns_app();
     crate::dired::open(&mut app, &dir);
     let ev = |kind, col, row| MouseEvent {
         kind,

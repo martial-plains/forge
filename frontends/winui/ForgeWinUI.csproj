@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- Forge for Windows: WinUI 3 draws the editor's grid with Win2D.
-       Build forge.dll first:  cargo build --release -p forge-capi --features gpu
-       (scripts/build-windows.ps1 does both). -->
+       Build forge.dll first with cargo (a release build of forge-capi with
+       the gpu feature); scripts/build-windows.ps1 does both. -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>

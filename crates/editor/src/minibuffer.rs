@@ -2308,7 +2308,7 @@ pub(crate) fn initial_find_file_input(app: &App) -> String {
     s
 }
 
-/// eza-style sizes for file annotations: `96`, `103k`.
+/// Detailed sizes for file annotations: `96`, `103k`.
 fn human_size(n: u64) -> String {
     if n < 1000 {
         return n.to_string();

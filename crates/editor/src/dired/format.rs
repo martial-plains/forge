@@ -37,7 +37,7 @@ pub(super) fn describe(view: &View, what: &str) -> String {
         ),
     }
 }
-/// eza's sizes: decimal units, one decimal below 10 ("1.4k", "88k").
+/// Detailed sizes: decimal units, one decimal below 10 ("1.4k", "88k").
 pub(super) fn human_size(n: u64) -> String {
     if n < 1000 {
         return n.to_string();
@@ -72,7 +72,7 @@ pub(super) fn unix_secs(t: SystemTime) -> i64 {
         Err(e) => -(e.duration().as_secs() as i64),
     }
 }
-/// eza's date: "4 Oct 21:46" for the last six months, else "4 Oct  2024".
+/// Detailed date: "4 Oct 21:46" for the last six months, else "4 Oct  2024".
 pub(super) fn format_date(mtime: SystemTime, now: SystemTime, tz: i64) -> String {
     let utc = unix_secs(mtime);
     let local = utc + tz;
@@ -222,7 +222,7 @@ pub(super) fn owner(_: &fs::Metadata) -> String {
 pub(super) fn is_icon(c: char) -> bool {
     ('\u{e000}'..='\u{f8ff}').contains(&c)
 }
-/// A Nerd Font icon, picked like eza's: by kind, then name, then extension.
+/// A Nerd Font icon, picked by kind, then name, then extension.
 pub(super) fn icon(name: &str, kind: char, exec: bool) -> char {
     match (kind, name) {
         ('d', ".git") => return '\u{e5fb}',
@@ -266,16 +266,16 @@ pub(super) fn icon(name: &str, kind: char, exec: bool) -> char {
 }
 
 // ----------------------------------------------------------- file types
-/// What a file is by its name, like eza's `FileType`. eza decides this from
-/// the name alone, since that is all that can be known without reading the
-/// file, and shades the name accordingly.
+/// What a file is by its name. This is decided from the name alone, since
+/// that is all that can be known without reading the file, and shades the
+/// name accordingly.
 ///
-/// eza also counts a file as compiled when it sits beside the source it was
+/// A file also counts as compiled when it sits beside the source it was
 /// built from — `styles.css` next to `styles.less`. That never happens in
 /// practice, because `.css` and `.js` are in the extension table already and
 /// this is checked first, so there is nothing to carry here for it.
 pub(super) fn file_type(name: &str) -> Option<DiredFace> {
-    // A case-insensitive readme, first of all, as eza has it.
+    // A case-insensitive readme, first of all.
     if name.to_lowercase().starts_with("readme") {
         return Some(DiredFace::Build);
     }
@@ -393,7 +393,7 @@ pub(super) fn inode(m: &fs::Metadata) -> String {
 pub(super) fn inode(_: &fs::Metadata) -> String {
     String::new()
 }
-/// Sort like eza: ignoring case and leading dots.
+/// Sort ignoring case and leading dots.
 pub(super) fn sort_key(name: &str) -> (String, String) {
     (
         name.trim_start_matches('.').to_lowercase(),
@@ -402,7 +402,7 @@ pub(super) fn sort_key(name: &str) -> (String, String) {
 }
 
 // ---------------------------------------------------------------- a tree
-/// Put a directory's lines in the buffer's order, eza's way: by name, date,
+/// Put a directory's lines in the buffer's order: by name, date,
 /// size or extension, reversed when asked, with the directories pulled to
 /// one end when asked (they stay first even when reversed).
 pub(super) fn sort_lines(lines: &mut [Line], view: View) {
@@ -419,7 +419,7 @@ pub(super) fn sort_lines(lines: &mut [Line], view: View) {
         lines.sort_by_key(|l| !l.row.perms.starts_with('d'));
     }
 }
-/// eza's `--sort=extension`: the lowercase extension, or empty when there
+/// `--sort=extension`: the lowercase extension, or empty when there
 /// is none.
 pub(super) fn extension_key(name: &str) -> String {
     name.rsplit_once('.')
@@ -455,7 +455,7 @@ pub(super) fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 pub(super) fn seconds_in(cell: &str, now: i64, tz: i64) -> Option<i64> {
     let mut it = cell.split_whitespace();
     let first = it.next()?;
-    // eza writes "4 Oct 21:46"; ls writes "Oct  4 21:46".
+    // The column listing writes "4 Oct 21:46"; ls writes "Oct  4 21:46".
     let (day, shown): (i64, &str) = match first.parse::<i64>() {
         Ok(day) => (day, it.next()?),
         Err(_) => (it.next()?.parse().ok()?, first),

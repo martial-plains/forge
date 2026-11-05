@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::*;
 
-/// eza's `adjust_luminance`. Only the lightness moves, on an exponential
+/// Luminance adjustment. Only the lightness moves, on an exponential
 /// ramp, so a shade is a paler or stronger version of the colour it starts
 /// from rather than a different colour. Oklab is what makes the ramp hold
 /// up across hues: scaling RGB channels would send yellow through orange.
@@ -14,8 +14,8 @@ pub(super) fn shade(base: u32, x: f64) -> u32 {
     let (r, g, b) = from_oklab(lightness, a, b);
     pack(r, g, b)
 }
-/// A packed 0xRRGGBB colour as eza's terminal colours are: the eight ANSI
-/// colours and bright green are full-strength, as eza writes them, rather
+/// A packed 0xRRGGBB colour as terminal colours are: the eight ANSI
+/// colours and bright green are full-strength, rather
 /// than whatever a terminal happens to have made of them.
 pub(super) fn base_rgb(face: DiredFace) -> u32 {
     match face {
@@ -83,7 +83,7 @@ pub(super) fn from_oklab(lightness: f64, a: f64, b: f64) -> (f64, f64, f64) {
     );
     (from_linear(r), from_linear(g), from_linear(b))
 }
-/// The face a size is drawn in, by magnitude, as eza's `Size` styles are.
+/// The face a size is drawn in, by magnitude.
 pub(super) fn size_face(bytes: u64) -> DiredFace {
     match bytes {
         _ if bytes >= 1_000_000_000_000 => DiredFace::SizeHuge,

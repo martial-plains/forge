@@ -61,7 +61,7 @@ pub(super) fn reload(
 pub(super) fn dired_command(app: &mut App, cmd: &str) {
     if cmd == "dired-summary" {
         app.msg(
-            "d flag  x delete  m mark  u unmark  RET visit  o other window  ^ up  C copy  R rename  + mkdir  s sort  g refresh  * % mark sets  ! shell  S H M Z links/mode/zip  C-x C-q edit names  C-c C- eza layout  (C-h m: all keys)",
+            "d flag  x delete  m mark  u unmark  RET visit  o other window  ^ up  C copy  R rename  + mkdir  s sort  g refresh  * % mark sets  ! shell  S H M Z links/mode/zip  C-x C-q edit names  C-c C- layout  (C-h m: all keys)",
         );
         return;
     }
@@ -119,7 +119,7 @@ pub(super) fn dired_command(app: &mut App, cmd: &str) {
         "dired-unmark" => set_mark(app, line, ' '),
         "dired-flag-file-deletion" => set_mark(app, line, 'D'),
         "dired-unmark-all-marks" => revert(app, false),
-        // The layout toggles, like eza's own flags: s cycles --sort,
+        // The layout toggles, like the options they mirror: s cycles --sort,
         // i/T --tree, and the rest switch their part on and off.
         "dired-toggle-sort"
         | "dired-toggle-hidden"
@@ -209,7 +209,7 @@ pub(super) fn dired_command(app: &mut App, cmd: &str) {
         _ => app.error(format!("Unknown command: {cmd}")),
     }
 }
-/// `i`: list the directory on this line inline as an eza tree, below its
+/// `i`: list the directory on this line inline as a tree, below its
 /// parent in its own section (or jump to its listing if it already has
 /// one). `T` draws everything as a tree; `i` draws just this one.
 pub(super) fn insert_subdir(app: &mut App, here: Option<Entry>) {

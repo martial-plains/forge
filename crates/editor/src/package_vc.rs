@@ -60,6 +60,7 @@ impl VcJob {
 enum Stage {
     Fetch,
     Checkout,
+    #[cfg_attr(not(windows), allow(dead_code))]
     Submodules,
     Commit,
     /// An upgrade of a declared plugin: list what changed before building.

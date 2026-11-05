@@ -345,8 +345,14 @@ fn quail_completions(app: &App) -> String {
 
 /// An app running `init` as its init.rhai.
 fn app_with_init(init: &str) -> (App, std::path::PathBuf) {
-    let dir =
-        std::env::temp_dir().join(format!("forge-hooks-{}-{}", std::process::id(), init.len()));
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "forge-hooks-{}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        init.len()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("init.rhai");
     std::fs::write(&path, init).unwrap();
