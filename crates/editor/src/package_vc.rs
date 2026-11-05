@@ -44,6 +44,13 @@ pub struct VcJob {
     /// The commits an upgrade brings (git log since the locked commit),
     /// shown before building it (see `forge-lock.toml`).
     review: Option<String>,
+    backup: Option<crate::packages::PackageBackup>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum VcQuestion {
+    Build,
+    ReviewUpgrade,
 }
 
 impl VcJob {
@@ -77,7 +84,8 @@ pub struct Vc {
     /// A job waiting for "build it? y or n".
     confirming: Option<VcJob>,
     /// That question, until the minibuffer is free to ask it.
-    ask: Option<String>,
+    ask: Option<(String, VcQuestion)>,
+    reviewing: Option<VcJob>,
 }
 
 impl Vc {
@@ -88,6 +96,33 @@ impl Vc {
     pub fn has_question(&self) -> bool {
         self.ask.is_some()
     }
+}
+
+/// What the package manager should show for an in-flight Git install.
+pub fn status(app: &App, name: &str) -> Option<&'static str> {
+    let vc = &app.packages.vc;
+    if let Some((job, stage, _, _)) = &vc.current
+        && job.name == name
+    {
+        return Some(match stage {
+            Stage::Fetch => "fetching Git",
+            Stage::Checkout => "checking out",
+            Stage::Submodules => "getting submodules",
+            Stage::Commit => "reading commit",
+            Stage::Review => "reviewing changes",
+            Stage::Build => "building",
+        });
+    }
+    if vc.confirming.as_ref().is_some_and(|job| job.name == name) {
+        return Some("awaiting build approval");
+    }
+    if vc.reviewing.as_ref().is_some_and(|job| job.name == name) {
+        return Some("awaiting upgrade approval");
+    }
+    vc.queue
+        .iter()
+        .any(|job| job.name == name)
+        .then_some("queued")
 }
 
 fn db(app: &App) -> Option<InstalledDb> {
@@ -104,6 +139,10 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             app.prompt("Install from repository (URL[@REV]): ", Purpose::PackageVc)
         }
         "package-vc-upgrade" => {
+            if app.raw_arg() {
+                show_dry_run(app);
+                return true;
+            }
             let names: Vec<String> = db(app)
                 .map(|d| d.from_vc().into_iter().map(|v| v.0).collect())
                 .unwrap_or_default();
@@ -120,13 +159,31 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             }
         }
         "package-vc-upgrade-all" => {
-            if upgrade_all(app) == 0 {
+            if app.raw_arg() {
+                show_dry_run(app);
+            } else if upgrade_all(app) == 0 {
                 app.msg("No packages installed from version control");
             }
         }
         _ => return false,
     }
     true
+}
+
+fn show_dry_run(app: &mut App) {
+    match dry_run_lines(app) {
+        Ok(lines) => {
+            let mut text = String::from("Git package upgrade plan (no files changed)\n\n");
+            if lines.is_empty() {
+                text.push_str("No Git packages need upgrading.\n");
+            } else {
+                text.push_str(&lines.join("\n"));
+                text.push('\n');
+            }
+            app.show_special_buffer("*Package Upgrade Plan*", "special-mode", &text);
+        }
+        Err(error) => app.error(format!("Couldn't plan Git package upgrades: {error}")),
+    }
 }
 
 /// Answer to package-vc-install: `URL[@REV]`.
@@ -167,12 +224,23 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
         commit: String::new(),
         plan: None,
         review: None,
+        backup: if upgrade {
+            match crate::packages::capture_package_backup(app, name) {
+                Ok(backup) => Some(backup),
+                Err(error) => return app.error(error),
+            }
+        } else {
+            None
+        },
     };
     app.packages.vc.queue.push_back(job);
     next(app);
 }
 
 pub fn upgrade(app: &mut App, name: &str) {
+    if crate::declare::declared(app, name).is_some_and(|use_spec| use_spec.frozen) {
+        return app.msg(format!("{name} is pinned or frozen; not upgrading"));
+    }
     let Some(entry) = db(app).and_then(|d| d.from_vc().into_iter().find(|v| v.0 == name)) else {
         return app.error(format!("{name} wasn't installed from version control"));
     };
@@ -182,10 +250,122 @@ pub fn upgrade(app: &mut App, name: &str) {
 /// Upgrade every package from version control; returns how many.
 pub fn upgrade_all(app: &mut App) -> usize {
     let all = db(app).map(|d| d.from_vc()).unwrap_or_default();
+    let frozen: std::collections::BTreeSet<String> = app
+        .rhai
+        .as_ref()
+        .map(|r| {
+            r.plugin_uses()
+                .into_iter()
+                .filter(|u| u.frozen)
+                .map(|u| u.name)
+                .collect()
+        })
+        .unwrap_or_default();
+    let all: Vec<_> = all
+        .into_iter()
+        .filter(|(name, _, _)| !frozen.contains(name))
+        .collect();
     for (name, repo, rev) in &all {
         install(app, name, repo, rev.clone(), true);
     }
     all.len()
+}
+
+pub fn dry_run_lines(app: &App) -> Result<Vec<String>, String> {
+    let installed = db(app).map(|d| d.from_vc()).unwrap_or_default();
+    let frozen: std::collections::BTreeSet<String> = app
+        .rhai
+        .as_ref()
+        .map(|r| {
+            r.plugin_uses()
+                .into_iter()
+                .filter(|u| u.frozen)
+                .map(|u| u.name)
+                .collect()
+        })
+        .unwrap_or_default();
+    let records = db(app).unwrap_or_default();
+    let mut lines = Vec::new();
+    for (name, repository, rev) in installed {
+        if frozen.contains(&name) {
+            continue;
+        }
+        let package = records
+            .packages
+            .get(&name)
+            .ok_or_else(|| format!("{name}: installed record disappeared"))?;
+        let old = package.commit.as_deref().unwrap_or("(unknown commit)");
+        let new = remote_commit(&repository, rev.as_deref())?;
+        if new == old {
+            continue;
+        }
+        let build = package.build.as_deref().unwrap_or("(no build command)");
+        lines.push(format!(
+            "{name}: {} -> {}; build: {build}",
+            short(old),
+            short(&new)
+        ));
+    }
+    Ok(lines)
+}
+
+fn remote_commit(repository: &str, rev: Option<&str>) -> Result<String, String> {
+    let args = match rev {
+        Some(rev) => vec![
+            "ls-remote".to_string(),
+            "--heads".into(),
+            "--tags".into(),
+            repository.to_string(),
+            format!("refs/heads/{rev}"),
+            format!("refs/tags/{rev}"),
+            format!("refs/tags/{rev}^{{}}"),
+        ],
+        None => vec![
+            "ls-remote".to_string(),
+            "--symref".into(),
+            repository.to_string(),
+            "HEAD".into(),
+        ],
+    };
+    let current = std::env::current_dir().map_err(|e| e.to_string())?;
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let result = forge_core::process::run_sync(
+        Program::Argv("git", &args),
+        &current,
+        None,
+        std::time::Duration::from_secs(15),
+        &stop,
+    )
+    .map_err(|e| format!("{repository}: couldn't query remote revision: {e}"))?;
+    if result.code != Some(0) {
+        let error = String::from_utf8_lossy(&result.stderr).trim().to_string();
+        return Err(format!("{repository}: git ls-remote failed: {error}"));
+    }
+    let mut hashes = std::collections::BTreeMap::new();
+    for line in String::from_utf8_lossy(&result.stdout).lines() {
+        let mut fields = line.split_whitespace();
+        let Some(first) = fields.next() else { continue };
+        let Some(reference) = fields.next() else {
+            continue;
+        };
+        if reference == "HEAD" || reference.starts_with("refs/") {
+            hashes.insert(reference.to_string(), first.to_string());
+        }
+    }
+    let commit = if let Some(rev) = rev {
+        hashes
+            .get(&format!("refs/heads/{rev}"))
+            .or_else(|| hashes.get(&format!("refs/tags/{rev}^{{}}")))
+            .or_else(|| hashes.get(&format!("refs/tags/{rev}")))
+    } else {
+        hashes.get("HEAD")
+    };
+    commit.cloned().ok_or_else(|| {
+        format!(
+            "{repository}: remote revision {} was not found",
+            rev.unwrap_or("HEAD")
+        )
+    })
 }
 
 /// Start the next queued job, if nothing is running.
@@ -198,6 +378,8 @@ fn next(app: &mut App) {
         return;
     };
     clear_output(app);
+    app.show_special_buffer(BUFFER, "compilation-mode", "");
+    append(app, &format!("{} from {}\n\n", job.name, job.repo));
     let verb = if job.upgrade { "Updating" } else { "Getting" };
     app.msg(format!("{verb} {} from {}...", job.name, job.repo));
     let fresh = !job.src.join(".git").exists();
@@ -371,12 +553,71 @@ fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
             checkout_complete(app, job);
         }
         Stage::Review => {
-            job.review = Some(out);
-            let installed = db(app).and_then(|d| d.packages.get(&job.name).cloned());
-            choose_build(app, job, installed);
+            request_upgrade_review(app, job, out);
         }
         Stage::Build => install_output(app, job),
     }
+}
+
+fn request_upgrade_review(app: &mut App, mut job: VcJob, output: String) {
+    let breaking: Vec<_> = output
+        .lines()
+        .filter(|line| line.to_ascii_uppercase().contains("BREAKING"))
+        .collect();
+    let mut review = String::new();
+    if !breaking.is_empty() {
+        review.push_str("WARNING: breaking-change marker found in commit subjects.\n");
+    }
+    if tag_was_moved(&job) {
+        review.push_str(&format!(
+            "WARNING: tag {} now points to a different commit.\n",
+            job.rev.as_deref().unwrap_or_default()
+        ));
+    }
+    review.push_str(&output);
+    append(
+        app,
+        &format!(
+            "\nChanges in this upgrade ({}):\n{}",
+            short(&job.commit),
+            review
+        ),
+    );
+    if let Some(id) = app.editor.find_buffer(BUFFER) {
+        crate::compile::display_buffer(app, id);
+    }
+    job.review = Some(review);
+    app.packages.vc.reviewing = Some(job);
+    app.packages.vc.ask = Some((
+        "Apply this Git package upgrade after reviewing the changelog? (y or n) ".into(),
+        VcQuestion::ReviewUpgrade,
+    ));
+    ask(app);
+}
+
+fn tag_was_moved(job: &VcJob) -> bool {
+    let Some(rev) = job.rev.as_deref() else {
+        return false;
+    };
+    let tag = rev.strip_prefix("refs/tags/").unwrap_or(rev);
+    let reference = format!("refs/tags/{tag}");
+    let branch = format!("refs/remotes/origin/{rev}");
+    if std::process::Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", &branch])
+        .current_dir(&job.src)
+        .status()
+        .is_ok_and(|status| status.success())
+    {
+        return false;
+    }
+    let Ok(result) = std::process::Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", &reference])
+        .current_dir(&job.src)
+        .status()
+    else {
+        return false;
+    };
+    result.success()
 }
 
 fn checkout_complete(app: &mut App, mut job: VcJob) {
@@ -427,7 +668,11 @@ fn checkout_complete(app: &mut App, mut job: VcJob) {
     // locked one before building (a changed permission set asks
     // again when it loads).
     if job.upgrade
-        && let Some(old) = locked_commit(&job.name).filter(|o| *o != job.commit)
+        && let Some(old) = installed
+            .as_ref()
+            .and_then(|record| record.commit.clone())
+            .or_else(|| locked_commit(&job.name))
+            .filter(|old| *old != job.commit)
     {
         let args = vec![
             "log".to_string(),
@@ -472,12 +717,16 @@ fn choose_build(app: &mut App, job: VcJob, installed: Option<Installed>) {
                     &format!("\nChanges in this upgrade ({}):\n{log}", short(&job.commit)),
                 );
             }
+            append(
+                app,
+                "\nBuild requires approval; answer y or n at the minibuffer prompt.\n",
+            );
             let prompt = format!(
                 "Build {} from {} with `{c}`? It runs code from the repository. (y or n) ",
                 job.name, job.repo
             );
             app.packages.vc.confirming = Some(job);
-            app.packages.vc.ask = Some(prompt);
+            app.packages.vc.ask = Some((prompt, VcQuestion::Build));
             ask(app);
         }
     }
@@ -486,9 +735,13 @@ fn choose_build(app: &mut App, job: VcJob, installed: Option<Installed>) {
 /// Ask "build it?" once no other question is open.
 fn ask(app: &mut App) {
     if app.minibuffer.is_none()
-        && let Some(prompt) = app.packages.vc.ask.take()
+        && let Some((prompt, question)) = app.packages.vc.ask.take()
     {
-        app.prompt(prompt, Purpose::Confirm(ConfirmAction::BuildPackage));
+        let action = match question {
+            VcQuestion::Build => ConfirmAction::BuildPackage,
+            VcQuestion::ReviewUpgrade => ConfirmAction::GitPackageUpgrade,
+        };
+        app.prompt(prompt, Purpose::Confirm(action));
     }
 }
 
@@ -504,9 +757,25 @@ pub fn confirmed(app: &mut App) {
     }
 }
 
+pub fn reviewed_upgrade(app: &mut App) {
+    if let Some(job) = app.packages.vc.reviewing.take() {
+        let installed = db(app).and_then(|d| d.packages.get(&job.name).cloned());
+        choose_build(app, job, installed);
+    }
+}
+
+pub fn upgrade_review_declined(app: &mut App) {
+    if let Some(job) = app.packages.vc.reviewing.take() {
+        append(app, &format!("\nNot upgrading {} (declined).\n", job.name));
+        app.msg(format!("Not upgrading {}", job.name));
+        next(app);
+    }
+}
+
 /// The user said n (or C-g).
 pub fn declined(app: &mut App) {
     if let Some(job) = app.packages.vc.confirming.take() {
+        append(app, &format!("\nNot building {} (declined).\n", job.name));
         app.msg(format!("Not building {}", job.name));
         next(app);
     }
@@ -544,7 +813,7 @@ fn build(app: &mut App, job: VcJob) {
     step(app, job, Stage::Build, r);
 }
 
-fn install_output(app: &mut App, job: VcJob) {
+fn install_output(app: &mut App, mut job: VcJob) {
     app.packages.vc.current = None;
     let plan = job.plan.clone().expect("planned");
     let bytes = match std::fs::read(&plan.output) {
@@ -557,6 +826,11 @@ fn install_output(app: &mut App, job: VcJob) {
             );
         }
     };
+    if job.upgrade
+        && let Err(error) = crate::packages::smoke_test_component(app, &job.name, &bytes)
+    {
+        return fail(app, &job, &error);
+    }
     let manifest = forge_core::permissions::Manifest::for_component(&plan.output, &bytes)
         .ok()
         .flatten();
@@ -574,6 +848,17 @@ fn install_output(app: &mut App, job: VcJob) {
     };
     match db.install_built(&job.name, &version, &source, &bytes) {
         Ok(path) => {
+            if let Err(error) = crate::declare::record_checked(app, &job.name, &path) {
+                let rollback = rollback_job(app, &mut job);
+                return fail(
+                    app,
+                    &job,
+                    &match rollback {
+                        Ok(()) => error,
+                        Err(rollback) => format!("{error}; rollback failed: {rollback}"),
+                    },
+                );
+            }
             append(
                 app,
                 &format!(
@@ -588,10 +873,25 @@ fn install_output(app: &mut App, job: VcJob) {
                 short(&job.commit),
                 job.repo
             ));
-            crate::declare::record(app, &job.name, &path);
             crate::plugins::load(app, &path);
         }
-        Err(e) => return fail(app, &job, &e),
+        Err(e) => {
+            let rollback = rollback_job(app, &mut job);
+            return fail(
+                app,
+                &job,
+                &match rollback {
+                    Ok(()) => e,
+                    Err(rollback) => format!("{e}; rollback failed: {rollback}"),
+                },
+            );
+        }
+    }
+
+    fn rollback_job(app: &App, job: &mut VcJob) -> Result<(), String> {
+        job.backup.take().map_or(Ok(()), |backup| {
+            crate::packages::restore_package_backup(app, &job.name, backup)
+        })
     }
     next(app);
 }

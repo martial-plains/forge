@@ -60,3 +60,20 @@ The manual uses the same notation as the rest of Forge:
 
 When a paragraph describes a command you have not met, follow its link or
 run ~C-h f~ on it before reading on.
+
+** Updating plugins safely
+   :PROPERTIES:
+   :ID:       package-updates
+   :CUSTOM_ID: package-updates
+   :SUMMARY:  Review and roll back package updates
+   :END:
+
+Use =M-x package-manager= to browse declared, installed, and indexed
+plugins. =M-x package-upgrade NAME= reviews and updates one package;
+=M-x package-upgrade-all= reviews available index release notes and Git
+commit subjects before applying updates. =C-u M-x package-upgrade-all= or
+=M-x package-upgrade-all-dry-run= shows the proposed versions, commits, and
+build commands without modifying plugin or data files. A failed build,
+smoke test, or lock update restores the previous installed artifact. Mark a
+declaration with =freeze: true= to exclude it from automatic upgrades; =pin=
+also freezes it and selects the pinned Git revision.

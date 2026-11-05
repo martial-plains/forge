@@ -143,6 +143,41 @@ fn main() -> anyhow::Result<()> {
         };
         unsafe { std::env::set_var("FORGE_CONFIG_DIR", format!("{home}/{user}/.config/forge")) };
     }
+    if let Some((before, after)) = &opts.package_snapshot_diff {
+        let config = forge_core::config::config_dir()
+            .ok_or_else(|| anyhow::anyhow!("no config directory for package snapshots"))?;
+        let changes = forge_core::LockFile::diff_snapshots(&config, before, after)?;
+        if opts.json {
+            println!("{}", serde_json::to_string_pretty(&changes)?);
+        } else if changes.is_empty() {
+            println!("No changes between package snapshots {before} and {after}");
+        } else {
+            println!("Package snapshot diff: {before} -> {after}");
+            for change in changes {
+                let revision = |entry: Option<&forge_core::LockEntry>| {
+                    entry
+                        .and_then(|e| {
+                            e.commit
+                                .as_deref()
+                                .or(e.artifact_sha256.as_deref())
+                                .or(Some(e.sha256.as_str()))
+                        })
+                        .unwrap_or("-")
+                        .chars()
+                        .take(12)
+                        .collect::<String>()
+                };
+                println!(
+                    "{} {}: {} -> {}",
+                    change.change,
+                    change.name,
+                    revision(change.before.as_ref()),
+                    revision(change.after.as_ref())
+                );
+            }
+        }
+        return Ok(());
+    }
     if let Some(Daemon::Background(name)) = &opts.daemon {
         return spawn_daemon(&args, name);
     }

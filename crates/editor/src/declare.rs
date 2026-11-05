@@ -16,7 +16,7 @@
 use crate::app::App;
 use crate::plugins;
 use forge_core::declare::order;
-use forge_core::{LockEntry, LockFile, Manifest, PluginUse};
+use forge_core::{LockCapabilities, LockEntry, LockFile, Manifest, PluginUse};
 use std::path::Path;
 
 /// The plugin names init.rhai declared, in load order (`after` first).
@@ -81,15 +81,34 @@ pub fn resolve(app: &mut App) {
 
 /// After installing a declared plugin, record it in the lock file so the
 /// next `init.rhai` + `forge-lock.toml` brings the same bytes.
-pub fn record(app: &App, name: &str, path: &Path) {
-    let Some(u) = uses(app).into_iter().find(|u| u.name == name) else {
-        return;
-    };
-    if let Some(entry) = lock_entry(&u, path) {
-        let mut lock = load_lock();
-        lock.set(name, entry);
-        let _ = lock.save();
+pub fn record(app: &mut App, name: &str, path: &Path) {
+    if let Err(error) = record_checked(app, name, path) {
+        app.error(format!("{name}: couldn't update lockfile: {error}"));
     }
+}
+
+pub fn record_checked(app: &App, name: &str, path: &Path) -> Result<(), String> {
+    let Some(u) = uses(app).into_iter().find(|u| u.name == name) else {
+        return Ok(());
+    };
+    let entry = lock_entry(app, &u, path)
+        .map_err(|error| format!("{name}: couldn't record lock entry: {error}"))?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("{name}: couldn't read component for lockfile: {error}"))?;
+    let mut lock = load_lock();
+    lock.set(name, entry);
+    if let Some(dir) = lock.dir() {
+        LockFile::save_artifact(
+            dir,
+            lock.get(name)
+                .and_then(|e| e.artifact_sha256.as_deref())
+                .unwrap_or_default(),
+            &bytes,
+        )
+        .map_err(|error| format!("{name}: couldn't save the locked artifact: {error}"))?;
+    }
+    lock.save()
+        .map_err(|error| format!("{name}: couldn't update forge-lock.toml: {error}"))
 }
 
 /// Load one declared plugin: lazily when it named `on.commands` (and
@@ -111,13 +130,27 @@ fn load_declared(app: &mut App, u: &PluginUse, path: &Path) {
 
 /// The lock entry for an installed declaration: its source (from the
 /// installed record, or the declaration), and its manifest.
-pub fn lock_entry(u: &PluginUse, path: &Path) -> Option<LockEntry> {
-    let bytes = std::fs::read(path).ok()?;
+pub fn lock_entry(app: &App, u: &PluginUse, path: &Path) -> Result<LockEntry, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let artifact_sha256 = forge_core::package::sha256_hex(&bytes);
+    let previous = load_lock().get(&u.name).cloned();
     let mut e = LockEntry {
         git: u.git.clone(),
         rev: u.rev.clone(),
         url: u.url.clone(),
-        sha256: forge_core::package::sha256_hex(&bytes),
+        sha256: artifact_sha256.clone(),
+        artifact_sha256: Some(artifact_sha256),
+        spec_hash: Some(static_spec_hash(u)?),
+        tier: Some(
+            if u.git.is_some() {
+                "source"
+            } else {
+                "prebuilt"
+            }
+            .into(),
+        ),
+        recipe_hash: Some(recipe_hash(u)?),
+        capabilities: LockCapabilities::default(),
         ..Default::default()
     };
     if let Some(dir) = forge_core::config::plugin_dir()
@@ -136,16 +169,111 @@ pub fn lock_entry(u: &PluginUse, path: &Path) -> Option<LockEntry> {
         }
         if !i.sha256.is_empty() {
             e.sha256 = i.sha256;
+            e.artifact_sha256 = Some(e.sha256.clone());
         }
+        if e.git.is_some() {
+            e.tier = Some("source".into());
+        }
+        e.build = i.build.clone();
+        if let Some(build) = i.build {
+            e.recipe_hash = Some(recipe_hash_for(
+                &build,
+                &u.features,
+                &u.name,
+                u.git_dir.as_deref(),
+            )?);
+        }
+        e.version = Some(i.version);
     }
     if let Some(m) = Manifest::for_component(path, &bytes).ok().flatten() {
+        e.version = m.version.clone().or(e.version);
         e.commands = m.command_names();
         e.modes = m.modes;
         e.extensions = m.extensions;
         e.settings = m.settings;
-        e.permissions = m.permissions;
+        e.permissions = m.permissions.clone();
+        e.capabilities.permissions = m.permissions;
     }
-    Some(e)
+    e.capabilities.imports = if let Some(imports) = previous.as_ref().and_then(|old| {
+        (old.artifact_sha256
+            .as_deref()
+            .unwrap_or(old.sha256.as_str())
+            == e.sha256
+            && old.spec_hash.is_some())
+        .then(|| old.capabilities.imports.clone())
+    }) {
+        imports
+    } else if let Some(host) = app.plugin_host.as_ref() {
+        host.inspect_file(path)
+            .map_err(|e| format!("inspecting component imports: {e:#}"))?
+            .inspection
+            .imports
+    } else {
+        forge_core::PluginRuntime::new()
+            .map_err(|e| format!("starting component inspection: {e:#}"))?
+            .inspect(&u.name, &bytes)
+            .map_err(|e| format!("inspecting component imports: {e:#}"))?
+            .imports
+    };
+    Ok(e)
+}
+
+fn static_spec_hash(u: &PluginUse) -> Result<String, String> {
+    let static_spec = serde_json::json!({
+        "name": u.name,
+        "git": u.git,
+        "rev": u.rev,
+        "index": u.index,
+        "url": u.url,
+        "sha256": u.sha256,
+        "version": u.version,
+        "frozen": u.frozen,
+        "config": u.config,
+        "grants": u.grants,
+        "hooks": u.hooks,
+        "commands": u.on_commands,
+        "modes": u.on_modes,
+        "extensions": u.on_extensions,
+        "after": u.after,
+        "load_path": u.load_path,
+        "no_require": u.no_require,
+        "git_dir": u.git_dir,
+        "build": u.build,
+        "features": u.features,
+    });
+    serde_json::to_vec(&static_spec)
+        .map(|bytes| forge_core::package::sha256_hex(&bytes))
+        .map_err(|e| format!("serializing static declaration: {e}"))
+}
+
+fn recipe_hash(u: &PluginUse) -> Result<String, String> {
+    let command = u.build.as_deref().unwrap_or("");
+    recipe_hash_for(command, &u.features, &u.name, u.git_dir.as_deref())
+}
+
+fn recipe_hash_for(
+    command: &str,
+    features: &[String],
+    name: &str,
+    source_subdir: Option<&str>,
+) -> Result<String, String> {
+    let toolchain = forge_core::package::vc_dir(name)
+        .map(|root| source_subdir.map_or(root.clone(), |subdir| root.join(subdir)))
+        .and_then(|root| {
+            ["rust-toolchain.toml", "rust-toolchain"]
+                .iter()
+                .find_map(|file| std::fs::read_to_string(root.join(file)).ok())
+        })
+        .unwrap_or_default();
+    let recipe = serde_json::json!({
+        "command": command,
+        "toolchain": toolchain,
+        "features": features,
+        "target": "wasm32-wasip2",
+    });
+    serde_json::to_vec(&recipe)
+        .map(|bytes| forge_core::package::sha256_hex(&bytes))
+        .map_err(|e| format!("serializing build recipe: {e}"))
 }
 
 /// Start installing a declared plugin that isn't installed yet.

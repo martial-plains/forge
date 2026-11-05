@@ -23,6 +23,10 @@ pub struct PluginUse {
     pub rev: Option<String>,
     /// An index package name to resolve from `forge.opt.package_index`.
     pub index: Option<String>,
+    /// Semver requirement used when resolving an index package.
+    pub version: Option<String>,
+    /// Explicit `pin` or `freeze: true` prevents automatic upgrades.
+    pub frozen: bool,
     /// A direct url plus its sha256.
     pub url: Option<String>,
     pub sha256: Option<String>,

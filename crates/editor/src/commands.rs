@@ -951,33 +951,93 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     forge_docs::CommandDoc::new("package-install", "Install a plugin from the package index (checked against its sha256),").body("then load it."),
     forge_docs::CommandDoc::line("package-list-packages", "Same as list-packages."),
     forge_docs::CommandDoc::line(
+        "package-manager",
+        "Browse declared, installed, and indexed plugins interactively.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-clear-filter",
+        "In the package manager: clear the package-name/source filter.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-filter",
+        "In the package manager: filter packages by name, source, or description.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-next",
+        "In the package manager: select the next package.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-prev",
+        "In the package manager: select the previous package.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-menu-build-log",
+        "Show the output from the latest Git package install or build.",
+    ),
+    forge_docs::CommandDoc::line(
         "package-menu-delete",
-        "In *Packages*: delete the package on this line.",
+        "In a package list: delete the package on this line.",
     ),
     forge_docs::CommandDoc::line(
         "package-menu-install",
-        "In *Packages*: install or upgrade the package on this line.",
+        "In a package list: install the package on this line.",
     ),
     forge_docs::CommandDoc::line(
         "package-menu-refresh",
-        "In *Packages*: read the indexes again and redraw.",
+        "In a package list: read the indexes again and redraw.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-menu-upgrade",
+        "In a package list: upgrade the package on this line.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-menu-view",
+        "In a package list: show the package's source and declaration.",
     ),
     forge_docs::CommandDoc::line(
         "package-refresh-contents",
         "Read the package indexes again.",
     ),
     forge_docs::CommandDoc::line(
+        "package-restore",
+        "Restore declared plugin artifacts to the hashes in forge-lock.toml.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-diff",
+        "Compare two saved package snapshots.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-list",
+        "List saved package snapshots.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-restore",
+        "Restore plugin artifacts and lock entries from a saved snapshot.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-save",
+        "Save the current package lock and its verified artifacts under a name.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-upgrade",
+        "Upgrade one installed package after reviewing its planned changes.",
+    ),
+    forge_docs::CommandDoc::line(
         "package-upgrade-all",
-        "Install newer versions of every package installed from an index.",
+        "Upgrade indexed packages (C-u: show plan).",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-upgrade-all-dry-run",
+        "Preview package versions and recorded build commands for upgrades.",
     ),
     forge_docs::CommandDoc::new("package-vc-install", "Install a plugin from a Git repository (URL, or URL@tag/branch/commit): clone,").body("build (asking first) and load it."),
     forge_docs::CommandDoc::line(
         "package-vc-upgrade",
-        "Fetch a package installed from version control and rebuild it if it changed.",
+        "Rebuild a changed Git package (C-u: show plan).",
     ),
     forge_docs::CommandDoc::line(
         "package-vc-upgrade-all",
-        "Fetch and rebuild every package installed from version control.",
+        "Rebuild changed Git packages (C-u: show plan).",
     ),
     forge_docs::CommandDoc::line(
         "point-to-register",

@@ -177,6 +177,9 @@ pub enum Purpose {
     AsyncShellCommand,
     /// package-vc-install: `URL[@REV]`.
     PackageVc,
+    /// package-manager's substring filter.
+    PackageFilter,
+    PackageSnapshot(PackageSnapshotAction),
     /// Dired: where to copy or move to, or the directory to make.
     Dired(crate::dired::DiredAction),
     /// A version-control question (a revision, a branch, a directory).
@@ -276,6 +279,8 @@ impl Purpose {
             Purpose::ShellCommand { .. } => "shell-command",
             Purpose::AsyncShellCommand => "async-shell-command",
             Purpose::PackageVc => "package-vc",
+            Purpose::PackageFilter => "package-manager-filter",
+            Purpose::PackageSnapshot(_) => "package-snapshot",
             Purpose::Dired(_) => "dired",
             Purpose::VcAsk { .. } => "vc-ask",
             Purpose::CharAsk(_) => "char-ask",
@@ -295,6 +300,14 @@ impl Purpose {
 /// replaces the default prompt map for as long as the list is up, so it
 /// carries the default's keys as well as the list's.
 pub const COMPLETION_LIST: &str = "completion-list";
+
+#[derive(Debug, Clone)]
+pub enum PackageSnapshotAction {
+    Save,
+    DiffFrom,
+    DiffTo(String),
+    Restore,
+}
 
 /// What a [`Purpose::Choose`] answer is for.
 pub enum Choice {
@@ -321,6 +334,7 @@ pub enum Choice {
     KillEntry,
     InstallPackage,
     DeletePackage,
+    UpgradePackage,
     UpgradeVcPackage,
     GrammarInstall,
     /// describe-plugin: nothing extra (the answer names the plugin).
@@ -438,6 +452,10 @@ pub enum ConfirmAction {
     Recover(BufferId),
     /// Build a package from version control (package_vc.rs).
     BuildPackage,
+    /// Apply a reviewed package-index update.
+    IndexPackageUpgrade,
+    /// Apply a reviewed Git package update.
+    GitPackageUpgrade,
     /// Dired: delete these files.
     DiredDelete(Vec<PathBuf>),
     /// A grep about to run: save this buffer, then the ones in `rest`.
@@ -1077,6 +1095,12 @@ fn cancel(app: &mut App, mut mb: Minibuffer) {
         }
         Purpose::ProjectGrant { root } => crate::project::answered(app, &root, None),
         Purpose::KeyChoice(choice) => crate::files::cancel(app, &choice),
+        Purpose::Confirm(ConfirmAction::IndexPackageUpgrade) => {
+            crate::packages::package_upgrade_confirmed(app, false);
+        }
+        Purpose::Confirm(ConfirmAction::GitPackageUpgrade) => {
+            crate::package_vc::upgrade_review_declined(app);
+        }
         _ => {}
     }
 }
@@ -1085,6 +1109,10 @@ fn confirm(app: &mut App, action: ConfirmAction) {
     match action {
         ConfirmAction::Quit => app.quit = true,
         ConfirmAction::BuildPackage => crate::package_vc::confirmed(app),
+        ConfirmAction::IndexPackageUpgrade => {
+            crate::packages::package_upgrade_confirmed(app, true);
+        }
+        ConfirmAction::GitPackageUpgrade => crate::package_vc::reviewed_upgrade(app),
         ConfirmAction::DiredDelete(paths) => crate::dired::delete_confirmed(app, paths),
         ConfirmAction::KillBuffer(id) => app.kill_buffer(id),
         ConfirmAction::DeleteBackups(paths) => {
@@ -1626,6 +1654,11 @@ fn submit(app: &mut App, mut mb: Minibuffer) {
                     crate::package_vc::upgrade(app, &input);
                 }
             }
+            Choice::UpgradePackage => {
+                if candidates.contains(&input) {
+                    crate::packages::upgrade_named(app, &input);
+                }
+            }
             Choice::GrammarInstall => {
                 if candidates.contains(&input) {
                     crate::grammar_install::install_named(app, &input);
@@ -1709,6 +1742,10 @@ fn submit(app: &mut App, mut mb: Minibuffer) {
             if !input.trim().is_empty() {
                 crate::package_vc::install_spec(app, &input);
             }
+        }
+        Purpose::PackageFilter => crate::packages::filter_manager(app, &input),
+        Purpose::PackageSnapshot(action) => {
+            crate::packages::answer_snapshot_prompt(app, action, &input)
         }
         Purpose::ImageAsk(ask) => crate::image_mode::answer(app, ask, &input),
         Purpose::SetFrameName { default } => {
@@ -1984,9 +2021,10 @@ fn source(
                 Choice::BookmarkJump | Choice::BookmarkDelete => "bookmark",
                 Choice::DescribeSymbol { .. } => "symbol",
                 Choice::KillEntry => "kill",
-                Choice::InstallPackage | Choice::DeletePackage | Choice::UpgradeVcPackage => {
-                    "package"
-                }
+                Choice::InstallPackage
+                | Choice::DeletePackage
+                | Choice::UpgradePackage
+                | Choice::UpgradeVcPackage => "package",
                 Choice::GrammarInstall => "grammar",
                 Choice::DescribePlugin => "plugin",
                 Choice::SelectFrame => "frame",
@@ -2975,6 +3013,12 @@ pub fn cmd_no(app: &mut App) {
             if crate::package_vc::confirming(app) {
                 crate::package_vc::declined(app);
             }
+        }
+        Purpose::Confirm(ConfirmAction::IndexPackageUpgrade) => {
+            crate::packages::package_upgrade_confirmed(app, false);
+        }
+        Purpose::Confirm(ConfirmAction::GitPackageUpgrade) => {
+            crate::package_vc::upgrade_review_declined(app);
         }
         Purpose::Confirm(ConfirmAction::Vc(c)) => crate::vc::declined(app, c),
         Purpose::Confirm(ConfirmAction::GrepSave { buffer, rest }) => {

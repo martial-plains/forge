@@ -1711,6 +1711,7 @@ dependencies = [
  "reqwest",
  "rhai",
  "ropey",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

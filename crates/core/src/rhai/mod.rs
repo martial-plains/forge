@@ -1338,8 +1338,9 @@ fn name_or_names(v: &Dynamic, what: &str) -> RhaiResult<Vec<String>> {
 /// `use_package(name, spec)`: record a declared plugin.
 fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
     use crate::declare::PluginUse;
-    const KEYS: [&str; 10] = [
+    const KEYS: [&str; 12] = [
         "git", "rev", "index", "url", "sha256", "config", "grant", "hook", "on", "after",
+        "version", "freeze",
     ];
     for k in spec.keys() {
         if !KEYS.contains(&k.as_str()) {
@@ -1354,6 +1355,8 @@ fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
         git: map_string(spec, "git")?,
         rev: map_string(spec, "rev")?,
         index: map_string(spec, "index")?,
+        version: map_string(spec, "version")?,
+        frozen: map_bool(spec, "freeze")?.unwrap_or(false),
         url: map_string(spec, "url")?,
         sha256: map_string(spec, "sha256")?,
         ..Default::default()

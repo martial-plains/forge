@@ -88,7 +88,7 @@ pub use keymap::{ActiveKeymaps, Keymap, Keymaps, Lookup, Origin, Scope};
 pub use kill_ring::KillRing;
 pub use kmacro::Kmacro;
 pub use links::{LinkSpan, LinkTarget};
-pub use lockfile::{LockEntry, LockFile};
+pub use lockfile::{LockCapabilities, LockEntry, LockFile, Snapshot, SnapshotChange};
 pub use messages::MessageLogMax;
 pub use modes::{ModeDef, ModeKind, ModeRegistry};
 pub use permissions::{GrantStore, Grants, Manifest, Setting, SettingKind};

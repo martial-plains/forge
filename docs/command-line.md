@@ -26,6 +26,10 @@ forgeclient -s work -e '1 + 2'                        # evaluate Rhai there, pri
 | `-q`, `-Q`, `--no-init-file` | no init.rhai, no saved session |
 | `--init-directory DIR`, `-u USER` | another config directory |
 | `--chdir DIR` | change directory first |
+| `--package-snapshot-diff BEFORE AFTER [--json]` | compare saved package snapshots without starting the editor |
+
+`--json` emits the snapshot diff as JSON and is only accepted with
+`--package-snapshot-diff`.
 
 One difference: visited files open before the other actions, whatever their
 place on the command line.

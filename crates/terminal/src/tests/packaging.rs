@@ -237,10 +237,42 @@ fn packages_from_version_control() {
             app.on_idle();
         }
     };
+    fn tree_snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        fn visit(
+            root: &std::path::Path,
+            path: &std::path::Path,
+            files: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+        ) {
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    visit(root, &path, files);
+                } else if entry.file_type().is_ok_and(|kind| kind.is_file())
+                    && let Ok(bytes) = std::fs::read(&path)
+                    && let Ok(relative) = path.strip_prefix(root)
+                {
+                    files.push((relative.to_path_buf(), bytes));
+                }
+            }
+        }
+        let mut files = Vec::new();
+        visit(root, root, &mut files);
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        files
+    }
 
     // A prebuilt component: nothing to run, no question.
     press(&mut app, "M-x package-vc-install RET");
     answer(&mut app, &format!("{}@v1", repo.display()));
+    assert_eq!(app.buf_ref().name(), crate::package_vc::BUFFER);
+    assert!(
+        buffer_text(&app, crate::package_vc::BUFFER).contains("$ git clone"),
+        "{}",
+        buffer_text(&app, crate::package_vc::BUFFER)
+    );
     wait(&mut app, &|a| {
         a.message
             .as_deref()
@@ -258,6 +290,63 @@ fn packages_from_version_control() {
     assert!(dir.join("data with spaces/vc/demo/.git").exists());
     let db = forge_core::package::InstalledDb::load(&dir.join("plugins"));
     assert_eq!(db.packages["demo"].rev.as_deref(), Some("v1"));
+
+    let init = dir.join("init.rhai");
+    std::fs::write(
+        &init,
+        r#"use_package("declared-demo", #{
+            git: "https://example.test/declared-demo.git",
+            commands: ["demo-command"]
+        });"#,
+    )
+    .unwrap();
+    app.init_path = Some(init);
+    app.load_init_file();
+    press(&mut app, "M-x package-manager RET");
+    assert!(
+        text(&app).contains("demo")
+            && text(&app).contains("loaded")
+            && text(&app).contains("declared-demo")
+            && text(&app).contains("not installed"),
+        "{}",
+        text(&app)
+    );
+    assert!(
+        text(&app).contains("declared-demo >"),
+        "first plugin should be selected:\n{}",
+        text(&app)
+    );
+    press(&mut app, "j");
+    assert!(
+        text(&app)
+            .lines()
+            .any(|line| line.starts_with("demo ") && line.contains(" >  loaded")),
+        "j should select the next plugin:\n{}",
+        text(&app)
+    );
+    press(&mut app, "k");
+    press(&mut app, "f");
+    answer(&mut app, "declared-");
+    assert!(
+        text(&app).contains("Filter: declared-")
+            && !text(&app).lines().any(|line| line.starts_with("demo ")),
+        "filter should limit the browser:\n{}",
+        text(&app)
+    );
+    press(&mut app, "F");
+    assert!(text(&app).contains("demo"), "{}", text(&app));
+    press(&mut app, "v");
+    assert!(
+        text(&app).contains("declared-demo.git")
+            && text(&app).contains("demo-command")
+            && text(&app).contains("load: lazy"),
+        "{}",
+        text(&app)
+    );
+    press(&mut app, "M-x package-manager RET");
+    press(&mut app, "b");
+    assert_eq!(app.buf_ref().name(), crate::package_vc::BUFFER);
+    assert!(text(&app).contains("Installed demo"), "{}", text(&app));
 
     // A build command is asked about first.
     std::fs::rename(&wasm, repo.join("demo.bin")).unwrap();
@@ -277,6 +366,21 @@ fn packages_from_version_control() {
     press(&mut app, "M-x package-vc-upgrade RET demo RET");
     wait(&mut app, &|a| a.minibuffer.is_some());
     assert!(
+        app.minibuffer
+            .as_ref()
+            .unwrap()
+            .prompt
+            .contains("changelog"),
+        "{:?}",
+        app.message
+    );
+    press(&mut app, "y");
+    wait(&mut app, &|a| {
+        a.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains(&format!("with `{build}")))
+    });
+    assert!(
         app.minibuffer.is_some(),
         "message: {:?}\n{}",
         app.message,
@@ -290,6 +394,11 @@ fn packages_from_version_control() {
             .contains(&format!("with `{build}")),
         "{:?}",
         app.message
+    );
+    assert!(
+        buffer_text(&app, crate::package_vc::BUFFER).contains("Build requires approval"),
+        "{}",
+        buffer_text(&app, crate::package_vc::BUFFER)
     );
     press(&mut app, "y");
     let plugins = dir.join("plugins");
@@ -327,7 +436,26 @@ fn packages_from_version_control() {
     .unwrap();
     git(&["commit", "-q", "-am", "new build"]);
     git(&["tag", "-f", "v1"]);
+    let plugins_before = tree_snapshot(&dir.join("plugins"));
+    let data_before = tree_snapshot(&dir.join("data with spaces"));
+    press(&mut app, "C-u M-x package-vc-upgrade-all RET");
+    let plan = buffer_text(&app, "*Package Upgrade Plan*");
+    assert!(plan.contains("demo:") && plan.contains("build:"), "{plan}");
+    assert_eq!(tree_snapshot(&dir.join("plugins")), plugins_before);
+    assert_eq!(tree_snapshot(&dir.join("data with spaces")), data_before);
+
     press(&mut app, "M-x package-vc-upgrade-all RET");
+    wait(&mut app, &|a| a.minibuffer.is_some());
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .unwrap()
+            .prompt
+            .contains("changelog"),
+        "{:?}",
+        app.message
+    );
+    press(&mut app, "y");
     wait(&mut app, &|a| a.minibuffer.is_some());
     press(&mut app, "n");
     assert_eq!(app.message.as_deref(), Some("Not building demo"));

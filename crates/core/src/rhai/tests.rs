@@ -1096,6 +1096,7 @@ fn use_package_conditions_code_and_modes() {
           magic: #{ "^%FANCY": "text-mode" },
           custom_face: #{ "comment": #{ italic: true } },
         });
+        use_package("bounded", #{ index: "theme", version: "^1.2", freeze: true });
         "#,
     ));
     let u = rhai
@@ -1104,6 +1105,7 @@ fn use_package_conditions_code_and_modes() {
         .find(|u| u.name == "fancy")
         .unwrap();
     assert_eq!(u.rev.as_deref(), Some("v1"));
+    assert!(u.frozen);
     assert_eq!(u.load_path, ["~/dev/e"]);
     assert!(u.no_require);
     assert_eq!(u.on_commands, ["fancy-go"]);
@@ -1135,6 +1137,15 @@ fn use_package_conditions_code_and_modes() {
     assert_eq!(b.build.as_deref(), Some("cargo build -p b"));
     assert_eq!(b.git_dir.as_deref(), Some("crates/b"));
     assert_eq!(b.features, ["fast"]);
+    let bounded = rhai
+        .plugin_uses()
+        .into_iter()
+        .find(|u| u.name == "bounded")
+        .unwrap();
+    assert_eq!(bounded.version.as_deref(), Some("^1.2"));
+    assert!(bounded.frozen);
+    let out = load(&rhai, &mut ed, r#"use_package("bad", #{ freeze: "yes" });"#);
+    assert!(out.errors[0].contains("freeze"), "{:?}", out.errors);
     let out = load(
         &rhai,
         &mut ed,

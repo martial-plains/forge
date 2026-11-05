@@ -1175,6 +1175,8 @@ const USE_PACKAGE_KEYS: &[&str] = &[
     "grant",
     // Carried over from use-package.
     "pin",
+    "freeze",
+    "version",
     "load_path",
     "no_require",
     "magic",
@@ -1187,7 +1189,7 @@ const USE_PACKAGE_KEYS: &[&str] = &[
 ];
 
 const USE_PACKAGE_DECLARATION_KEYS: &[&str] = &[
-    "git", "rev", "index", "url", "sha256", "grant", "hook", "on", "after",
+    "git", "rev", "index", "url", "sha256", "grant", "hook", "on", "after", "version", "freeze",
 ];
 
 /// Is a `when`/`if`/`unless` value true? A function is called.
@@ -1350,6 +1352,7 @@ fn use_package_spec(
     // spellings: autoload is commands, diminish is delight, bind*
     // is bind (Forge has no override map), pin is the git tag/branch/commit.
     let mut spec = spec.clone();
+    let pinned = spec.contains_key("pin");
     for (from, to) in [
         ("autoload", "commands"),
         ("diminish", "delight"),
@@ -1483,6 +1486,13 @@ fn use_package_spec(
         if let Some(value) = spec.get(*key) {
             declaration.insert((*key).into(), value.clone());
         }
+    }
+    let frozen = match spec.get("freeze") {
+        Some(value) => as_bool(value, "freeze")?,
+        None => false,
+    };
+    if pinned || frozen {
+        declaration.insert("freeze".into(), Dynamic::from(true));
     }
     // vc: a url, or #{ url, rev, make, lisp_dir, features } as :vc.
     let (mut git_dir, mut build, mut features) = (None, None, Vec::new());

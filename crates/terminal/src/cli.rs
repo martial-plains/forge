@@ -53,6 +53,8 @@ Forge's own:
   --package-entry FILE.wasm [--url URL]
                     print a package index entry for a plugin (see
                     docs/plugin-api.md, \"Sharing plugins\")
+  --package-snapshot-diff BEFORE AFTER [--json]
+                    compare two saved package snapshots
   -h, --help        show this help
   -V, --version     show the version
 
@@ -89,6 +91,8 @@ pub struct CliOptions {
     pub daemon: Option<Daemon>,
     pub init_directory: Option<std::path::PathBuf>,
     pub user: Option<String>,
+    pub package_snapshot_diff: Option<(String, String)>,
+    pub json: bool,
 }
 
 /// The part before `=` of `--opt=value`, so both spellings work.
@@ -141,6 +145,12 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
             "--eval" | "--execute" => opts.actions.push(Action::Eval(value("an expression")?)),
             "-f" | "--funcall" => opts.actions.push(Action::Funcall(value("a command")?)),
             "--insert" => opts.actions.push(Action::Insert(value("a file")?)),
+            "--package-snapshot-diff" => {
+                let before = value("the first snapshot name")?;
+                let after = value("the second snapshot name")?;
+                opts.package_snapshot_diff = Some((before, after));
+            }
+            "--json" => opts.json = true,
             "--kill" => opts.kill = true,
             "--batch" => opts.batch = true,
             "--script" => {
@@ -181,6 +191,9 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
     }
     if next_position.is_some() {
         anyhow::bail!("a +LINE[:COLUMN] location must be followed by a file\n{USAGE}");
+    }
+    if opts.json && opts.package_snapshot_diff.is_none() {
+        anyhow::bail!("--json is only used with --package-snapshot-diff\n{USAGE}");
     }
     Ok(opts)
 }
@@ -292,6 +305,17 @@ mod tests {
             p(&["--fg-daemon"]).unwrap().daemon,
             Some(Daemon::Foreground("server".into()))
         );
+    }
+
+    #[test]
+    fn package_snapshot_diff_cli_accepts_json_only_with_snapshots() {
+        let options = p(&["--package-snapshot-diff", "before", "after", "--json"]).unwrap();
+        assert_eq!(
+            options.package_snapshot_diff,
+            Some(("before".into(), "after".into()))
+        );
+        assert!(options.json);
+        assert!(p(&["--json"]).is_err());
     }
 
     #[test]

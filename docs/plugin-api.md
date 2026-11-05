@@ -222,7 +222,7 @@ editor. So a request returns at once and its answer arrives later:
 
 A `response` is `{ status: u16, headers: list<tuple<string, string>>, body:
 list<u8> }`, and `headers` is a list of `(name, value)` pairs. A 4xx or 5xx
-status comes back as an `Err` (like `curl --fail`), as do connection
+status comes back as an `Err`, as do connection
 failures and a request the server doesn't answer in time. Forge sends its
 own `User-Agent` unless you pass one.
 
@@ -708,6 +708,37 @@ not a crash, so it can carry on without the feature. Granted directories
 appear under their real paths. Stdout and stderr always work; they go to
 `*Messages*`. Clocks and random numbers are always available.
 
+## Sharing your configuration
+
+When syncing a Forge configuration, share `init.rhai` and `forge-lock.toml`.
+Keep per-machine approvals, installed plugin binaries, saved sessions and
+credential files private. In current installations, interactive plugin
+approvals are stored in `~/.config/forge/plugin-grants.toml`.
+
+| Share | Keep local |
+|---|---|
+| `init.rhai`, `forge-lock.toml` | `plugin-grants.toml`, authinfo/netrc, `plugins/`, `session.toml` |
+
+Add these rules to the `.gitignore` for a configuration or plugin workspace:
+
+```gitignore
+# Forge machine-local state and credentials
+forge-lock.local.toml
+plugin-grants.toml
+plugins/
+session.toml
+authinfo
+.authinfo
+.authinfo.gpg
+netrc
+.netrc
+```
+
+Treat an unfamiliar `init.rhai` like executable code, not passive settings.
+Read it before running or copying it: it can run programs, load plugins and
+request access to files, processes or the network. Review the referenced
+plugin sources and lock entries as well.
+
 ## The environment (0.1.13)
 
 The `environment` interface reads the environment Forge itself runs with
@@ -760,6 +791,7 @@ version = "0.1.0"
 description = "Language Server Protocol client"
 url = "lsp-0.1.0.wasm"      # relative to the index, or a full URL
 sha256 = "9f2c..."
+release_notes = "Fixes reconnect handling."
 ```
 
 `forge --package-entry lsp.wasm [--url URL]` prints the entry for a
@@ -777,8 +809,16 @@ The commands:
   upgrades everything.
 - `M-x package-install`, `package-delete`, `package-upgrade-all` and
   `package-refresh-contents` do the same from anywhere.
+- `M-x package-upgrade NAME` upgrades one installed package after showing
+  index release notes and asking for confirmation.
+- `M-x package-upgrade-all-dry-run` lists changed versions or commits and
+  recorded build commands without changing plugin or data files.
+  `C-u M-x package-upgrade-all` shows the same plan.
+- Automatic upgrades skip declarations with `pin` or `freeze: true`.
+  Index declarations may select a semver range, for example
+  `version: "^1.2"`.
 
-Downloads use curl, in the background. A download whose sha256 doesn't
+Downloads happen in the background. A download whose sha256 doesn't
 match the index isn't installed. Installed plugins go in the plugins
 directory, recorded in `packages.toml` there, and load like any other:
 Forge asks for their permissions.
@@ -822,9 +862,42 @@ Git's and the build's output go to `*Package Build*`.
 
 `M-x package-vc-upgrade` and `package-vc-upgrade-all` fetch, check out
 the same rev again (a branch moves on, a tag stays unless it was moved)
-and rebuild only if the commit changed. `package-upgrade-all` includes
-them. `package-delete` removes the clone too. `packages.toml` records
+and rebuild only if the commit changed. Forge shows commit subjects before
+applying, flags `BREAKING` markers and moved tags, and asks for confirmation.
+`C-u` on either Git upgrade command shows a plan using `git ls-remote`
+without fetching or changing the checkout. Failed builds, smoke tests or
+lock recording restore the previous artifact and installed record. A smoke
+test loads the candidate in an isolated editor, runs its `init`, and checks
+that manifest commands registered. `package-upgrade-all` includes Git
+packages; `package-delete` removes the clone too. `packages.toml` records
 the repository, rev, commit and build command of each.
+
+An index entry can include a `release_notes` string; Forge displays it in
+the review buffer before asking to apply an update. Semver requirements use
+standard Rust semver syntax (`^1.2`, `~1.2.3`, or an exact comparator).
+
+### Lockfiles and snapshots
+
+`forge-lock.toml` next to `init.rhai` records each declared plugin's
+resolved source, commit and artifact hash, plus its declaration hash,
+source-build recipe hash, tier and capabilities. Older lockfiles without
+`lock_version` continue to load. Unknown fields are retained when Forge
+rewrites a lockfile.
+
+An optional ignored `forge-lock.local.toml` in the same directory overlays
+shared entries by plugin name. Keep machine-specific changes there rather
+than changing the shared lockfile.
+
+- `M-x package-snapshot-save` saves the shared lock and its verified
+  installed artifacts under a name.
+- `M-x package-snapshot-list`, `package-snapshot-diff` and
+  `package-snapshot-restore` list, compare and restore saved snapshots.
+- `M-x package-restore` puts locked artifacts back from Forge's local
+  content-addressed artifact store. It reports when a resolved commit or
+  artifact hash differs. If an artifact is not available locally, restore
+  stops with an error rather than resolving a different version.
+- `forge --package-snapshot-diff BEFORE AFTER --json` compares snapshots
+  without starting the editor and emits JSON.
 
 ## Limits
 

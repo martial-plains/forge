@@ -136,6 +136,12 @@ const OPTIONS: &[Opt] = &[
                \"Sharing plugins\")",
     },
     Opt {
+        flags: "\\-\\-package-snapshot-diff",
+        arg: Some("BEFORE AFTER [\\-\\-json]"),
+        desc: "compare saved package snapshots without starting the editor; emit JSON with \
+               \\-\\-json",
+    },
+    Opt {
         flags: "\\-h, \\-\\-help",
         arg: None,
         desc: "show the help",

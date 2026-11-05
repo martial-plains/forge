@@ -343,6 +343,7 @@ pub const SPECIAL_MODES: &[&str] = &[
     "compilation-mode",
     "shell-command-mode",
     "package-menu-mode",
+    "package-manager-mode",
     "dired-mode",
     "image-dired-thumbnail-mode",
     "tether-dir-mode",
@@ -363,6 +364,25 @@ pub const RHAI_INTERACTION_BINDINGS: &[(&str, &str)] = &[
 pub const PACKAGE_MENU_BINDINGS: &[(&str, &str)] = &[
     ("RET", "package-menu-install"),
     ("i", "package-menu-install"),
+    ("d", "package-menu-delete"),
+    ("g", "package-menu-refresh"),
+    ("U", "package-upgrade-all"),
+];
+
+pub const PACKAGE_MANAGER_BINDINGS: &[(&str, &str)] = &[
+    ("RET", "package-menu-install"),
+    ("i", "package-menu-install"),
+    ("j", "package-manager-next"),
+    ("k", "package-manager-prev"),
+    ("<down>", "package-manager-next"),
+    ("C-n", "package-manager-next"),
+    ("<up>", "package-manager-prev"),
+    ("C-p", "package-manager-prev"),
+    ("f", "package-manager-filter"),
+    ("F", "package-manager-clear-filter"),
+    ("v", "package-menu-view"),
+    ("u", "package-menu-upgrade"),
+    ("b", "package-menu-build-log"),
     ("d", "package-menu-delete"),
     ("g", "package-menu-refresh"),
     ("U", "package-upgrade-all"),
@@ -920,6 +940,12 @@ pub fn install_defaults(keymaps: &mut Keymaps) {
             .bind(&menu, keys, cmd, Origin::Package)
             .expect("valid default binding");
     }
+    let manager = Scope::Mode("package-manager-mode".into());
+    for (keys, cmd) in PACKAGE_MANAGER_BINDINGS {
+        keymaps
+            .bind(&manager, keys, cmd, Origin::Package)
+            .expect("valid default binding");
+    }
     let agenda = Scope::Mode(crate::org_agenda_ui::MODE.into());
     for (keys, cmd) in crate::org_agenda_ui::AGENDA_BINDINGS {
         keymaps
@@ -1337,6 +1363,7 @@ mod tests {
             .chain(IMAGE_MODE_BINDINGS)
             .chain(TUTORIAL_MODE_BINDINGS)
             .chain(PACKAGE_MENU_BINDINGS)
+            .chain(PACKAGE_MANAGER_BINDINGS)
             .chain(DIRED_MODE_BINDINGS)
             .chain(WDIRED_MODE_BINDINGS)
             .chain(IMAGE_DIRED_BINDINGS)

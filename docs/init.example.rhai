@@ -276,6 +276,9 @@ forge.command.create("two-space-indent", || {
 // should load lazily. Anything missing is installed at startup, and
 // forge-lock.toml (next to this file) records the commit and sha256 each
 // one resolved to, so another machine rebuilds itself from these two files.
+// Machine-only lock overrides go in the ignored forge-lock.local.toml.
+// M-x package-snapshot-save/list/diff/restore manage named lock snapshots;
+// M-x package-restore reinstalls locked bytes from Forge's local artifact store.
 //
 // use_package is forge.plugin.declare plus `bind` and `init`: `bind` binds
 // keys (a command no one has defined yet makes its key load the plugin),
@@ -296,6 +299,9 @@ use_package("org-modern", #{
 // the lazy-loading triggers (forge.plugin.declare spells them `on`). The same with an index name (M-x list-packages
 // installs it first) or a prebuilt component:
 use_package("magit", #{ index: "magit", commands: ["magit-status"] });
+// Index declarations can restrict versions; freeze prevents automatic
+// upgrades. A `pin` also freezes the package and selects its Git revision.
+use_package("theme", #{ index: "theme", version: "^1.2", freeze: true });
 use_package("few", #{ url: "https://.../few.wasm", sha256: "..." });
 // A plugin already in the plugins directory needs no source at all, only
 // what to configure:
@@ -377,7 +383,9 @@ use_package("consult", #{
 // use_package_report() answers what each declaration did, one line each.
 // Carried over from Forge under their Rhai names (underscores):
 //     pin: "v1"                  the git tag, branch or commit (use_package
-//                                has no `rev`; forge.plugin.declare does)
+//                                has no `rev`; also holds automatic updates)
+//     freeze: true               hold this package during automatic upgrades
+//     version: "^1.2"            semver requirement for an index package
 //     load_path: "~/dev/x"       look for x.wasm there first
 //     no_require: true           install it but don't start it unless
 //                                something lazy triggers it

@@ -50,6 +50,8 @@ pub struct Package {
     /// For `git`: the tag, branch or commit (default: the default branch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -63,6 +65,7 @@ struct IndexFile {
 #[derive(Debug, Clone, Default)]
 pub struct Index {
     pub packages: BTreeMap<String, Package>,
+    versions: BTreeMap<String, Vec<Package>>,
 }
 
 impl Index {
@@ -102,6 +105,14 @@ impl Index {
 
     /// Add a package, keeping the newer version of a name.
     pub fn add(&mut self, p: Package) {
+        let versions = self.versions.entry(p.name.clone()).or_default();
+        if !versions
+            .iter()
+            .any(|old| old.version == p.version && old.url == p.url && old.git == p.git)
+        {
+            versions.push(p.clone());
+            versions.sort_by(|a, b| compare_versions(&b.version, &a.version));
+        }
         match self.packages.get(&p.name) {
             Some(old) if compare_versions(&old.version, &p.version).is_ge() => {}
             _ => {
@@ -111,9 +122,39 @@ impl Index {
     }
 
     pub fn merge(&mut self, other: Index) {
-        for p in other.packages.into_values() {
+        for p in other.versions.into_values().flatten() {
             self.add(p);
         }
+    }
+
+    /// Resolve a package at its newest indexed version matching a semver
+    /// requirement. Without a requirement, use the index's newest version.
+    pub fn resolve(
+        &self,
+        name: &str,
+        requirement: Option<&str>,
+    ) -> Result<Option<&Package>, String> {
+        let Some(requirement) = requirement else {
+            return Ok(self.packages.get(name));
+        };
+        let requirement = semver::VersionReq::parse(requirement)
+            .map_err(|e| format!("{name}: invalid version requirement {requirement:?}: {e}"))?;
+        let Some(versions) = self.versions.get(name) else {
+            return Ok(None);
+        };
+        for package in versions {
+            let version = package
+                .version
+                .strip_prefix('v')
+                .unwrap_or(&package.version);
+            let Ok(version) = semver::Version::parse(version) else {
+                continue;
+            };
+            if requirement.matches(&version) {
+                return Ok(Some(package));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -289,11 +330,40 @@ impl InstalledDb {
         Ok(path)
     }
 
+    /// Restore a previously locked artifact after checking its recorded hash.
+    pub fn restore_locked(
+        &mut self,
+        name: &str,
+        installed: Installed,
+        bytes: &[u8],
+    ) -> Result<PathBuf, String> {
+        validate_package_name(name)?;
+        let got = sha256_hex(bytes);
+        if got != installed.sha256 {
+            return Err(format!(
+                "{name}: saved artifact hash is {got}, lockfile requires {}",
+                installed.sha256
+            ));
+        }
+        if bytes.len() < 8 || &bytes[..4] != b"\0asm" {
+            return Err(format!(
+                "{name}: saved artifact is not a WebAssembly component"
+            ));
+        }
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        let path = self.plugin_file(name);
+        crate::fsutil::write_atomic(&path, bytes).map_err(|e| e.to_string())?;
+        self.packages.insert(name.to_string(), installed);
+        self.save().map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+
     /// Delete an installed package's file and record.
     pub fn delete(&mut self, name: &str) -> Result<(), String> {
         if self.packages.remove(name).is_none() {
             return Err(format!("{name} wasn't installed from an index"));
         }
+
         let _ = std::fs::remove_file(self.plugin_file(name));
         let _ = std::fs::remove_file(self.dir.join(format!("{name}.toml")));
         self.save().map_err(|e| e.to_string())
@@ -314,6 +384,27 @@ impl InstalledDb {
             .collect()
     }
 
+    pub fn upgradable_for<'a>(
+        &self,
+        index: &'a Index,
+        requirements: &BTreeMap<String, String>,
+        frozen: &std::collections::BTreeSet<String>,
+    ) -> Result<Vec<&'a Package>, String> {
+        let mut upgrades = Vec::new();
+        for (name, installed) in &self.packages {
+            if installed.git.is_some() || frozen.contains(name) {
+                continue;
+            }
+            let available = index.resolve(name, requirements.get(name).map(String::as_str))?;
+            if let Some(package) = available.filter(|p| {
+                p.git.is_none() && compare_versions(&p.version, &installed.version).is_gt()
+            }) {
+                upgrades.push(package);
+            }
+        }
+        Ok(upgrades)
+    }
+
     /// Packages installed from version control: (name, repository, rev).
     pub fn from_vc(&self) -> Vec<(String, String, Option<String>)> {
         self.packages
@@ -321,6 +412,17 @@ impl InstalledDb {
             .filter_map(|(n, i)| i.git.clone().map(|g| (n.clone(), g, i.rev.clone())))
             .collect()
     }
+}
+
+fn validate_package_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || name.contains(['/', '\\'])
+        || name.bytes().any(|b| b.is_ascii_control())
+    {
+        return Err(format!("{name:?} is not a safe package name"));
+    }
+    Ok(())
 }
 
 /// An index entry for a built plugin (`forge --package-entry`).
@@ -348,6 +450,7 @@ pub fn entry_for(wasm: &Path, url: Option<&str>) -> Result<String, String> {
         sha256: sha256_hex(&bytes),
         git: None,
         rev: None,
+        release_notes: None,
     };
     let mut out = String::from("[[package]]\n");
     out.push_str(&toml::to_string(&p).map_err(|e| e.to_string())?);
@@ -408,6 +511,41 @@ mod tests {
         let db2 = InstalledDb::load(&dir);
         assert_eq!(db2.packages["x"].version, "0.9.0");
         assert_eq!(db2.upgradable(&index).len(), 1);
+        assert_eq!(
+            index.resolve("x", Some("^0.9")).unwrap().unwrap().version,
+            "0.9.0"
+        );
+        assert_eq!(
+            index.resolve("x", Some("^0.10")).unwrap().unwrap().version,
+            "0.10.0"
+        );
+        assert!(index.resolve("x", Some("^2.0")).unwrap().is_none());
+        assert!(index.resolve("x", Some("not a range")).is_err());
+        let requirements = BTreeMap::from([("x".into(), "^0.10".into())]);
+        let frozen = std::collections::BTreeSet::new();
+        assert_eq!(
+            db2.upgradable_for(&index, &requirements, &frozen)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            db2.upgradable_for(
+                &index,
+                &requirements,
+                &std::collections::BTreeSet::from(["x".into()])
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+            db2.upgradable_for(
+                &index,
+                &BTreeMap::from([("x".into(), "invalid".into())]),
+                &frozen
+            )
+            .is_err()
+        );
         let mut db2 = db2;
         db2.delete("x").unwrap();
         assert!(!path.exists());
