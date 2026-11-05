@@ -25,6 +25,7 @@ public sealed partial class MainWindow : Window
 {
     private readonly IntPtr forge;
     private readonly CancellationTokenSource stop = new();
+    private volatile bool closed;
     private Grid? grid;
     private double cellW = 9, cellH = 18;
     private volatile int cols = 100, rows = 30;
@@ -43,6 +44,7 @@ public sealed partial class MainWindow : Window
         Title = "Forge";
         Closed += (_, _) =>
         {
+            closed = true;
             stop.Cancel();
             Native.forge_save_session(forge);
         };
@@ -58,9 +60,12 @@ public sealed partial class MainWindow : Window
         while (!stop.IsCancellationRequested)
         {
             var g = Native.ReadGrid(forge, cols, rows, dark);
-            if (g is not null)
+            if (g is not null && !closed)
             {
-                DispatcherQueue.TryEnqueue(() => Show(g));
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!closed) Show(g);
+                });
             }
             await Task.Delay(16);
         }
@@ -68,6 +73,7 @@ public sealed partial class MainWindow : Window
 
     private void Show(Grid g)
     {
+        if (closed) return;
         var title = $"{(g.Modified ? "• " : "")}{g.Title} — Forge";
         if (Title != title) Title = title;
         if (g.Quit) { Close(); return; }
@@ -97,7 +103,12 @@ public sealed partial class MainWindow : Window
             try
             {
                 var bmp = await CanvasBitmap.LoadAsync(Surface, path);
-                DispatcherQueue.TryEnqueue(() => { bitmaps[path] = bmp; Surface.Invalidate(); });
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (closed) return;
+                    bitmaps[path] = bmp;
+                    Surface.Invalidate();
+                });
             }
             catch { /* an unreadable picture stays blank */ }
         });
@@ -109,11 +120,12 @@ public sealed partial class MainWindow : Window
         while (!stop.IsCancellationRequested)
         {
             var top = Native.KillTop(forge);
-            if (top is not null && top != lastClip)
+            if (top is not null && top != lastClip && !closed)
             {
                 lastClip = top;
                 DispatcherQueue.TryEnqueue(() =>
                 {
+                    if (closed) return;
                     var pkg = new DataPackage();
                     pkg.SetText(top);
                     Clipboard.SetContent(pkg);
@@ -125,7 +137,11 @@ public sealed partial class MainWindow : Window
 
     // ---- drawing
 
-    private void OnCreateResources(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args) => Measure(sender);
+    private void OnCreateResources(CanvasControl sender, Microsoft.Graphics.Canvas.UI.CanvasCreateResourcesEventArgs args)
+    {
+        Measure(sender);
+        UpdateGridSize(sender.ActualWidth, sender.ActualHeight);
+    }
 
     private CanvasTextFormat Format(int flags)
     {
@@ -187,9 +203,13 @@ public sealed partial class MainWindow : Window
 
     private void OnSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        Measure(Surface);
-        cols = Math.Max(20, (int)(e.NewSize.Width / cellW));
-        rows = Math.Max(5, (int)(e.NewSize.Height / cellH));
+        UpdateGridSize(e.NewSize.Width, e.NewSize.Height);
+    }
+
+    private void UpdateGridSize(double width, double height)
+    {
+        cols = Math.Max(20, (int)(width / cellW));
+        rows = Math.Max(5, (int)(height / cellH));
         dark = Application.Current.RequestedTheme == ApplicationTheme.Dark;
     }
 
@@ -378,8 +398,11 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
-            Native.DialogResult(forge, d.Id, path);
-            Surface.Focus(FocusState.Programmatic);
+            if (!closed)
+            {
+                Native.DialogResult(forge, d.Id, path);
+                Surface.Focus(FocusState.Programmatic);
+            }
         }
     }
 }

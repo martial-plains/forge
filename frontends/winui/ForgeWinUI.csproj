@@ -25,7 +25,7 @@
   <ItemGroup>
     <!-- The editor, from the Rust build. -->
     <None Include="..\..\target\release\forge.dll" Condition="Exists('..\..\target\release\forge.dll')">
-      <Link>forge.dll</Link>
+      <Link>forge_native.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
