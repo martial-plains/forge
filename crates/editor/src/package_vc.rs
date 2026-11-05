@@ -320,7 +320,7 @@ fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
                     target,
                 ];
                 let r = spawn(app, Program::Argv("git", &args), job.src.clone());
-                return step(app, job, Stage::Checkout, r);
+                step(app, job, Stage::Checkout, r)
             }
             #[cfg(not(windows))]
             {
@@ -352,7 +352,7 @@ fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
                     "--recursive".into(),
                 ];
                 let r = spawn(app, Program::Argv("git", &args), job.src.clone());
-                return step(app, job, Stage::Submodules, r);
+                step(app, job, Stage::Submodules, r)
             }
             #[cfg(not(windows))]
             {

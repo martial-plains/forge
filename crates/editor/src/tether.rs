@@ -790,9 +790,7 @@ pub fn resolve(r: &Remote) -> Result<Remote, String> {
         let abs = if p.is_absolute() {
             p
         } else {
-            std::env::current_dir()
-                .map_err(|e| e.to_string())?
-                .join(p)
+            std::env::current_dir().map_err(|e| e.to_string())?.join(p)
         };
         return Ok(r.with_path(abs.to_string_lossy().into_owned()));
     }
@@ -1209,7 +1207,11 @@ pub fn job_command(dir: &Remote, command: &str) -> (Vec<String>, Vec<(String, St
     #[cfg(windows)]
     if let Some(p) = local_path(dir) {
         let script = format!("cd /d \"{}\" && {}", p.display(), command);
-        return (vec!["cmd".into(), "/C".into(), script], Vec::new(), Vec::new());
+        return (
+            vec!["cmd".into(), "/C".into(), script],
+            Vec::new(),
+            Vec::new(),
+        );
     }
     let script = format!("cd {} && {{ {}\n}}", rp(&dir.path), command);
     let (env, lines) = auth_for(&dir.hops);

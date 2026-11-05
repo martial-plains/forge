@@ -411,11 +411,8 @@ pub fn file_attributes(f: &str) -> io::Result<Attrs> {
         accessed: secs(meta.accessed()),
         changed,
         mode: mode_string(&meta, kind),
-        target: (kind == Kind::Link).then(|| {
-            fs::read_link(&p)
-                .map(|t| path_text(&t))
-                .unwrap_or_default()
-        }),
+        target: (kind == Kind::Link)
+            .then(|| fs::read_link(&p).map(|t| path_text(&t)).unwrap_or_default()),
     })
 }
 

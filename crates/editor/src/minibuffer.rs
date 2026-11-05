@@ -2495,7 +2495,7 @@ pub(crate) fn expand_path(input: &str) -> PathBuf {
                     .then(|| &input[1..])
             })
             .unwrap_or(input);
-        return PathBuf::from(input.replace('/', "\\"));
+        PathBuf::from(input.replace('/', "\\"))
     }
     #[cfg(not(windows))]
     PathBuf::from(input)

@@ -263,7 +263,8 @@ pub(super) fn render(dir: &Path, marks: &HashMap<PathBuf, char>, view: View) -> 
                     .then_some(plain)
                     .filter(|plain| !view.omit || !super::render::omitted(plain))
                     .map(|plain| {
-                        let mut row = super::listing::make_row(&e.path(), &plain, view.icons, now, None);
+                        let mut row =
+                            super::listing::make_row(&e.path(), &plain, view.icons, now, None);
                         if row.perms.starts_with('.') {
                             row.perms.replace_range(..1, "-");
                         }

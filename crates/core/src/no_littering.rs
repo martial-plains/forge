@@ -49,9 +49,7 @@ pub(crate) fn mangled_path(dir: &Path, file: &Path) -> PathBuf {
     let mangled = abs
         .to_string_lossy()
         .replace('!', "!!")
-        .replace('\\', "!")
-        .replace(':', "!")
-        .replace('/', "!");
+        .replace(['\\', ':', '/'], "!");
     dir.join(mangled)
 }
 

@@ -350,16 +350,7 @@ fn start_fetch(app: &mut App, url: &str, method: FetchMethod, mode: Mode, readab
                 let html = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
                     e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm")
                 });
-                finish(
-                    app,
-                    &url,
-                    mode,
-                    readable,
-                    text,
-                    html,
-                    None,
-                    truncated,
-                );
+                finish(app, &url, mode, readable, text, html, None, truncated);
             }
             Err(e) => app.error(format!("few: cannot read {}: {e}", path.display())),
         }
@@ -370,7 +361,10 @@ fn start_fetch(app: &mut App, url: &str, method: FetchMethod, mode: Mode, readab
             app.error("few: cannot post to a file".to_string());
             return;
         }
-        let path = match reqwest::Url::parse(url).ok().and_then(|url| url.to_file_path().ok()) {
+        let path = match reqwest::Url::parse(url)
+            .ok()
+            .and_then(|url| url.to_file_path().ok())
+        {
             Some(path) => path,
             None => {
                 app.error(format!("few: invalid file URL: {url}"));

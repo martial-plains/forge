@@ -2738,7 +2738,10 @@ mod tests {
         let lock = dir.join(".#g.txt");
         std::fs::write(&path, "text\n").unwrap();
         #[cfg(unix)]
-        let mut child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
         #[cfg(windows)]
         let mut child = std::process::Command::new("ping")
             .args(["-n", "30", "127.0.0.1"])
@@ -2746,11 +2749,7 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let theirs = format!(
-            "other@{}.{}",
-            crate::filelock::local_hostname(),
-            child.id()
-        );
+        let theirs = format!("other@{}.{}", crate::filelock::local_hostname(), child.id());
         #[cfg(unix)]
         std::os::unix::fs::symlink(&theirs, &lock).unwrap();
         #[cfg(not(unix))]

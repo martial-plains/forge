@@ -623,11 +623,7 @@ mod tests {
         std::fs::remove_file(&lock).unwrap();
         // A regular-file lock (what Forge writes where symlinks fail).
         let mut child = long_lived_child();
-        std::fs::write(
-            &lock,
-            format!("other@{}.{}", local_hostname(), child.id()),
-        )
-        .unwrap();
+        std::fs::write(&lock, format!("other@{}.{}", local_hostname(), child.id())).unwrap();
         assert!(matches!(acquire(&f, false).unwrap(), Attempt::Locked(_)));
         let _ = child.kill();
         let _ = child.wait();
