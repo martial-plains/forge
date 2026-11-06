@@ -9,6 +9,17 @@ The old headless package options are now =forge package doctor=,
 =forge package snapshot diff BEFORE AFTER= and
 =forge package lockfile diff BEFORE AFTER=; the old flag spellings are
 not accepted.
+** Headless package sync
+=forge package sync [--json]= installs exactly what =init.rhai= declares,
+using the commits and artifact hashes in =forge-lock.toml=. On a fresh
+machine, only =init.rhai= and =forge-lock.toml= are needed: locked
+artifacts missing from the local cache are fetched from the locked URL or
+Git commit, and the result must match the locked sha256. It never prompts.
+Builds, new capabilities and plugin permissions need =--allow-build=,
+=--allow-capabilities= or =--allow-grants= (or the matching
+=forge.opt["package_allow_build"]=, =package_allow_capabilities= and
+=package_allow_grants=); otherwise sync stops with exit status 3. Success is
+0, other failures are 1, and bad usage is 2.
 ** Package sources can be allowlisted
 Set =forge.opt["package_allowed_sources"]= to restrict package indexes,
 downloads and Git repositories to exact hosts, =*.example.org= suffixes,

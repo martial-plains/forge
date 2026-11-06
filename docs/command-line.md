@@ -28,12 +28,21 @@ forgeclient -s work -e '1 + 2'                        # evaluate Rhai there, pri
 | `--chdir DIR` | change directory first |
 | `package declarations [--json]` | collect `use_package` declarations without starting the editor; closures are reported, not run |
 | `package doctor [--json]` | check declared and installed plugins without starting the editor; exit status is 1 on an error finding |
+| `package sync [--json] [--allow-build] [--allow-capabilities] [--allow-grants]` | install exactly what `init.rhai` declares and `forge-lock.toml` pins, without prompting; exit status is 0 on success, 1 on failure, 2 on bad usage and 3 when an operation needs an approval flag or setting |
 | `package snapshot diff BEFORE AFTER [--json]` | compare saved package snapshots without starting the editor |
 | `package lockfile diff BEFORE AFTER [--json]` | compare two lockfiles without starting the editor |
 | `--headless ... [--test CMD]` | run the editor without a terminal; `--test` runs the plugin bisect with CMD (a nonzero exit status means the problem happens; CMD gets `FORGE_BISECT_ENABLED`) |
 
 `--json` emits the result as JSON and is only accepted with a `package`
 command or `--profile-startup`.
+
+`package sync` never prompts. A locked git package is fetched at its locked
+commit, and a locked artifact must match its recorded sha256. If a build,
+new capability or plugin permission would normally ask, sync exits 3 unless
+`--allow-build`, `--allow-capabilities` or `--allow-grants` is given (or the
+matching `forge.opt["package_allow_build"]`, `package_allow_capabilities` or
+`package_allow_grants` is true). Without a lock, sync installs declarations
+and records the result, like startup.
 
 One difference: visited files open before the other actions, whatever their
 place on the command line.

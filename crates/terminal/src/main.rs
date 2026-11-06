@@ -127,7 +127,16 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(if check::run(opts) { 0 } else { 1 });
     }
 
-    let opts = cli::parse(&args)?;
+    let opts = match cli::parse(&args) {
+        Ok(opts) => opts,
+        Err(error) => {
+            if args.iter().any(|arg| arg == "package") {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+            return Err(error);
+        }
+    };
     if let Some(dir) = &opts.chdir {
         std::env::set_current_dir(dir)
             .map_err(|e| anyhow::anyhow!("cannot change directory to {}: {e}", dir.display()))?;
@@ -163,6 +172,20 @@ fn main() -> anyhow::Result<()> {
                         1
                     },
                 );
+            }
+            PackageCommand::Sync => {
+                let status =
+                    forge_terminal::package_sync::run(forge_terminal::package_sync::Options {
+                        json: opts.json,
+                        allow_build: opts.allow_build,
+                        allow_capabilities: opts.allow_capabilities,
+                        allow_grants: opts.allow_grants,
+                    })?;
+                std::process::exit(match status {
+                    forge_terminal::package_sync::Status::Ok => 0,
+                    forge_terminal::package_sync::Status::Failed => 1,
+                    forge_terminal::package_sync::Status::Blocked => 3,
+                });
             }
             PackageCommand::SnapshotDiff { before, after } => {
                 let config = forge_core::config::config_dir()

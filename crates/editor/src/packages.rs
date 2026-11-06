@@ -11,7 +11,7 @@
 
 use crate::app::App;
 use crate::minibuffer::{Choice, Purpose};
-use forge_core::package::{self, Index, InstalledDb, Package};
+use forge_core::package::{self, Index, Installed, InstalledDb, Package};
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use forge_core::package_source::{SourceAllowlist, SourceKind as PackageSourceKind};
 use forge_core::{CapabilityDiff, LockFile, Manifest};
@@ -305,6 +305,48 @@ pub(crate) fn check_source(app: &App, kind: PackageSourceKind, source: &str) -> 
     }
 }
 
+/// What a headless command may do without asking. Interactive use leaves
+/// these false and keeps the prompts.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Approvals {
+    pub build: bool,
+    pub capabilities: bool,
+    pub grants: bool,
+}
+
+impl Approvals {
+    pub const BUILD_FLAG: &'static str = "--allow-build";
+    pub const BUILD_CONFIG: &'static str = "forge.opt[\"package_allow_build\"]";
+    pub const CAPABILITIES_FLAG: &'static str = "--allow-capabilities";
+    pub const CAPABILITIES_CONFIG: &'static str = "forge.opt[\"package_allow_capabilities\"]";
+    pub const GRANTS_FLAG: &'static str = "--allow-grants";
+    pub const GRANTS_CONFIG: &'static str = "forge.opt[\"package_allow_grants\"]";
+
+    pub fn build_hint() -> String {
+        format!(
+            "Use {} or set {} = true to allow it.",
+            Self::BUILD_FLAG,
+            Self::BUILD_CONFIG
+        )
+    }
+
+    pub fn capabilities_hint() -> String {
+        format!(
+            "Use {} or set {} = true to allow it.",
+            Self::CAPABILITIES_FLAG,
+            Self::CAPABILITIES_CONFIG
+        )
+    }
+
+    pub fn grants_hint() -> String {
+        format!(
+            "Use {} or set {} = true to allow it.",
+            Self::GRANTS_FLAG,
+            Self::GRANTS_CONFIG
+        )
+    }
+}
+
 #[derive(Default)]
 pub struct Packages {
     pub indexes: Vec<String>,
@@ -331,6 +373,10 @@ pub struct Packages {
     refreshing: Option<(Index, Vec<String>, Then)>,
     /// Durable rollback state for an in-progress update.
     pub(crate) update: UpdateTransaction,
+    /// Approvals a headless command was given.
+    pub approvals: Approvals,
+    /// Why an unattended package operation stopped for approval.
+    pub approval_blocked: Option<String>,
     /// Packages from version control (package_vc.rs).
     pub vc: crate::package_vc::Vc,
     /// Tree-sitter grammar installs (grammar_install.rs).
@@ -857,6 +903,61 @@ fn write_locked_artifacts(
         db.save().map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Restore one content-addressed lock artifact, updating the installed
+/// record if the lock describes a package-managed plugin.
+pub(crate) fn restore_locked_entry(
+    app: &App,
+    name: &str,
+    entry: &forge_core::LockEntry,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let Some(plugins) = app.packages.dir() else {
+        return Err("no plugins directory".into());
+    };
+    let mut db = InstalledDb::load(&plugins);
+    let installed = installed_from_lock(entry, db.packages.get(name));
+    db.restore_locked(name, installed, bytes)
+        .map_err(|error| format!("{name}: {error}"))
+}
+
+fn installed_from_lock(entry: &forge_core::LockEntry, previous: Option<&Installed>) -> Installed {
+    Installed {
+        version: entry
+            .version
+            .clone()
+            .or_else(|| previous.map(|p| p.version.clone()))
+            .unwrap_or_else(|| "0.0.0".into()),
+        sha256: entry
+            .artifact_sha256
+            .clone()
+            .unwrap_or_else(|| entry.sha256.clone()),
+        url: entry
+            .url
+            .clone()
+            .unwrap_or_else(|| previous.map(|p| p.url.clone()).unwrap_or_default()),
+        git: entry
+            .git
+            .clone()
+            .or_else(|| previous.and_then(|p| p.git.clone())),
+        rev: entry
+            .rev
+            .clone()
+            .or_else(|| previous.and_then(|p| p.rev.clone())),
+        commit: entry
+            .commit
+            .clone()
+            .or_else(|| previous.and_then(|p| p.commit.clone())),
+        build: entry
+            .build
+            .clone()
+            .or_else(|| previous.and_then(|p| p.build.clone())),
+        recipe: entry
+            .recipe
+            .clone()
+            .or_else(|| previous.and_then(|p| p.recipe.clone())),
+    }
 }
 
 fn sync_installed_metadata(
@@ -1961,7 +2062,16 @@ fn capability_gate(app: &mut App, package: &Package, bytes: &[u8]) -> Result<boo
         return Ok(true);
     }
     if app.unattended {
-        return Err(unattended_capability_error(&diff));
+        if app.packages.approvals.capabilities {
+            return Ok(true);
+        }
+        let error = format!(
+            "{} {}",
+            unattended_capability_error(&diff),
+            Approvals::capabilities_hint()
+        );
+        app.packages.approval_blocked = Some(error.clone());
+        return Err(error);
     }
     let mut text = format!(
         "\nNew capabilities in {} {}:\n",

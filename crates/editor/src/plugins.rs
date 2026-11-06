@@ -318,6 +318,28 @@ pub fn load(app: &mut App, path: &Path) {
     if missing.is_empty() {
         return finish_load(app, request, &granted, None);
     }
+    if app.unattended {
+        if app.packages.approvals.grants {
+            let saved = if binding.is_empty() {
+                app.grants.grant(&name, &missing)
+            } else {
+                app.grants.grant_for(&name, &missing, &binding)
+            };
+            if let Err(e) = saved {
+                app.error(format!("Couldn't save the grant: {e}"));
+            }
+            let granted = effective(app, &name, &binding);
+            finish_load(app, request, &granted, None);
+            return process_pending_loads(app);
+        }
+        let error = format!(
+            "Plugin {name} not loaded: it needs permissions {}. {}",
+            missing.describe().join("; "),
+            crate::packages::Approvals::grants_hint()
+        );
+        app.packages.approval_blocked = Some(error.clone());
+        return app.error(error);
+    }
     show_permissions(app, &request, &missing, &granted, different_binary);
     app.pending_grant = Some(PendingGrant {
         request,

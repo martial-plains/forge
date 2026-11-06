@@ -322,3 +322,253 @@ fn package_restore_removes_installed_packages_absent_from_lock() {
 
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+fn plugin_file_from_wat(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
+    use wit_component::{ComponentEncoder, StringEncoding};
+    let mut resolve = wit_parser::Resolve::default();
+    let pkg = resolve
+        .push_file(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/wit-0.1.0/forge-editor.wit"
+        ))
+        .unwrap();
+    let world = resolve.select_world(&[pkg], Some("plugin")).unwrap();
+    let mut module = wat::parse_str(source).unwrap();
+    wit_component::embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
+        .unwrap();
+    let bytes = ComponentEncoder::default()
+        .module(&module)
+        .unwrap()
+        .encode()
+        .unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join(format!("{name}.wasm"));
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "init.defaultBranch=main",
+            "-c",
+            "tag.gpgSign=false",
+        ])
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn package_sync_honors_the_locked_artifact() {
+    let dir = temp_dir("package-sync-lock");
+    let plugins = dir.join("plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    let locked = b"\0asm\x0d\0\x01\0locked".to_vec();
+    let locked_hash = forge_core::package::sha256_hex(&locked);
+    let declared = b"\0asm\x0d\0\x01\0declared".to_vec();
+    let declared_hash = forge_core::package::sha256_hex(&declared);
+    std::fs::write(dir.join("declared.wasm"), &declared).unwrap();
+    std::fs::write(
+        dir.join("init.rhai"),
+        format!(
+            "use_package(\"demo\", #{{ url: {:?}, sha256: {:?} }});\n",
+            "declared.wasm", declared_hash
+        ),
+    )
+    .unwrap();
+    let mut lock = LockFile::load(&dir).unwrap();
+    lock.set(
+        "demo",
+        LockEntry {
+            url: Some("locked.wasm".into()),
+            rev: Some("main".into()),
+            sha256: locked_hash.clone(),
+            artifact_sha256: Some(locked_hash.clone()),
+            version: Some("1.0.0".into()),
+            ..Default::default()
+        },
+    );
+    lock.save().unwrap();
+    LockFile::save_artifact(&dir, &locked_hash, &locked).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .args(["package", "sync", "--json", "--init-directory"])
+        .arg(&dir)
+        .env("FORGE_DATA_DIR", dir.join("data"))
+        .env("FORGE_CACHE_DIR", dir.join("cache"))
+        .env("FORGE_STATE_DIR", dir.join("state"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}{stderr}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["status"], "ok", "{report}");
+    assert_eq!(report["packages"][0]["action"], "installed");
+    assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), locked);
+    let lock = LockFile::load(&dir).unwrap();
+    let entry = lock.get("demo").unwrap();
+    assert_eq!(entry.url.as_deref(), Some("locked.wasm"));
+    assert_eq!(entry.rev.as_deref(), Some("main"));
+    assert_eq!(entry.sha256, locked_hash);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn package_sync_blocks_a_build_unless_allowed() {
+    let dir = temp_dir("package-sync-build");
+    let repo = dir.join("repo");
+    let wasm = plugin_file_from_wat(
+        &repo,
+        "demo",
+        include_str!("../../../tests/fixtures/demo-plugin.wat"),
+    );
+    let hash = forge_core::package::sha256_hex(&std::fs::read(&wasm).unwrap());
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "demo"]);
+    let build = if cfg!(windows) {
+        "copy /Y demo.wasm \"%OUT%\" >nul"
+    } else {
+        "cp demo.wasm \"$OUT\""
+    };
+    std::fs::write(
+        repo.join("forge-package.toml"),
+        format!("build = {build:?}\n"),
+    )
+    .unwrap();
+    git(&repo, &["add", "-A"]);
+    git(&repo, &["commit", "-q", "-m", "build recipe"]);
+    let commit = git(&repo, &["rev-parse", "HEAD"]);
+    std::fs::write(
+        dir.join("init.rhai"),
+        format!(
+            "use_package(\"demo\", #{{ git: {:?} }});\n",
+            repo.display().to_string()
+        ),
+    )
+    .unwrap();
+    let mut lock = LockFile::load(&dir).unwrap();
+    lock.set(
+        "demo",
+        LockEntry {
+            git: Some(repo.display().to_string()),
+            rev: Some("main".into()),
+            commit: Some(commit.clone()),
+            sha256: hash.clone(),
+            artifact_sha256: Some(hash.clone()),
+            ..Default::default()
+        },
+    );
+    lock.save().unwrap();
+
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_forge"))
+            .args(["package", "sync"])
+            .args(extra)
+            .arg("--init-directory")
+            .arg(&dir)
+            .env("FORGE_DATA_DIR", dir.join("data"))
+            .env("FORGE_CACHE_DIR", dir.join("cache"))
+            .env("FORGE_STATE_DIR", dir.join("state"))
+            .output()
+            .unwrap()
+    };
+    let output = run(&[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(3), "{stderr}");
+    assert!(stderr.contains("--allow-build"), "{stderr}");
+    assert!(stderr.contains("package_allow_build"), "{stderr}");
+    assert!(!dir.join("plugins/demo.wasm").exists());
+
+    let output = run(&["--json", "--allow-build"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}{stderr}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["status"], "ok", "{report}");
+    assert_eq!(
+        std::fs::read(dir.join("plugins/demo.wasm")).unwrap(),
+        std::fs::read(&wasm).unwrap()
+    );
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn package_sync_bad_usage_exits_two() {
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .args(["package", "sync", "--bogus"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown package option"), "{stderr}");
+}
+
+#[test]
+fn package_sync_installs_a_fresh_machine_from_init_and_lock() {
+    let dir = temp_dir("package-sync-fresh");
+    let source = plugin_file_from_wat(
+        &dir.join("source"),
+        "demo",
+        include_str!("../../../tests/fixtures/demo-plugin.wat"),
+    );
+    let hash = forge_core::package::sha256_hex(&std::fs::read(&source).unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("init.rhai"),
+        format!(
+            "use_package(\"demo\", #{{ url: {:?}, sha256: {:?} }});\n",
+            source.display().to_string(),
+            hash
+        ),
+    )
+    .unwrap();
+    let mut lock = LockFile::load(&dir).unwrap();
+    lock.set(
+        "demo",
+        LockEntry {
+            url: Some(source.display().to_string()),
+            sha256: hash.clone(),
+            artifact_sha256: Some(hash.clone()),
+            ..Default::default()
+        },
+    );
+    lock.save().unwrap();
+    assert!(!dir.join("plugins/demo.wasm").exists());
+    assert!(!dir.join("package-artifacts").exists());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .args(["package", "sync", "--json", "--init-directory"])
+        .arg(&dir)
+        .env("FORGE_DATA_DIR", dir.join("data"))
+        .env("FORGE_CACHE_DIR", dir.join("cache"))
+        .env("FORGE_STATE_DIR", dir.join("state"))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}{stderr}");
+    assert_eq!(
+        std::fs::read(dir.join("plugins/demo.wasm")).unwrap(),
+        std::fs::read(&source).unwrap()
+    );
+    assert!(LockFile::artifact(&dir, &hash).is_ok());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

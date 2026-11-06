@@ -286,7 +286,7 @@ fn recipe_for(u: &PluginUse, command: &str) -> Result<BuildRecipe, String> {
 }
 
 /// Start installing a declared plugin that isn't installed yet.
-fn install(app: &mut App, u: &PluginUse) {
+pub(crate) fn install(app: &mut App, u: &PluginUse) {
     if let Some(git) = &u.git {
         app.msg(format!(
             "Installing declared plugin {} from {git}...",

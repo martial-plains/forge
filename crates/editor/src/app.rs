@@ -622,6 +622,24 @@ impl App {
             forge_docs::Kind::Option,
             forge_docs::Source::Config,
         ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allow_build",
+            "Let headless package commands build plugins without asking (like --allow-build).\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allow_capabilities",
+            "Let headless package commands accept new capabilities (--allow-capabilities).\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allow_grants",
+            "Let headless package commands grant plugin permissions (like --allow-grants).\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
         docs.add(crate::docs_bridge::legacy_to_doc_kind("electric_indent", "RET indents the new line; a closing bracket re-indents its line.\n\nValues: true or false", forge_docs::Kind::Option, forge_docs::Source::Config));
         docs.add(crate::docs_bridge::legacy_to_doc_kind("line_numbers", "Line numbers in buffers that don't choose their own.\n\nValues: off, absolute or relative", forge_docs::Kind::Option, forge_docs::Source::Config));
         docs.add(crate::docs_bridge::legacy_to_doc_kind(
@@ -2505,6 +2523,23 @@ impl App {
                 .copied()
                 .unwrap_or(false),
         );
+        self.packages.approvals = crate::packages::Approvals {
+            build: settings
+                .flags
+                .get("package_allow_build")
+                .copied()
+                .unwrap_or(false),
+            capabilities: settings
+                .flags
+                .get("package_allow_capabilities")
+                .copied()
+                .unwrap_or(false),
+            grants: settings
+                .flags
+                .get("package_allow_grants")
+                .copied()
+                .unwrap_or(false),
+        };
         if let Some(r) = settings.plugin_auto_reload {
             self.plugin_auto_reload = r;
         }

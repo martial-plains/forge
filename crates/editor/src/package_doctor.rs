@@ -278,7 +278,7 @@ pub fn render_text(findings: &[Finding]) -> String {
 
 /// Build an app with init.rhai and grants, but without loading plugins or
 /// starting a package update. The doctor only reads state.
-fn headless_app() -> anyhow::Result<App> {
+pub(crate) fn headless_app() -> anyhow::Result<App> {
     let mut editor = forge_core::Editor::new();
     editor.create_buffer("*scratch*");
     editor
@@ -308,6 +308,7 @@ fn headless_app() -> anyhow::Result<App> {
         app.rhai = Some(rhai);
         app.init_errors = init_errors;
     }
+    app.apply_rhai_settings();
     Ok(app)
 }
 

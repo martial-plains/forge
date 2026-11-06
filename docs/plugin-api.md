@@ -1036,6 +1036,15 @@ than changing the shared lockfile.
 - `forge package declarations [--json]` collects `use_package`
   declarations without starting the editor; closures are reported, not
   run.
+- `forge package sync [--json]` installs what `init.rhai` declares,
+  honoring the commits and artifact hashes in `forge-lock.toml`, without
+  prompting. A locked package is fetched at its locked commit or URL when
+  it is not in the artifact cache, and the result must match the locked
+  sha256. Operations that need consent stop with exit status 3 unless
+  `--allow-build`, `--allow-capabilities` or `--allow-grants` is given.
+  The same approvals can be set with `forge.opt["package_allow_build"]`,
+  `forge.opt["package_allow_capabilities"]` and
+  `forge.opt["package_allow_grants"]`.
 - `forge package snapshot diff BEFORE AFTER --json` compares snapshots
   without starting the editor and emits JSON.
 - `forge package lockfile diff BEFORE AFTER --json` compares two

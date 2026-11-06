@@ -62,6 +62,10 @@ pub struct VcJob {
     history_warnings: Vec<String>,
     /// The new commit isn't a descendant of the locked one.
     rewritten: bool,
+    /// A locked sync must install exactly this commit.
+    expected_commit: Option<String>,
+    /// A locked sync must install exactly these artifact bytes.
+    expected_artifact: Option<String>,
     fetch_started: Option<Timer>,
     build_started: Option<Timer>,
 }
@@ -332,6 +336,33 @@ pub fn install_spec(app: &mut App, spec: &str) {
 
 /// Queue a package to fetch, build and install.
 pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgrade: bool) {
+    install_expected(app, name, repo, rev, upgrade, None, None);
+}
+
+/// Queue a package at an exact commit and artifact, as recorded in
+/// `forge-lock.toml`. A moved branch or rebuilt artifact is an error, not
+/// something to silently replace.
+pub fn install_locked(app: &mut App, name: &str, repo: &str, commit: &str, artifact_sha256: &str) {
+    install_expected(
+        app,
+        name,
+        repo,
+        Some(commit.to_string()),
+        false,
+        Some(commit.to_string()),
+        Some(artifact_sha256.to_string()),
+    );
+}
+
+fn install_expected(
+    app: &mut App,
+    name: &str,
+    repo: &str,
+    rev: Option<String>,
+    upgrade: bool,
+    expected_commit: Option<String>,
+    expected_artifact: Option<String>,
+) {
     if let Err(error) = crate::packages::check_source(app, PackageSourceKind::Git, repo) {
         if upgrade {
             crate::packages::abort_update(app, error);
@@ -377,6 +408,8 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
         review: None,
         history_warnings: Vec::new(),
         rewritten: false,
+        expected_commit,
+        expected_artifact,
         fetch_started: None,
         build_started: None,
     };
@@ -1286,6 +1319,19 @@ fn resolve_build_plan(
 }
 
 fn checkout_complete(app: &mut App, mut job: VcJob) {
+    if let Some(expected) = &job.expected_commit
+        && *expected != job.commit
+    {
+        return fail(
+            app,
+            &job,
+            &format!(
+                "forge-lock.toml pins {}, but the checkout is {}; no changes were made",
+                short(expected),
+                short(&job.commit)
+            ),
+        );
+    }
     let installed = db(app).and_then(|d| d.packages.get(&job.name).cloned());
     if job.upgrade
         && installed.as_ref().and_then(|i| i.commit.as_deref()) == Some(job.commit.as_str())
@@ -1412,6 +1458,20 @@ fn choose_build(app: &mut App, job: VcJob, installed: Option<Installed>) {
             build(app, job)
         }
         Some(c) => {
+            if app.unattended {
+                if app.packages.approvals.build {
+                    app.msg(format!("Building {} as approved...", job.name));
+                    return build(app, job);
+                }
+                let why = format!(
+                    "{} needs to run `{c}` from {} to build; no changes were made. {}",
+                    job.name,
+                    job.repo,
+                    crate::packages::Approvals::build_hint()
+                );
+                app.packages.approval_blocked = Some(why.clone());
+                return fail(app, &job, &why);
+            }
             if let Some(log) = &job.review {
                 append(
                     app,
@@ -1566,15 +1626,24 @@ fn capability_gate(
     bytes: &[u8],
     manifest: Option<&forge_core::Manifest>,
 ) -> Result<bool, String> {
+    if job.expected_artifact.is_some() {
+        return Ok(true);
+    }
     let diff = capability_diff(&job.name, manifest)?;
     if !diff.has_additions() {
         return Ok(true);
     }
     if app.unattended {
-        return Err(format!(
-            "it asks for new capabilities that need confirmation: {}. No changes were made.",
-            diff.describe_additions().join("; ")
-        ));
+        if app.packages.approvals.capabilities {
+            return Ok(true);
+        }
+        let error = format!(
+            "it asks for new capabilities that need confirmation: {}. No changes were made. {}",
+            diff.describe_additions().join("; "),
+            crate::packages::Approvals::capabilities_hint()
+        );
+        app.packages.approval_blocked = Some(error.clone());
+        return Err(error);
     }
     let mut text = format!("\nNew capabilities in {}:\n", job.name);
     for line in diff.describe_additions() {
@@ -1643,6 +1712,18 @@ fn install_output(app: &mut App, job: VcJob) {
             );
         }
     };
+    if let Some(expected) = &job.expected_artifact {
+        let got = forge_core::package::sha256_hex(&bytes);
+        if got != *expected {
+            return fail(
+                app,
+                &job,
+                &format!(
+                    "forge-lock.toml pins artifact sha256 {expected}, but this build produced {got}; no changes were made"
+                ),
+            );
+        }
+    }
     let manifest = forge_core::permissions::Manifest::for_component(&plan.output, &bytes)
         .ok()
         .flatten();
@@ -1785,6 +1866,8 @@ mod tests {
             review: None,
             history_warnings: Vec::new(),
             rewritten: false,
+            expected_commit: None,
+            expected_artifact: None,
             fetch_started: None,
             build_started: None,
         }

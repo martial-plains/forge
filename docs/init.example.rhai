@@ -322,6 +322,12 @@ forge.command.create("two-space-indent", || {
 // Optionally warn when a GitHub repository is archived or changed owners.
 // forge.opt["package_repository_checks"] = true;
 //
+// Headless `forge package sync` never prompts. Let it build, accept new
+// capabilities, or grant plugin permissions only when you mean it:
+// forge.opt["package_allow_build"] = true;
+// forge.opt["package_allow_capabilities"] = true;
+// forge.opt["package_allow_grants"] = true;
+//
 // use_package is forge.plugin.declare plus `bind` and `init`: `bind` binds
 // keys (a command no one has defined yet makes its key load the plugin),
 // and `init` runs now, before the plugin loads.
