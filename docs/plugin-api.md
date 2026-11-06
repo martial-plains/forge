@@ -912,7 +912,8 @@ standard Rust semver syntax (`^1.2`, `~1.2.3`, or an exact comparator).
 resolved source, commit and artifact hash, plus its declaration hash,
 source-build recipe hash, tier and capabilities. Older lockfiles without
 `lock_version` continue to load. Unknown fields are retained when Forge
-rewrites a lockfile.
+rewrites a lockfile. A malformed shared or local lock file is reported with
+the file name and parse problem, and Forge leaves the file untouched.
 
 An optional ignored `forge-lock.local.toml` in the same directory overlays
 shared entries by plugin name. Keep machine-specific changes there rather
@@ -922,10 +923,14 @@ than changing the shared lockfile.
   installed artifacts under a name.
 - `M-x package-snapshot-list`, `package-snapshot-diff` and
   `package-snapshot-restore` list, compare and restore saved snapshots.
+  Restoring a snapshot also removes package-managed plugins installed
+  after it.
 - `M-x package-restore` puts locked artifacts back from Forge's local
   content-addressed artifact store. It reports when a resolved commit or
   artifact hash differs. If an artifact is not available locally, restore
-  stops with an error rather than resolving a different version.
+  stops with an error rather than resolving a different version. It also
+  removes package-managed plugins that `forge-lock.toml` does not list;
+  hand-copied plugins are left alone.
 - `forge --package-snapshot-diff BEFORE AFTER --json` compares snapshots
   without starting the editor and emits JSON.
 

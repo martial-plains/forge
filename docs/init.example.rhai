@@ -293,7 +293,8 @@ forge.command.create("two-space-indent", || {
 // one resolved to, so another machine rebuilds itself from these two files.
 // Machine-only lock overrides go in the ignored forge-lock.local.toml.
 // M-x package-snapshot-save/list/diff/restore manage named lock snapshots;
-// M-x package-restore reinstalls locked bytes from Forge's local artifact store.
+// M-x package-restore reinstalls locked bytes from Forge's local artifact store
+// and removes package-managed plugins that the lock does not list.
 //
 // use_package is forge.plugin.declare plus `bind` and `init`: `bind` binds
 // keys (a command no one has defined yet makes its key load the plugin),

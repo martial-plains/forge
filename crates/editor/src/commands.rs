@@ -1000,7 +1000,7 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     ),
     forge_docs::CommandDoc::line(
         "package-restore",
-        "Restore declared plugin artifacts to the hashes in forge-lock.toml.",
+        "Restore locked plugins and remove those the lock doesn't list.",
     ),
     forge_docs::CommandDoc::line(
         "package-snapshot-diff",
@@ -1012,7 +1012,7 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     ),
     forge_docs::CommandDoc::line(
         "package-snapshot-restore",
-        "Restore plugin artifacts and lock entries from a saved snapshot.",
+        "Restore a snapshot and remove plugins it doesn't list.",
     ),
     forge_docs::CommandDoc::line(
         "package-snapshot-save",

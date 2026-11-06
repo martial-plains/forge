@@ -15,7 +15,7 @@
 
 use crate::permissions::{Grants, Setting};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub const FILE: &str = "forge-lock.toml";
@@ -170,25 +170,35 @@ impl LockFile {
 
     /// Read the lock file from `dir`; a missing file means nothing is
     /// locked yet. Machine-local entries override shared entries by name.
-    pub fn load(dir: &Path) -> Self {
-        let data = std::fs::read_to_string(Self::path(dir))
-            .ok()
-            .and_then(|s| toml::from_str::<LockData>(&s).ok())
-            .unwrap_or_default();
-        let local = std::fs::read_to_string(Self::local_path(dir))
-            .ok()
-            .and_then(|s| toml::from_str::<LockData>(&s).ok())
-            .unwrap_or_default();
+    pub fn load(dir: &Path) -> std::io::Result<Self> {
+        let data = Self::read_data(&Self::path(dir))?.unwrap_or_default();
+        let local = Self::read_data(&Self::local_path(dir))?.unwrap_or_default();
         let mut packages = data.packages.clone();
         packages.extend(local.packages.clone());
-        Self {
+        Ok(Self {
             packages,
             shared_packages: data.packages,
             local_packages: local.packages,
             lock_version: data.lock_version.max(LOCK_VERSION),
             extra: data.extra,
             dir: Some(dir.to_path_buf()),
-        }
+        })
+    }
+
+    fn read_data(path: &Path) -> std::io::Result<Option<LockData>> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!("could not read {}: {error}", path.display()),
+                ));
+            }
+        };
+        toml::from_str(&text).map(Some).map_err(|error| {
+            std::io::Error::other(format!("could not parse {}: {error}", path.display()))
+        })
     }
 
     pub fn dir(&self) -> Option<&Path> {
@@ -346,7 +356,7 @@ impl LockFile {
         name: &str,
     ) -> std::io::Result<Snapshot> {
         let snapshot = Self::read_snapshot(dir, name)?;
-        let mut lock = Self::load(dir);
+        let mut lock = Self::load(dir)?;
         lock.replace_shared(snapshot.packages.clone());
         let mut artifacts = Vec::with_capacity(lock.packages.len());
         for (plugin, entry) in &lock.packages {
@@ -358,6 +368,11 @@ impl LockFile {
         for (plugin, _, bytes) in artifacts {
             crate::fsutil::write_atomic(&plugins_dir.join(format!("{plugin}.wasm")), bytes)?;
         }
+        let keep: BTreeSet<String> = lock.packages.keys().cloned().collect();
+        let mut installed = crate::package::InstalledDb::load(plugins_dir);
+        installed
+            .prune_except(&keep)
+            .map_err(std::io::Error::other)?;
         lock.lock_version = snapshot.lock_version.max(LOCK_VERSION);
         lock.extra = snapshot.extra.clone();
         lock.save()?;
@@ -461,7 +476,7 @@ mod tests {
         let dir = temp_dir("round-trip");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let mut lock = LockFile::load(&dir);
+        let mut lock = LockFile::load(&dir).unwrap();
         assert!(lock.packages.is_empty());
         lock.set(
             "org-modern",
@@ -488,7 +503,7 @@ mod tests {
         let text = std::fs::read_to_string(LockFile::path(&dir)).unwrap();
         assert!(text.contains("[packages.org-modern]"), "{text}");
         assert!(text.contains("commit = \"abc123\""), "{text}");
-        let again = LockFile::load(&dir);
+        let again = LockFile::load(&dir).unwrap();
         let e = again.get("org-modern").unwrap();
         assert_eq!(e.commit.as_deref(), Some("abc123"));
         assert_eq!(e.sha256, "deadbeef");
@@ -514,13 +529,44 @@ future-entry = 42
 "#,
         )
         .unwrap();
-        let lock = LockFile::load(&dir);
+        let lock = LockFile::load(&dir).unwrap();
         assert_eq!(lock.get("demo").unwrap().sha256.len(), 64);
         lock.save().unwrap();
         let written = std::fs::read_to_string(LockFile::path(&dir)).unwrap();
         assert!(written.contains("lock_version = 1"), "{written}");
         assert!(written.contains("future-root = \"keep\""), "{written}");
         assert!(written.contains("future-entry = 42"), "{written}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_lock_names_the_file_and_parse_problem() {
+        let dir = temp_dir("malformed");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = LockFile::path(&dir);
+        let bad = "[packages.demo\nsha256 = \"0123\"\n";
+        std::fs::write(&path, bad).unwrap();
+        let error = LockFile::load(&dir).unwrap_err().to_string();
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("could not parse"), "{error}");
+        assert!(error.contains("TOML parse error"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bad);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_local_lock_names_the_local_file() {
+        let dir = temp_dir("malformed-local");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let local = LockFile::local_path(&dir);
+        let bad = "[packages.demo\nsha256 = \"0123\"\n";
+        std::fs::write(&local, bad).unwrap();
+        let error = LockFile::load(&dir).unwrap_err().to_string();
+        assert!(error.contains(&local.display().to_string()), "{error}");
+        assert!(error.contains("could not parse"), "{error}");
+        assert_eq!(std::fs::read_to_string(&local).unwrap(), bad);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -539,7 +585,7 @@ future-entry = 42
             "[packages.demo]\nsha256 = \"local\"\n",
         )
         .unwrap();
-        let mut lock = LockFile::load(&dir);
+        let mut lock = LockFile::load(&dir).unwrap();
         assert_eq!(lock.get("demo").unwrap().sha256, "local");
         lock.set(
             "demo",
@@ -569,7 +615,7 @@ future-entry = 42
         let original_hash = crate::package::sha256_hex(&original);
         let changed_hash = crate::package::sha256_hex(&changed);
         std::fs::write(plugins.join("demo.wasm"), &original).unwrap();
-        let mut lock = LockFile::load(&config);
+        let mut lock = LockFile::load(&config).unwrap();
         lock.set(
             "demo",
             LockEntry {
@@ -585,7 +631,7 @@ future-entry = 42
         lock.set(
             "demo",
             LockEntry {
-                sha256: changed_hash,
+                sha256: changed_hash.clone(),
                 artifact_sha256: Some(crate::package::sha256_hex(&changed)),
                 ..Default::default()
             },
@@ -593,16 +639,41 @@ future-entry = 42
         lock.save().unwrap();
         lock.save_snapshot("after", &plugins).unwrap();
 
+        std::fs::write(plugins.join("stale.wasm"), &changed).unwrap();
+        std::fs::write(plugins.join("stale.toml"), "name = \"stale\"\n").unwrap();
+        let mut installed = crate::package::InstalledDb::load(&plugins);
+        installed.packages.insert(
+            "stale".into(),
+            crate::package::Installed {
+                version: "1.0.0".into(),
+                sha256: changed_hash,
+                url: "stale.wasm".into(),
+                git: None,
+                rev: None,
+                commit: None,
+                build: None,
+            },
+        );
+        installed.save().unwrap();
+
         let changes = LockFile::diff_snapshots(&config, "before", "after").unwrap();
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].change, "changed");
         let restored = LockFile::restore_snapshot(&config, &plugins, "before").unwrap();
         assert_eq!(restored.packages["demo"].sha256, original_hash);
         assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
+        assert!(!plugins.join("stale.wasm").exists());
+        assert!(!plugins.join("stale.toml").exists());
+        assert!(
+            !crate::package::InstalledDb::load(&plugins)
+                .packages
+                .contains_key("stale")
+        );
         LockFile::restore_snapshot(&config, &plugins, "before").unwrap();
         assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
         assert_eq!(
             LockFile::load(&config)
+                .unwrap()
                 .get("demo")
                 .unwrap()
                 .artifact_sha256

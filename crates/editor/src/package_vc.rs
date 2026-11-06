@@ -690,6 +690,7 @@ fn checkout_complete(app: &mut App, mut job: VcJob) {
 fn locked_commit(name: &str) -> Option<String> {
     let dir = forge_core::config::config_dir()?;
     forge_core::LockFile::load(&dir)
+        .ok()?
         .get(name)
         .and_then(|e| e.commit.clone())
 }

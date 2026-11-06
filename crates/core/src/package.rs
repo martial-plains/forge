@@ -30,7 +30,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -369,6 +369,39 @@ impl InstalledDb {
         self.save().map_err(|e| e.to_string())
     }
 
+    /// Remove installed packages whose names are not in `keep`, along with
+    /// their component and sidecar manifest. Returns the removed names.
+    pub fn prune_except(&mut self, keep: &BTreeSet<String>) -> Result<Vec<String>, String> {
+        let stale: Vec<String> = self
+            .packages
+            .keys()
+            .filter(|name| !keep.contains(*name))
+            .cloned()
+            .collect();
+        for name in &stale {
+            validate_package_name(name)?;
+        }
+        for name in &stale {
+            self.packages.remove(name);
+            for path in [
+                self.plugin_file(name),
+                self.dir.join(format!("{name}.toml")),
+            ] {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(format!("{name}: removing {}: {error}", path.display()));
+                    }
+                }
+            }
+        }
+        if !stale.is_empty() {
+            self.save().map_err(|e| e.to_string())?;
+        }
+        Ok(stale)
+    }
+
     /// Installed packages with a newer version in `index` (packages from
     /// version control are upgraded by fetching instead).
     pub fn upgradable<'a>(&self, index: &'a Index) -> Vec<&'a Package> {
@@ -550,6 +583,44 @@ mod tests {
         db2.delete("x").unwrap();
         assert!(!path.exists());
         assert!(InstalledDb::load(&dir).packages.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn pruning_removes_packages_not_kept() {
+        let dir = std::env::temp_dir().join(format!("forge-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let wasm = b"\0asm\x0d\0\x01\0fake".to_vec();
+        let sha = sha256_hex(&wasm);
+        let package = |name: &str| Package {
+            name: name.into(),
+            version: "1.0.0".into(),
+            description: String::new(),
+            url: format!("{name}.wasm"),
+            sha256: sha.clone(),
+            git: None,
+            rev: None,
+            release_notes: None,
+        };
+        let mut db = InstalledDb::load(&dir);
+        db.install(&package("keep"), &wasm).unwrap();
+        db.install(&package("stale"), &wasm).unwrap();
+        std::fs::write(dir.join("stale.toml"), "name = \"stale\"\n").unwrap();
+        std::fs::write(dir.join("manual.wasm"), &wasm).unwrap();
+
+        let removed = db
+            .prune_except(&BTreeSet::from(["keep".to_string()]))
+            .unwrap();
+        assert_eq!(removed, vec!["stale"]);
+        assert!(dir.join("keep.wasm").exists());
+        assert!(dir.join("manual.wasm").exists());
+        assert!(!dir.join("stale.wasm").exists());
+        assert!(!dir.join("stale.toml").exists());
+        let db = InstalledDb::load(&dir);
+        assert!(db.packages.contains_key("keep"));
+        assert!(!db.packages.contains_key("stale"));
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

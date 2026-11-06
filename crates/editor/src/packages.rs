@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::minibuffer::{Choice, Purpose};
 use forge_core::LockFile;
 use forge_core::package::{self, Index, InstalledDb, Package};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
@@ -63,9 +63,13 @@ pub(crate) fn capture_package_backup(app: &App, name: &str) -> Result<PackageBac
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(format!("{name}: reading current artifact: {error}")),
     };
-    let locked = forge_core::config::config_dir()
-        .map(|config| LockFile::load(&config))
-        .and_then(|lock| lock.get(name).cloned());
+    let locked = match forge_core::config::config_dir() {
+        Some(config) => LockFile::load(&config)
+            .map_err(|error| format!("{name}: reading the package lock: {error}"))?
+            .get(name)
+            .cloned(),
+        None => None,
+    };
     Ok(PackageBackup {
         artifact,
         installed: installed.packages.get(name).cloned(),
@@ -105,7 +109,8 @@ pub(crate) fn restore_package_backup(
         .map_err(|error| format!("{name}: {error}"))?;
 
     if let Some(config) = forge_core::config::config_dir() {
-        let mut lock = LockFile::load(&config);
+        let mut lock = LockFile::load(&config)
+            .map_err(|error| format!("{name}: reading the package lock: {error}"))?;
         if let Some(entry) = backup.locked {
             lock.set(name, entry);
         } else {
@@ -309,7 +314,11 @@ fn save_snapshot(app: &mut App, name: &str) {
     let (Some(_config), Some(plugins)) = (config_dir(), app.packages.dir()) else {
         return app.error("Cannot save a package snapshot without config and plugin directories");
     };
-    match crate::declare::load_lock().save_snapshot(name, &plugins) {
+    let lock = match crate::declare::load_lock() {
+        Ok(lock) => lock,
+        Err(error) => return app.error(format!("Couldn't save package snapshot {name}: {error}")),
+    };
+    match lock.save_snapshot(name, &plugins) {
         Ok(()) => app.msg(format!("Saved package snapshot {name}")),
         Err(e) => app.error(format!("Couldn't save package snapshot {name}: {e}")),
     }
@@ -388,7 +397,14 @@ fn restore_snapshot(app: &mut App, name: &str) {
     if let Err(e) = LockFile::restore_snapshot(&config, &plugins, name) {
         return app.error(format!("Couldn't restore package snapshot {name}: {e}"));
     }
-    let restored = LockFile::load(&config);
+    let restored = match LockFile::load(&config) {
+        Ok(lock) => lock,
+        Err(error) => {
+            return app.error(format!(
+                "Snapshot {name} restored, but the package lock couldn't be read: {error}"
+            ));
+        }
+    };
     if let Err(e) = sync_installed_metadata(app, &restored.packages) {
         return app.error(format!(
             "Snapshot {name} restored, but packages.toml wasn't updated: {e}"
@@ -398,7 +414,10 @@ fn restore_snapshot(app: &mut App, name: &str) {
 }
 
 fn restore_locked(app: &mut App) {
-    let lock = crate::declare::load_lock();
+    let lock = match crate::declare::load_lock() {
+        Ok(lock) => lock,
+        Err(error) => return app.error(format!("Can't read the package lock: {error}")),
+    };
     if lock.packages.is_empty() {
         return app.msg("forge-lock.toml has no locked plugins");
     }
@@ -435,6 +454,12 @@ fn locked_differences(
     artifacts: &[(String, forge_core::LockEntry, Vec<u8>)],
 ) -> Result<Vec<String>, String> {
     let mut differences = Vec::new();
+    let locked: BTreeSet<&str> = artifacts.iter().map(|(name, _, _)| name.as_str()).collect();
+    for name in current.packages.keys() {
+        if !locked.contains(name.as_str()) {
+            differences.push(format!("{name}: installed -> removed"));
+        }
+    }
     for (name, entry, bytes) in artifacts {
         let current_bytes = match std::fs::read(current.plugin_file(name)) {
             Ok(bytes) => Some(bytes),
@@ -555,7 +580,9 @@ fn write_locked_artifacts(
             db_changed = true;
         }
     }
-    if db_changed {
+    let keep: BTreeSet<String> = artifacts.iter().map(|(name, _, _)| name.clone()).collect();
+    let removed = db.prune_except(&keep)?;
+    if db_changed && removed.is_empty() {
         db.save().map_err(|e| e.to_string())?;
     }
     Ok(())

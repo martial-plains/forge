@@ -40,15 +40,19 @@ fn uses(app: &App) -> Vec<PluginUse> {
 }
 
 /// The lock file, next to init.rhai (in memory if there's no config dir).
-pub fn load_lock() -> LockFile {
-    forge_core::config::config_dir()
-        .map(|d| LockFile::load(&d))
-        .unwrap_or_else(LockFile::in_memory)
+pub fn load_lock() -> Result<LockFile, String> {
+    match forge_core::config::config_dir() {
+        Some(dir) => LockFile::load(&dir).map_err(|error| error.to_string()),
+        None => Ok(LockFile::in_memory()),
+    }
 }
 
 /// After init.rhai: load the declared plugins that are installed, and
 /// start installing the ones that aren't.
 pub fn resolve(app: &mut App) {
+    if let Err(error) = load_lock() {
+        return app.error(format!("Cannot read the package lock: {error}"));
+    }
     let uses = uses(app);
     if uses.is_empty() {
         return;
@@ -95,7 +99,7 @@ pub fn record_checked(app: &App, name: &str, path: &Path) -> Result<(), String> 
         .map_err(|error| format!("{name}: couldn't record lock entry: {error}"))?;
     let bytes = std::fs::read(path)
         .map_err(|error| format!("{name}: couldn't read component for lockfile: {error}"))?;
-    let mut lock = load_lock();
+    let mut lock = load_lock().map_err(|error| format!("{name}: {error}"))?;
     lock.set(name, entry);
     if let Some(dir) = lock.dir() {
         LockFile::save_artifact(
@@ -133,7 +137,10 @@ fn load_declared(app: &mut App, u: &PluginUse, path: &Path) {
 pub fn lock_entry(app: &App, u: &PluginUse, path: &Path) -> Result<LockEntry, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let artifact_sha256 = forge_core::package::sha256_hex(&bytes);
-    let previous = load_lock().get(&u.name).cloned();
+    let previous = load_lock()
+        .map_err(|error| error.to_string())?
+        .get(&u.name)
+        .cloned();
     let mut e = LockEntry {
         git: u.git.clone(),
         rev: u.rev.clone(),
