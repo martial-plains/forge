@@ -134,6 +134,78 @@ fn compile_next_error_shell_commands_and_projects() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+fn incompatible_plugin_file(dir: &std::path::Path) -> std::path::PathBuf {
+    use wit_component::{ComponentEncoder, StringEncoding};
+    let mut wit = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/wit-0.1.0/forge-editor.wit"
+    ))
+    .unwrap();
+    wit = wit.replace(
+        "package forge:editor@0.1.0;",
+        "package forge:editor@0.1.12;",
+    );
+    wit = wit.replace(
+        "    log: func(level: level, message: string);",
+        "    log: func(level: level, message: string);\n    flush: func();",
+    );
+    let mut resolve = wit_parser::Resolve::default();
+    let pkg = resolve.push_str("forge-editor.wit", &wit).unwrap();
+    let world = resolve.select_world(&[pkg], Some("plugin")).unwrap();
+    let mut module = wat::parse_str(include_str!(
+        "../../../../tests/fixtures/incompatible-plugin.wat"
+    ))
+    .unwrap();
+    wit_component::embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
+        .unwrap();
+    let bytes = ComponentEncoder::default()
+        .module(&module)
+        .unwrap()
+        .validate(true)
+        .encode()
+        .unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    let path = dir.join("incompatible.wasm");
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+#[test]
+fn package_compatibility_preflight_lists_and_refuses_unless_forced() {
+    let dir = std::env::temp_dir().join(format!("forge-compat-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let wasm = incompatible_plugin_file(&dir.join("repo"));
+    let entry = forge_core::package::entry_for(&wasm, None).unwrap();
+    std::fs::write(dir.join("repo/index.toml"), entry).unwrap();
+    let mut app = app_with("");
+    app.plugin_cache = None;
+    app.packages.indexes = vec![dir.join("repo/index.toml").display().to_string()];
+    app.packages.plugin_dir = Some(dir.join("plugins"));
+
+    press(&mut app, "M-x list-packages RET");
+    let listing = text(&app);
+    assert!(
+        listing.contains("incompatible")
+            && listing.contains("needs a newer Forge (missing `flush`)"),
+        "{listing}"
+    );
+
+    press(&mut app, "M-x package-install RET incompatible RET");
+    assert!(
+        app.message
+            .as_deref()
+            .unwrap_or("")
+            .contains("needs a newer Forge (missing `flush`)"),
+        "{:?}",
+        app.message
+    );
+    assert!(!dir.join("plugins/incompatible.wasm").exists());
+
+    press(&mut app, "C-u M-x package-install RET incompatible RET");
+    assert!(dir.join("plugins/incompatible.wasm").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn packages_install_list_and_delete() {
     let dir = std::env::temp_dir().join(format!("forge-pkg-{}", std::process::id()));

@@ -25,7 +25,7 @@ pub enum Then {
     Nothing,
     List,
     Manager,
-    Install,
+    Install { force: bool },
     UpgradeAll,
     UpgradeDryRun,
     UpgradeOne(String),
@@ -40,6 +40,7 @@ enum Fetch {
         package: Package,
         file: PathBuf,
         upgrade: bool,
+        force: bool,
     },
 }
 
@@ -270,7 +271,10 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             manager(app);
         }
         "list-packages" | "package-list-packages" => with_index(app, Then::List),
-        "package-install" => with_index(app, Then::Install),
+        "package-install" => {
+            let force = app.raw_arg();
+            with_index(app, Then::Install { force });
+        }
         "package-upgrade-all" if app.raw_arg() => with_index(app, Then::UpgradeDryRun),
         "package-upgrade-all" => with_index(app, Then::UpgradeAll),
         "package-upgrade" => {
@@ -327,8 +331,9 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             }
         }
         "package-menu-install" => {
+            let force = app.raw_arg();
             if let Some(name) = selected_name(app) {
-                install_selected(app, &name);
+                install_selected(app, &name, force);
             }
         }
         "package-menu-upgrade" => {
@@ -815,7 +820,7 @@ fn after_refresh(app: &mut App, then: Then) {
         Then::Nothing => {}
         Then::List => list(app),
         Then::Manager => manager(app),
-        Then::Install => {
+        Then::Install { force } => {
             let installed = db(app).map(|d| d.packages).unwrap_or_default();
             let names: Vec<String> = app
                 .packages
@@ -835,7 +840,7 @@ fn after_refresh(app: &mut App, then: Then) {
                 app.prompt(
                     "Install package: ",
                     Purpose::Choose {
-                        what: Choice::InstallPackage,
+                        what: Choice::InstallPackage { force },
                         candidates: names,
                     },
                 );
@@ -1021,7 +1026,7 @@ pub fn package_upgrade_confirmed(app: &mut App, yes: bool) {
     };
     if yes {
         app.msg(format!("Applying upgrade for {}", package.name));
-        if !install(app, package.clone()) {
+        if !install(app, package.clone(), false) {
             next_upgrade_prompt(app);
         }
     } else {
@@ -1330,11 +1335,11 @@ fn selected_name(app: &mut App) -> Option<String> {
     name_on_line(app)
 }
 
-fn install_selected(app: &mut App, name: &str) {
+fn install_selected(app: &mut App, name: &str, force: bool) {
     if let Some(u) = crate::declare::declared(app, name)
         && let Some(index) = u.index.clone()
     {
-        return install_named_version(app, &index, u.version.as_deref());
+        return install_named_version(app, &index, u.version.as_deref(), force);
     }
     if app
         .packages
@@ -1342,7 +1347,7 @@ fn install_selected(app: &mut App, name: &str) {
         .as_ref()
         .is_some_and(|i| i.packages.contains_key(name))
     {
-        return install_named(app, name);
+        return install_named_with_force(app, name, force);
     }
     let Some(u) = crate::declare::declared(app, name) else {
         return app.error(format!("No source available for {name}"));
@@ -1355,7 +1360,7 @@ fn install_selected(app: &mut App, name: &str) {
         };
         install_url(app, name, &url, &sha256);
     } else if let Some(index) = u.index {
-        install_named(app, &index);
+        install_named_with_force(app, &index, force);
     } else {
         app.error(format!("{name} has no install source"));
     }
@@ -1364,6 +1369,38 @@ fn install_selected(app: &mut App, name: &str) {
 pub fn filter_manager(app: &mut App, filter: &str) {
     app.packages.manager_filter = filter.to_string();
     manager(app);
+}
+
+/// A candidate component's `forge:editor` compatibility, if its bytes are
+/// available without downloading (a local index entry, or a cached artifact).
+fn package_compatibility(app: &App, package: &Package) -> Option<String> {
+    let bytes = package_bytes(package)?;
+    component_compatibility(app, &package.name, &bytes)
+}
+
+fn package_bytes(package: &Package) -> Option<Vec<u8>> {
+    if let Some(path) = package::local_path(&package.url)
+        && let Ok(bytes) = std::fs::read(path)
+    {
+        return Some(bytes);
+    }
+    let config = forge_core::config::config_dir()?;
+    if package.sha256.is_empty() {
+        return None;
+    }
+    forge_core::LockFile::artifact(&config, &package.sha256).ok()
+}
+
+/// Check a component's imports against what this Forge links, without
+/// running any of its code.
+fn component_compatibility(app: &App, name: &str, bytes: &[u8]) -> Option<String> {
+    if let Some(host) = app.plugin_host.as_ref() {
+        return host.compatibility_problem(name, bytes).ok().flatten();
+    }
+    let cache = app.plugin_cache.as_ref().map(|dir| dir.join("wasmtime"));
+    let runtime = forge_core::PluginRuntime::with_cache(cache.as_deref()).ok()?;
+    let inspection = runtime.inspect(name, bytes).ok()?;
+    runtime.compatibility_problem(&inspection)
 }
 
 /// The *Packages* buffer.
@@ -1412,8 +1449,12 @@ pub fn list(app: &mut App) {
             (None, None) => continue,
         };
         let desc = avail.map(|a| a.description.as_str()).unwrap_or("");
+        let compatibility = avail
+            .and_then(|a| package_compatibility(app, a))
+            .map(|problem| format!("  [{problem}]"))
+            .unwrap_or_default();
         text.push_str(&format!(
-            "  {name:width$}  {version:10}  {status:22}  {desc}\n"
+            "  {name:width$}  {version:10}  {status:22}  {desc}{compatibility}\n"
         ));
     }
     app.show_special_buffer(BUFFER, "package-menu-mode", &text);
@@ -1445,15 +1486,20 @@ pub fn install_url(app: &mut App, name: &str, url: &str, sha256: &str) {
             rev: None,
             release_notes: None,
         },
+        false,
     );
 }
 
 /// RET in project-find-file style prompts: see minibuffer.rs.
 pub fn install_named(app: &mut App, name: &str) {
-    install_named_version(app, name, None);
+    install_named_with_force(app, name, false);
 }
 
-fn install_named_version(app: &mut App, name: &str, requirement: Option<&str>) {
+pub(crate) fn install_named_with_force(app: &mut App, name: &str, force: bool) {
+    install_named_version(app, name, None, force);
+}
+
+fn install_named_version(app: &mut App, name: &str, requirement: Option<&str>, force: bool) {
     let selected = app
         .packages
         .index
@@ -1468,12 +1514,12 @@ fn install_named_version(app: &mut App, name: &str, requirement: Option<&str>) {
     if db(app).is_some_and(|db| db.packages.contains_key(name)) {
         start_upgrade_queue(app, vec![package], false);
     } else {
-        let _ = install(app, package);
+        let _ = install(app, package, force);
     }
 }
 
 /// Start installing a package; returns true when a download will finish later.
-fn install(app: &mut App, p: Package) -> bool {
+fn install(app: &mut App, p: Package, force: bool) -> bool {
     let upgrading = db(app).is_some_and(|db| db.packages.contains_key(&p.name));
     if let Some(git) = &p.git {
         crate::package_vc::install(app, &p.name, git, p.rev.clone(), upgrading);
@@ -1482,7 +1528,7 @@ fn install(app: &mut App, p: Package) -> bool {
     match package::local_path(&p.url) {
         Some(path) => {
             let r = std::fs::read(&path).map_err(|e| format!("{}: {e}", p.url));
-            installed(app, p, r, upgrading);
+            installed(app, p, r, upgrading, force);
             false
         }
         None => {
@@ -1496,6 +1542,7 @@ fn install(app: &mut App, p: Package) -> bool {
                             package: p,
                             file,
                             upgrade: upgrading,
+                            force,
                         },
                     );
                     true
@@ -1515,7 +1562,13 @@ fn install(app: &mut App, p: Package) -> bool {
 }
 
 /// A download finished (or a local file was read): check, install, load.
-fn installed(app: &mut App, p: Package, bytes: Result<Vec<u8>, String>, upgrade: bool) {
+fn installed(
+    app: &mut App,
+    p: Package,
+    bytes: Result<Vec<u8>, String>,
+    upgrade: bool,
+    force: bool,
+) {
     let Some(mut db) = db(app) else {
         return app.error("No plugins directory (set HOME or FORGE_CONFIG_DIR)");
     };
@@ -1529,6 +1582,20 @@ fn installed(app: &mut App, p: Package, bytes: Result<Vec<u8>, String>, upgrade:
             return app.error(message);
         }
     };
+    if !force && let Some(problem) = component_compatibility(app, &p.name, &bytes) {
+        let message = if upgrade {
+            format!("Can't upgrade {}: {problem}", p.name)
+        } else {
+            format!(
+                "Can't install {}: {problem}; use C-u M-x package-install to force",
+                p.name
+            )
+        };
+        if upgrade {
+            return abort_update(app, message);
+        }
+        return app.error(message);
+    }
     if upgrade {
         if let Err(error) = smoke_test_component(app, &p.name, &bytes) {
             return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
@@ -1791,13 +1858,14 @@ pub fn poll(app: &mut App) {
                         package,
                         file,
                         upgrade,
+                        force,
                     } => {
                         let r = match failed {
                             Some(e) => Err(e),
                             None => std::fs::read(&file).map_err(|e| e.to_string()),
                         };
                         let _ = std::fs::remove_file(&file);
-                        installed(app, package, r, upgrade);
+                        installed(app, package, r, upgrade, force);
                         if upgrade {
                             next_upgrade_prompt(app);
                         }

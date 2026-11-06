@@ -4332,6 +4332,61 @@ impl PluginRuntime {
         })
     }
 
+    /// What this Forge is missing for an inspected component's
+    /// `forge:editor` imports, if anything. This only type-checks the
+    /// component against the linker; no plugin code runs.
+    pub fn missing_forge_functions(&self, inspection: &Inspection) -> Vec<String> {
+        let Err(error) = self.pre_instantiate(
+            &inspection.component,
+            &inspection.imports,
+            &inspection.unsupported,
+        ) else {
+            return Vec::new();
+        };
+        let text = format!("{error:#}");
+        if !text.contains("forge:editor") {
+            return Vec::new();
+        }
+        missing_function_names(&text)
+    }
+
+    /// A user-facing compatibility problem, or `None` when the component
+    /// can link against this Forge.
+    pub fn compatibility_problem(&self, inspection: &Inspection) -> Option<String> {
+        let missing = self.missing_forge_functions(inspection);
+        if missing.is_empty() {
+            return None;
+        }
+        let names = missing
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("needs a newer Forge (missing {names})"))
+    }
+
+    fn pre_instantiate(
+        &self,
+        component: &Component,
+        imports: &[String],
+        unsupported: &[String],
+    ) -> Result<wasmtime::component::InstancePre<PluginState>> {
+        match self.linker.instantiate_pre(component) {
+            Ok(pre) => Ok(pre),
+            Err(e) => {
+                let text = format!("{e:#}");
+                if unsupported.is_empty() || text.contains("forge:editor") {
+                    return Err(explain_link_error(e.into(), imports));
+                }
+                let mut linker = self.linker.clone();
+                linker.define_unknown_imports_as_traps(component)?;
+                linker
+                    .instantiate_pre(component)
+                    .map_err(|e| explain_link_error(e.into(), imports))
+            }
+        }
+    }
+
     /// Instantiate an inspected component with the given grants. This runs
     /// no plugin code beyond the component's own start-up; call
     /// [`LoadedPlugin::init`] (with the editor lent: see `PluginHost`).
@@ -4347,20 +4402,7 @@ impl PluginRuntime {
         // provide at all (wasi:http, ...) become traps, except that a
         // missing forge:editor function is an error now (see the
         // compatibility rules in docs/plugin-api.md).
-        let pre = match self.linker.instantiate_pre(&component) {
-            Ok(pre) => pre,
-            Err(e) => {
-                let text = format!("{e:#}");
-                if unsupported.is_empty() || text.contains("forge:editor") {
-                    return Err(explain_link_error(e.into(), &imports));
-                }
-                let mut linker = self.linker.clone();
-                linker.define_unknown_imports_as_traps(&component)?;
-                linker
-                    .instantiate_pre(&component)
-                    .map_err(|e| explain_link_error(e.into(), &imports))?
-            }
-        };
+        let pre = self.pre_instantiate(&component, &imports, &unsupported)?;
         let pre = PluginPre::new(pre)?;
 
         let stdout = MemoryOutputPipe::new(OUTPUT_LIMIT);
@@ -4581,6 +4623,30 @@ fn completion_handler(
 /// different "layer" there.
 fn is_core_module(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[0..4] == b"\0asm" && bytes[4..8] == [1, 0, 0, 0]
+}
+
+/// The function names Wasmtime says are missing from an imported instance.
+/// Its wording is "instance export `NAME` has the wrong type: function
+/// implementation is missing", which is also what loading the plugin says.
+fn missing_function_names(text: &str) -> Vec<String> {
+    if !text.contains("function implementation is missing") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut rest = text;
+    const PREFIX: &str = "instance export `";
+    while let Some(i) = rest.find(PREFIX) {
+        rest = &rest[i + PREFIX.len()..];
+        let Some(j) = rest.find('`') else {
+            break;
+        };
+        let name = &rest[..j];
+        if !name.is_empty() && !out.iter().any(|n| n == name) {
+            out.push(name.to_string());
+        }
+        rest = &rest[j + 1..];
+    }
+    out
 }
 
 /// Point at the import that couldn't be satisfied.
@@ -5022,6 +5088,20 @@ mod tests {
                 .expect("should fail")
         );
         assert!(err.contains("flush"), "{err}");
+
+        // A fixture with the same import: preflight names the missing
+        // function without running any of the component's code.
+        let bytes = component_against(
+            &newer,
+            world,
+            include_str!("../../../../tests/fixtures/incompatible-plugin.wat"),
+        );
+        let inspection = rt.inspect("incompatible", &bytes).unwrap();
+        assert_eq!(rt.missing_forge_functions(&inspection), ["flush"]);
+        assert_eq!(
+            rt.compatibility_problem(&inspection).as_deref(),
+            Some("needs a newer Forge (missing `flush`)")
+        );
     }
 
     #[test]

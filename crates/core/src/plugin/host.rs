@@ -368,6 +368,14 @@ impl PluginHost {
         self.inspect(PluginFile::read(path)?)
     }
 
+    /// Does this component use a `forge:editor` function this Forge does
+    /// not have? The component is compiled and type-checked against the
+    /// linker; no plugin code runs.
+    pub fn compatibility_problem(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
+        let inspection = self.runtime.inspect(name, bytes)?;
+        Ok(self.runtime.compatibility_problem(&inspection))
+    }
+
     fn start_tracking(&mut self, editor: &Editor) {
         if !self.tracking {
             // Start watching from here; existing buffers aren't "opened".

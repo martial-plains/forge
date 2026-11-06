@@ -332,7 +332,9 @@ pub enum Choice {
     /// select-and-paste: which kill-ring entry, by its number in the
     /// candidate ("3: first line…").
     KillEntry,
-    InstallPackage,
+    InstallPackage {
+        force: bool,
+    },
     DeletePackage,
     UpgradePackage,
     UpgradeVcPackage,
@@ -1788,9 +1790,9 @@ fn submit(app: &mut App, mut mb: Minibuffer) {
                 }
                 None => app.error(format!("No heading {input}")),
             },
-            Choice::InstallPackage => {
+            Choice::InstallPackage { force } => {
                 if candidates.contains(&input) {
-                    crate::packages::install_named(app, &input);
+                    crate::packages::install_named_with_force(app, &input, force);
                 } else if !input.is_empty() {
                     app.error(format!("No package {input}"));
                 }
@@ -2173,7 +2175,7 @@ fn source(
                 Choice::BookmarkJump | Choice::BookmarkDelete => "bookmark",
                 Choice::DescribeSymbol { .. } => "symbol",
                 Choice::KillEntry => "kill",
-                Choice::InstallPackage
+                Choice::InstallPackage { .. }
                 | Choice::DeletePackage
                 | Choice::UpgradePackage
                 | Choice::UpgradeVcPackage => "package",
