@@ -17,6 +17,7 @@ pub mod check;
 pub mod cli;
 pub mod gfx;
 pub mod headless;
+pub mod package_cli;
 pub mod ui;
 pub mod watchdog;
 

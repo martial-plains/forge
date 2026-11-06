@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::*;
+use crate::declare::{DeferredCode, SkipReason, SystemPackageNeed, UseOutcome, UseReport};
 use crate::theme::{FaceStyle, NamedTheme, all_faces, parse_color};
 use rhai::NativeCallContext;
 use std::cell::OnceCell;
@@ -82,6 +83,14 @@ impl RhaiConfig {
         cfg.install_api(&mut engine, Rc::downgrade(&engine_cell));
         let _ = engine_cell.set(engine);
         cfg.scope.borrow_mut().push_constant("forge", Forge);
+        Ok(cfg)
+    }
+
+    /// A configuration for collecting declarations: closures are recorded
+    /// but not run, and nothing may prompt, install or write.
+    pub fn collecting() -> RhaiResult<Self> {
+        let cfg = Self::new()?;
+        cfg.shared.collecting.set(true);
         Ok(cfg)
     }
 
@@ -843,6 +852,7 @@ impl RhaiConfig {
         engine.register_fn(
             "grant",
             move |_: &mut PluginApi, name: ImmutableString, spec: Map| -> RhaiResult<()> {
+                s.deny_while_collecting("forge.plugin.grant")?;
                 let g = parse_grants(&spec)?;
                 s.grants
                     .borrow_mut()
@@ -896,8 +906,7 @@ impl RhaiConfig {
             s.use_log
                 .borrow()
                 .iter()
-                .cloned()
-                .map(Dynamic::from)
+                .map(|report| Dynamic::from(report.message.clone()))
                 .collect()
         });
         let s = self.shared.clone();
@@ -962,6 +971,7 @@ impl RhaiConfig {
                   text: ImmutableString,
                   then: FnPtr|
                   -> RhaiResult<u32> {
+                s.deny_while_collecting("forge.fs.write")?;
                 if s.project.borrow().is_some() {
                     return Err(err(
                         "forge.fs.write isn't available in project init.rhai files",
@@ -1408,18 +1418,22 @@ const USE_PACKAGE_DECLARATION_KEYS: &[&str] = &[
     "allow_history_rewrite",
 ];
 
-/// Is a `when`/`if`/`unless` value true? A function is called.
+/// Is a `when`/`if`/`unless` value true? A function is called, except while
+/// collecting declarations: then it is left unevaluated (`None`).
 fn use_condition(
     s: &std::rc::Rc<Shared>,
     engine_cell: &Weak<OnceCell<Engine>>,
     value: &Dynamic,
     what: &str,
-) -> RhaiResult<bool> {
+) -> RhaiResult<Option<bool>> {
     if let Some(f) = value.clone().try_cast::<FnPtr>() {
+        if s.collecting.get() {
+            return Ok(None);
+        }
         let r = call_now(s, engine_cell, f, ())?;
-        as_bool(&r, what)
+        as_bool(&r, what).map(Some)
     } else {
-        as_bool(value, what)
+        as_bool(value, what).map(Some)
     }
 }
 
@@ -1441,9 +1455,11 @@ fn use_code(
     match call_now(s, engine_cell, func, ()) {
         Ok(_) => Ok(()),
         Err(e) if catch => {
-            s.use_log
-                .borrow_mut()
-                .push(format!("{name}: {key} failed: {e}"));
+            s.use_log.borrow_mut().push(UseReport::note(
+                name.to_string(),
+                None,
+                format!("{name}: {key} failed: {e}"),
+            ));
             Ok(())
         }
         Err(e) => Err(e),
@@ -1491,9 +1507,9 @@ fn exe_on_path(exe: &str) -> bool {
 
 /// `ensure_system_package`: a name ("rg"), a list, or a map of
 /// executable (or a file path) to a package name or an install command.
-/// Anything missing is installed in the background; returns the commands
-/// started.
-fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
+/// Anything missing is installed in the background unless `spawn` is false;
+/// returns what was wanted either way.
+fn ensure_system_packages(value: &Dynamic, spawn: bool) -> RhaiResult<Vec<SystemPackageNeed>> {
     let mut wanted: Vec<(String, Option<String>)> = Vec::new();
     if let Some(m) = value.clone().try_cast::<Map>() {
         for (exe, how) in &m {
@@ -1507,9 +1523,14 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
             wanted.push((exe, None));
         }
     }
-    let mut started = Vec::new();
+    let mut needs = Vec::new();
     for (exe, how) in wanted {
         if exe_on_path(&exe) {
+            needs.push(SystemPackageNeed {
+                executable: exe,
+                command: None,
+                present: true,
+            });
             continue;
         }
         let command = match how {
@@ -1517,10 +1538,9 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
             Some(package) => system_install_command(&package),
             None => system_install_command(&exe),
         };
-        let Some(command) = command else {
-            continue;
-        };
-        #[cfg(not(test))]
+        if spawn
+            && !cfg!(test)
+            && let Some(command) = &command
         {
             let (shell, flag) = if cfg!(windows) {
                 ("cmd", "/C")
@@ -1528,15 +1548,19 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
                 ("sh", "-c")
             };
             let _ = std::process::Command::new(shell)
-                .args([flag, &command])
+                .args([flag, command])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();
         }
-        started.push(command);
+        needs.push(SystemPackageNeed {
+            executable: exe,
+            command,
+            present: false,
+        });
     }
-    Ok(started)
+    Ok(needs)
 }
 
 /// `use_package(name, spec)`: a `forge.plugin.declare` plus the keys and
@@ -1561,9 +1585,17 @@ fn use_package_spec(
     for key in spec.keys() {
         if !USE_PACKAGE_KEYS.contains(&key.as_str()) {
             let where_ = line.map(|n| format!(" (line {n})")).unwrap_or_default();
-            s.use_log
-                .borrow_mut()
-                .push(format!("{name}: skipped, unknown key {key:?}{where_}"));
+            let message = format!("{name}: skipped, unknown key {key:?}{where_}");
+            s.use_log.borrow_mut().push(UseReport {
+                name: name.clone(),
+                line,
+                message,
+                outcome: UseOutcome::Error {
+                    message: format!("unknown key {key:?}"),
+                },
+                deferred: Vec::new(),
+                system_packages: Vec::new(),
+            });
             return Err(err(format!(
                 "unknown key {key:?} in use_package (known: {})",
                 USE_PACKAGE_KEYS.join(", ")
@@ -1611,32 +1643,67 @@ fn use_package_spec(
         Some(v) => as_bool(v, "catch")?,
         None => false,
     };
-    let skip = |why: &str| {
-        s.use_log
-            .borrow_mut()
-            .push(format!("{name}: skipped, {why}"));
+    let collecting = s.collecting.get();
+    let mut deferred = Vec::new();
+    let mut system_packages = Vec::new();
+    let mut conditional = None;
+    let skip = |why: &str, reason: SkipReason| {
+        let message = format!("{name}: skipped, {why}");
+        s.use_log.borrow_mut().push(UseReport {
+            name: name.clone(),
+            line,
+            message,
+            outcome: UseOutcome::Skipped { reason },
+            deferred: Vec::new(),
+            system_packages: Vec::new(),
+        });
     };
 
     // Whether to use it at all.
     if let Some(v) = spec.get("disabled")
         && as_bool(v, "disabled")?
     {
-        skip("disabled");
+        skip("disabled", SkipReason::Disabled);
         return Ok(());
     }
     for key in ["when", "if"] {
-        if let Some(v) = spec.get(key)
-            && !use_condition(s, engine_cell, v, key)?
-        {
-            skip(&format!("{key} was false"));
-            return Ok(());
+        if let Some(v) = spec.get(key) {
+            match use_condition(s, engine_cell, v, key)? {
+                Some(true) => {}
+                Some(false) => {
+                    skip(
+                        &format!("{key} was false"),
+                        if key == "when" {
+                            SkipReason::WhenFalse
+                        } else {
+                            SkipReason::IfFalse
+                        },
+                    );
+                    return Ok(());
+                }
+                None => {
+                    conditional = Some(key.to_string());
+                    if !deferred.contains(&DeferredCode::Condition) {
+                        deferred.push(DeferredCode::Condition);
+                    }
+                }
+            }
         }
     }
-    if let Some(v) = spec.get("unless")
-        && use_condition(s, engine_cell, v, "unless")?
-    {
-        skip("unless was true");
-        return Ok(());
+    if let Some(v) = spec.get("unless") {
+        match use_condition(s, engine_cell, v, "unless")? {
+            Some(false) => {}
+            Some(true) => {
+                skip("unless was true", SkipReason::UnlessTrue);
+                return Ok(());
+            }
+            None => {
+                conditional = Some("unless".to_string());
+                if !deferred.contains(&DeferredCode::Condition) {
+                    deferred.push(DeferredCode::Condition);
+                }
+            }
+        }
     }
     let requires = match spec.get("requires") {
         Some(v) => name_or_names(v, "requires")?,
@@ -1647,9 +1714,18 @@ fn use_package_spec(
         for need in &requires {
             if !declared.contains(need) {
                 let where_ = line.map(|n| format!(" (line {n})")).unwrap_or_default();
-                s.use_log.borrow_mut().push(format!(
-                    "{name}: skipped, requires {need}, which isn't declared{where_}"
-                ));
+                let message =
+                    format!("{name}: skipped, requires {need}, which isn't declared{where_}");
+                s.use_log.borrow_mut().push(UseReport {
+                    name: name.clone(),
+                    line,
+                    message,
+                    outcome: UseOutcome::Skipped {
+                        reason: SkipReason::MissingRequires(need.clone()),
+                    },
+                    deferred: Vec::new(),
+                    system_packages: Vec::new(),
+                });
                 return Ok(());
             }
         }
@@ -1663,24 +1739,49 @@ fn use_package_spec(
         && spec.get("index").is_none()
     {
         // ensure: false with nothing to fetch: a built-in or hand-installed one.
-        s.use_log
-            .borrow_mut()
-            .push(format!("{name}: not installed by Forge (ensure: false)"));
+        s.use_log.borrow_mut().push(UseReport::note(
+            name.clone(),
+            line,
+            format!("{name}: not installed by Forge (ensure: false)"),
+        ));
     }
 
     if let Some(v) = spec.get("ensure_system_package") {
-        for c in ensure_system_packages(v)? {
+        system_packages = ensure_system_packages(v, !collecting)?;
+        for need in &system_packages {
+            let Some(command) = &need.command else {
+                continue;
+            };
+            let message = if collecting {
+                format!("{name}: would install a system package: {command}")
+            } else {
+                format!("{name}: installing a system package: {command}")
+            };
             s.use_log
                 .borrow_mut()
-                .push(format!("{name}: installing a system package: {c}"));
+                .push(UseReport::note(name.clone(), line, message));
         }
     }
 
     if let Some(v) = spec.get("preface") {
-        use_code(s, engine_cell, &name, "preface", v, catch)?;
+        if collecting {
+            if !v.is::<FnPtr>() {
+                return Err(err("use_package: preface is a function, like || { ... }"));
+            }
+            deferred.push(DeferredCode::Preface);
+        } else {
+            use_code(s, engine_cell, &name, "preface", v, catch)?;
+        }
     }
     if let Some(init) = spec.get("init") {
-        use_code(s, engine_cell, &name, "init", init, catch)?;
+        if collecting {
+            if !init.is::<FnPtr>() {
+                return Err(err("use_package: init is a function, like || { ... }"));
+            }
+            deferred.push(DeferredCode::Init);
+        } else {
+            use_code(s, engine_cell, &name, "init", init, catch)?;
+        }
     }
     if let Some(custom) = spec.get("custom") {
         for (opt, value) in as_map(custom.clone(), "custom")? {
@@ -1755,7 +1856,14 @@ fn use_package_spec(
         }
     }
     let config_fn = match spec.get("config") {
-        Some(c) if c.is::<FnPtr>() => Some(c.clone()),
+        Some(c) if c.is::<FnPtr>() => {
+            if collecting {
+                deferred.push(DeferredCode::Config);
+                None
+            } else {
+                Some(c.clone())
+            }
+        }
         Some(c) => {
             declaration.insert("config".into(), c.clone());
             None
@@ -1881,14 +1989,29 @@ fn use_package_spec(
         .iter()
         .find(|u| u.name == name)
         .is_some_and(|u| u.lazy());
-    s.use_log.borrow_mut().push(format!(
-        "{name}: {}",
-        if lazy {
-            "deferred until used"
-        } else {
-            "loads at startup"
-        }
-    ));
+    let message = if let Some(key) = &conditional {
+        format!("{name}: conditional on {key}, not evaluated")
+    } else {
+        format!(
+            "{name}: {}",
+            if lazy {
+                "deferred until used"
+            } else {
+                "loads at startup"
+            }
+        )
+    };
+    s.use_log.borrow_mut().push(UseReport {
+        name: name.clone(),
+        line,
+        message,
+        outcome: match &conditional {
+            Some(key) => UseOutcome::Conditional { key: key.clone() },
+            None => UseOutcome::Collected { lazy },
+        },
+        deferred,
+        system_packages,
+    });
 
     for (ext, mode) in &associations {
         s.with_editor(|ed| ed.modes.associate(ext, mode).map_err(|e| e.to_string()))?;
@@ -2472,6 +2595,7 @@ fn keymap_remap(
 }
 
 fn command_run(s: &std::rc::Rc<Shared>, name: &str, arg: Option<i64>) -> RhaiResult<()> {
+    s.deny_while_collecting("forge.command.run")?;
     if !s.with_editor(|ed| Ok(ed.commands.contains(name)))? {
         if s.in_init.get() {
             s.effects
@@ -2489,6 +2613,7 @@ fn command_run(s: &std::rc::Rc<Shared>, name: &str, arg: Option<i64>) -> RhaiRes
 }
 
 fn ui_input(s: &std::rc::Rc<Shared>, opts: Option<Map>, then: FnPtr) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.ui.input")?;
     let (prompt, default) = match opts {
         Some(o) => (map_string(&o, "prompt")?, map_string(&o, "default")?),
         None => (None, None),
@@ -2509,6 +2634,7 @@ fn ui_select(
     opts: Option<Map>,
     then: FnPtr,
 ) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.ui.select")?;
     let items = items
         .iter()
         .map(|d| as_string(d, "select item"))
@@ -2667,6 +2793,7 @@ fn process_run(
     then: FnPtr,
 ) -> RhaiResult<u32> {
     use std::time::Duration;
+    s.deny_while_collecting("forge.process.run")?;
     if s.project.borrow().is_some() {
         return Err(err(
             "forge.process.run isn't available in project init.rhai files",
@@ -2776,6 +2903,7 @@ fn http_get(
     headers: Option<Map>,
     then: FnPtr,
 ) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.http.get")?;
     if s.project.borrow().is_some() {
         return Err(err(
             "forge.http.get isn't available in project init.rhai files",
@@ -2803,6 +2931,7 @@ fn http_request(
     opts: Option<Map>,
     then: FnPtr,
 ) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.http.request")?;
     if s.project.borrow().is_some() {
         return Err(err(
             "forge.http.request isn't available in project init.rhai files",
@@ -2840,6 +2969,7 @@ fn env_set(
     value: Dynamic,
     substitute: bool,
 ) -> RhaiResult<()> {
+    s.deny_while_collecting("forge.env.set")?;
     let value = if value.is_unit() {
         None
     } else if let Some(text) = value.clone().try_cast::<ImmutableString>() {

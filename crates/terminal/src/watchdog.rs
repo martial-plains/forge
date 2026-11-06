@@ -4,7 +4,6 @@
 //! state it shares with the main loop.
 
 use forge_editor::watch::Watch;
-use ratatui::crossterm::event::{self};
 use ratatui::crossterm::{cursor, queue, style, terminal};
 use std::io::Write;
 use std::time::Duration;
@@ -27,14 +26,6 @@ pub fn spawn(watch: Watch) {
                             draw_busy(&name);
                             watch.mark_dirty();
                             shown = true;
-                        }
-                        // Only read while busy, and never block: the main
-                        // loop reads keys the rest of the time.
-                        while matches!(event::poll(Duration::ZERO), Ok(true)) {
-                            match event::read() {
-                                Ok(ev) => watch.handle_busy_event(ev),
-                                Err(_) => break,
-                            }
                         }
                     }
                     Some(_) => {}

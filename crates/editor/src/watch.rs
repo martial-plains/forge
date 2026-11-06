@@ -3,10 +3,10 @@
 //! call while it runs.
 //!
 //! A call runs on the frontend's thread (it edits the editor directly), so
-//! while it runs the frontend can't read keys or redraw. The terminal's
-//! watchdog thread drives this state: it shows "NAME is busy... (C-g to
-//! stop)", reads keys itself, and stops a call that never ends. The macOS
-//! app asks the same state what is busy and to interrupt it.
+//! while it runs the frontend can't read keys or redraw. The terminal's input
+//! thread routes keys here while a call is busy, and the watchdog shows
+//! "NAME is busy... (C-g to stop)" and stops a call that never ends. The
+//! macOS app asks the same state what is busy and to interrupt it.
 
 use forge_core::{PluginMonitor, RhaiMonitor};
 use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// What the watchdog shares with the main loop.
+/// What the input thread and watchdog share with the main loop.
 #[derive(Clone, Default)]
 pub struct Watch {
     plugins: Arc<Mutex<Option<PluginMonitor>>>,

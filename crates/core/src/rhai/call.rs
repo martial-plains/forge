@@ -175,7 +175,22 @@ impl RhaiConfig {
 
     /// One line per use_package: loaded, deferred, or why it was skipped.
     pub fn use_package_report(&self) -> Vec<String> {
+        self.shared
+            .use_log
+            .borrow()
+            .iter()
+            .map(|report| report.message.clone())
+            .collect()
+    }
+
+    /// The structured form of `use_package_report()`.
+    pub fn use_reports(&self) -> Vec<crate::declare::UseReport> {
         self.shared.use_log.borrow().clone()
+    }
+
+    /// Is this configuration collecting declarations only?
+    pub fn is_collecting(&self) -> bool {
+        self.shared.collecting.get()
     }
 
     /// Run a command defined with `forge.command.create` or bound as a function.

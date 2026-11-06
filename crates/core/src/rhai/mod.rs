@@ -465,7 +465,9 @@ struct Shared {
     /// Plugins declared with use_package, in the order declared.
     uses: RefCell<Vec<crate::declare::PluginUse>>,
     /// What each use_package did, for `use_package_report()`.
-    use_log: RefCell<Vec<String>>,
+    use_log: RefCell<Vec<crate::declare::UseReport>>,
+    /// Collect declarations only: do not run closures or touch the machine.
+    collecting: Cell<bool>,
     deadline: Cell<Option<Instant>>,
     /// forge.on(event, fn) handlers: (event name, function).
     handlers: RefCell<Vec<(String, Callback)>>,
@@ -502,6 +504,16 @@ impl Shared {
         })
         .ok()
         .flatten()
+    }
+
+    fn deny_while_collecting(&self, what: &str) -> RhaiResult<()> {
+        if self.collecting.get() {
+            Err(err(format!(
+                "{what} isn't available while collecting declarations"
+            )))
+        } else {
+            Ok(())
+        }
     }
 
     fn with_editor<R>(&self, f: impl FnOnce(&mut Editor) -> Result<R, String>) -> RhaiResult<R> {
@@ -1371,9 +1383,17 @@ fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
     ];
     for k in spec.keys() {
         if !KEYS.contains(&k.as_str()) {
-            s.use_log
-                .borrow_mut()
-                .push(format!("{name}: skipped, unknown key {k:?}"));
+            let message = format!("{name}: skipped, unknown key {k:?}");
+            s.use_log.borrow_mut().push(crate::declare::UseReport {
+                name: name.clone(),
+                line: None,
+                message,
+                outcome: crate::declare::UseOutcome::Error {
+                    message: format!("unknown key {k:?}"),
+                },
+                deferred: Vec::new(),
+                system_packages: Vec::new(),
+            });
             return Err(err(format!(
                 "unknown key {k:?} in a plugin declaration (known: {})",
                 KEYS.join(", ")

@@ -136,13 +136,25 @@ const OPTIONS: &[Opt] = &[
                \"Sharing plugins\")",
     },
     Opt {
-        flags: "\\-\\-package-snapshot-diff",
+        flags: "package declarations",
+        arg: Some("[\\-\\-json]"),
+        desc: "collect use_package declarations without starting the editor; closures are \
+               reported, not run",
+    },
+    Opt {
+        flags: "package doctor",
+        arg: Some("[\\-\\-json]"),
+        desc: "check declared and installed plugins without starting the editor; exit status \
+               is 1 on an error finding",
+    },
+    Opt {
+        flags: "package snapshot diff",
         arg: Some("BEFORE AFTER [\\-\\-json]"),
         desc: "compare saved package snapshots without starting the editor; emit JSON with \
                \\-\\-json",
     },
     Opt {
-        flags: "\\-\\-package-lockfile-diff",
+        flags: "package lockfile diff",
         arg: Some("BEFORE AFTER [\\-\\-json]"),
         desc: "compare two lockfiles without starting the editor; emit JSON with \\-\\-json",
     },
@@ -249,8 +261,10 @@ mod tests {
             "\\-\\-check-plugin",
             "\\-\\-headless",
             "\\-\\-package-entry",
-            "\\-\\-package-snapshot-diff",
-            "\\-\\-package-lockfile-diff",
+            "package declarations",
+            "package doctor",
+            "package snapshot diff",
+            "package lockfile diff",
             "\\-\\-help",
             "\\-\\-version",
         ] {

@@ -1177,6 +1177,12 @@ fn use_package_conditions_code_and_modes() {
         "catch logged: {report}"
     );
     assert!(report.contains("base: deferred"), "{report}");
+    let (first, out) = rhai.eval(&mut ed, "use_package_report()[0]");
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    assert!(
+        first.unwrap_or_default().contains("off: skipped, disabled"),
+        "the Rhai function still returns strings"
+    );
 
     ok(&load(
         &rhai,

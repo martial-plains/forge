@@ -10,6 +10,7 @@ pub mod buffer;
 mod buffer_ext;
 pub mod canvas;
 pub mod clipboard;
+pub mod collect;
 pub mod commands;
 pub mod completion;
 pub mod config;
@@ -89,7 +90,10 @@ pub use app::{BufferId, Editor, EditorState};
 pub use buffer::{Buffer, Edit, Pos};
 pub use clipboard::{SaveInterprogramPasteBeforeKill, SelectionTarget};
 pub use commands::{CommandInfo, CommandRegistry, CommandSource};
-pub use declare::PluginUse;
+pub use declare::{
+    CollectedDeclaration, CollectedDeclarations, CollectionError, DeclarationState, DeferredCode,
+    PluginUse, SkipReason, SystemPackageNeed, UseOutcome, UseReport,
+};
 pub use keymap::{ActiveKeymaps, Keymap, Keymaps, Lookup, Origin, Scope};
 pub use kill_ring::KillRing;
 pub use kmacro::Kmacro;

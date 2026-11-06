@@ -14,6 +14,49 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 #[test]
+fn package_declarations_collect_without_running_code() {
+    let dir = temp_dir("package-declarations");
+    std::fs::create_dir_all(&dir).unwrap();
+    let marker = dir.join("installed");
+    let exe = format!("forge-missing-{}", std::process::id());
+    let init = dir.join("init.rhai");
+    std::fs::write(
+        &init,
+        format!(
+            r#"use_package("demo", #{{
+                when: || {{ throw "condition ran" }},
+                preface: || {{ throw "preface ran" }},
+                ensure_system_package: #{{ "{exe}": "touch {}" }},
+            }});
+"#,
+            marker.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .args(["package", "declarations", "--json", "--init-directory"])
+        .arg(&dir)
+        .env("FORGE_DATA_DIR", dir.join("data"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    let declared: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let entry = &declared["entries"][0];
+    assert_eq!(entry["name"], "demo");
+    assert_eq!(entry["state"]["kind"], "conditional");
+    assert!(
+        entry["deferred"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("condition"))
+    );
+    assert!(!marker.exists(), "collection installed a package");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn malformed_lock_is_reported_and_not_rewritten() {
     let dir = temp_dir("malformed-lock");
     std::fs::create_dir_all(&dir).unwrap();
@@ -152,7 +195,7 @@ fn lockfile_diff_reports_changes_and_json() {
     let after_path = LockFile::path(&after_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_forge"))
-        .arg("--package-lockfile-diff")
+        .args(["package", "lockfile", "diff"])
         .arg(&before_path)
         .arg(&after_path)
         .output()
@@ -171,7 +214,7 @@ fn lockfile_diff_reports_changes_and_json() {
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_forge"))
-        .arg("--package-lockfile-diff")
+        .args(["package", "lockfile", "diff"])
         .arg(&before_path)
         .arg(&after_path)
         .arg("--json")

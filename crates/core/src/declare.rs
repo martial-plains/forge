@@ -12,9 +12,11 @@
 //! the ordering; the installing and loading live in the editor crate.
 
 use crate::permissions::Grants;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// One `use_package(name, {...})`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginUse {
     pub name: String,
     /// A git repository to clone and build.
@@ -80,6 +82,183 @@ impl PluginUse {
             policy.timeout = std::time::Duration::from_secs(secs);
         }
         policy
+    }
+}
+
+/// What evaluating `init.rhai` without running closures or touching the
+/// machine found. Later package commands share this.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectedDeclarations {
+    pub init_path: Option<PathBuf>,
+    pub entries: Vec<CollectedDeclaration>,
+    pub errors: Vec<CollectionError>,
+    /// Structured form of `use_package_report()`, in call order.
+    pub report: Vec<UseReport>,
+}
+
+/// One `use_package` call seen during collection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectedDeclaration {
+    pub name: String,
+    pub line: Option<usize>,
+    pub declaration: Option<PluginUse>,
+    pub state: DeclarationState,
+    /// Closures in the declaration that were deliberately not run.
+    pub deferred: Vec<DeferredCode>,
+    /// System packages the declaration asked for; never installed here.
+    pub system_packages: Vec<SystemPackageNeed>,
+}
+
+/// What collection could decide about a declaration without running code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DeclarationState {
+    Active,
+    /// A `when`/`if`/`unless` value was a function, so it was not evaluated.
+    Conditional,
+    Skipped(SkipReason),
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", content = "detail", rename_all = "snake_case")]
+pub enum SkipReason {
+    Disabled,
+    WhenFalse,
+    IfFalse,
+    UnlessTrue,
+    MissingRequires(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeferredCode {
+    Preface,
+    Init,
+    Config,
+    Condition,
+}
+
+/// A package a declaration wants from the system package manager. Collection
+/// records it but never runs the command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemPackageNeed {
+    pub executable: String,
+    pub command: Option<String>,
+    pub present: bool,
+}
+
+/// One line for `use_package_report()`, plus what it means.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UseReport {
+    pub name: String,
+    pub line: Option<usize>,
+    pub message: String,
+    pub outcome: UseOutcome,
+    pub deferred: Vec<DeferredCode>,
+    pub system_packages: Vec<SystemPackageNeed>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum UseOutcome {
+    Collected {
+        lazy: bool,
+    },
+    Conditional {
+        key: String,
+    },
+    Skipped {
+        reason: SkipReason,
+    },
+    Error {
+        message: String,
+    },
+    /// A report line that does not describe the declaration's final state.
+    Note,
+}
+
+impl UseReport {
+    pub fn note(name: impl Into<String>, line: Option<usize>, message: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            line,
+            message: message.into(),
+            outcome: UseOutcome::Note,
+            deferred: Vec::new(),
+            system_packages: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionError {
+    pub name: Option<String>,
+    pub line: Option<usize>,
+    pub message: String,
+}
+
+impl CollectionError {
+    pub fn new(
+        name: Option<String>,
+        line: Option<usize>,
+        message: impl Into<String>,
+    ) -> CollectionError {
+        CollectionError {
+            name,
+            line,
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for CollectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (&self.name, self.line) {
+            (Some(name), Some(line)) => write!(f, "{name} (init.rhai:{line}): {}", self.message),
+            (Some(name), None) => write!(f, "{name}: {}", self.message),
+            (None, Some(line)) => write!(f, "init.rhai:{line}: {}", self.message),
+            (None, None) => write!(f, "{}", self.message),
+        }
+    }
+}
+
+impl std::error::Error for CollectionError {}
+
+impl CollectedDeclarations {
+    /// Declarations that can be acted on without evaluating a closure.
+    pub fn active_uses(&self) -> Vec<&PluginUse> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.state == DeclarationState::Active)
+            .filter_map(|entry| entry.declaration.as_ref())
+            .collect()
+    }
+
+    /// Every parsed declaration, including conditional ones.
+    pub fn all_uses(&self) -> Vec<&PluginUse> {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.declaration.as_ref())
+            .collect()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&CollectedDeclaration> {
+        self.entries.iter().find(|entry| entry.name == name)
+    }
+
+    /// Active declarations in `after` order.
+    pub fn active_order(&self) -> Vec<String> {
+        let uses: Vec<PluginUse> = self.active_uses().into_iter().cloned().collect();
+        order(&uses)
+    }
+
+    /// The text `use_package_report()` returns.
+    pub fn report_lines(&self) -> Vec<String> {
+        self.report
+            .iter()
+            .map(|report| report.message.clone())
+            .collect()
     }
 }
 

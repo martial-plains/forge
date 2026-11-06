@@ -1033,9 +1033,12 @@ than changing the shared lockfile.
   removes package-managed plugins that `forge-lock.toml` does not list;
   hand-copied plugins are left alone. A rerun after an interrupted restore
   converges to the same files and lockfile.
-- `forge --package-snapshot-diff BEFORE AFTER --json` compares snapshots
+- `forge package declarations [--json]` collects `use_package`
+  declarations without starting the editor; closures are reported, not
+  run.
+- `forge package snapshot diff BEFORE AFTER --json` compares snapshots
   without starting the editor and emits JSON.
-- `forge --package-lockfile-diff BEFORE AFTER --json` compares two
+- `forge package lockfile diff BEFORE AFTER --json` compares two
   lockfiles by path, without local overlays, and emits JSON.
 
 ## Limits

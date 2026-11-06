@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! M-x package-doctor and `forge --package-doctor`: collect the package
+//! M-x package-doctor and `forge package doctor`: collect the package
 //! state once, run every check, and render the same findings everywhere.
 
 use crate::app::App;
@@ -240,7 +240,7 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// The text report, used by both M-x package-doctor and --package-doctor.
+/// The text report, used by both M-x package-doctor and package doctor.
 pub fn render_text(findings: &[Finding]) -> String {
     if findings.is_empty() {
         return "No package problems found.\n".to_string();
@@ -311,7 +311,7 @@ fn headless_app() -> anyhow::Result<App> {
     Ok(app)
 }
 
-/// `forge --package-doctor [--json]`. True means no error findings.
+/// `forge package doctor [--json]`. True means no error findings.
 pub fn run_headless(json: bool) -> anyhow::Result<bool> {
     let app = headless_app()?;
     let (ctx, lock_error) = context(&app);

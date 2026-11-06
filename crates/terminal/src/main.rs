@@ -17,7 +17,7 @@ use forge_terminal::{check, headless, mouse, ui, watchdog};
 
 type Term = Terminal<CrosstermBackend<Stdout>>;
 
-use forge_terminal::cli::{self, Daemon};
+use forge_terminal::cli::{self, Daemon, PackageCommand};
 
 const USAGE: &str = cli::USAGE;
 
@@ -144,44 +144,57 @@ fn main() -> anyhow::Result<()> {
         };
         unsafe { std::env::set_var("FORGE_CONFIG_DIR", format!("{home}/{user}/.config/forge")) };
     }
-    if opts.package_doctor {
-        std::process::exit(
-            if forge_terminal::package_doctor::run_headless(opts.json)? {
-                0
-            } else {
-                1
-            },
-        );
-    }
-    if let Some((before, after)) = &opts.package_snapshot_diff {
-        let config = forge_core::config::config_dir()
-            .ok_or_else(|| anyhow::anyhow!("no config directory for package snapshots"))?;
-        let changes = forge_core::LockFile::diff_snapshots(&config, before, after)?;
-        print_package_changes(
-            &changes,
-            opts.json,
-            &format!("No changes between package snapshots {before} and {after}"),
-            &format!("Package snapshot diff: {before} -> {after}"),
-        )?;
-        return Ok(());
-    }
-    if let Some((before, after)) = &opts.package_lockfile_diff {
-        let changes = forge_core::LockFile::diff_lockfiles(before, after)?;
-        print_package_changes(
-            &changes,
-            opts.json,
-            &format!(
-                "No changes between package lockfiles {} and {}",
-                before.display(),
-                after.display()
-            ),
-            &format!(
-                "Package lockfile diff: {} -> {}",
-                before.display(),
-                after.display()
-            ),
-        )?;
-        return Ok(());
+    if let Some(command) = &opts.package {
+        match command {
+            PackageCommand::Declarations => {
+                std::process::exit(
+                    if forge_terminal::package_cli::run_declarations(opts.json)? {
+                        0
+                    } else {
+                        1
+                    },
+                );
+            }
+            PackageCommand::Doctor => {
+                std::process::exit(
+                    if forge_terminal::package_doctor::run_headless(opts.json)? {
+                        0
+                    } else {
+                        1
+                    },
+                );
+            }
+            PackageCommand::SnapshotDiff { before, after } => {
+                let config = forge_core::config::config_dir()
+                    .ok_or_else(|| anyhow::anyhow!("no config directory for package snapshots"))?;
+                let changes = forge_core::LockFile::diff_snapshots(&config, before, after)?;
+                print_package_changes(
+                    &changes,
+                    opts.json,
+                    &format!("No changes between package snapshots {before} and {after}"),
+                    &format!("Package snapshot diff: {before} -> {after}"),
+                )?;
+                return Ok(());
+            }
+            PackageCommand::LockfileDiff { before, after } => {
+                let changes = forge_core::LockFile::diff_lockfiles(before, after)?;
+                print_package_changes(
+                    &changes,
+                    opts.json,
+                    &format!(
+                        "No changes between package lockfiles {} and {}",
+                        before.display(),
+                        after.display()
+                    ),
+                    &format!(
+                        "Package lockfile diff: {} -> {}",
+                        before.display(),
+                        after.display()
+                    ),
+                )?;
+                return Ok(());
+            }
+        }
     }
     let mut plugin_files = opts.plugin_files.clone();
     for dir in &opts.plugin_dirs {
@@ -259,9 +272,19 @@ fn main() -> anyhow::Result<()> {
     app.save_clipboard_on_exit();
     app.editor.save_session();
 
-    restore_terminal()?;
-    terminal.show_cursor()?;
-    result
+    // The terminal may be the thing that went away; putting it back is
+    // best effort then. On a normal quit, report restore failures.
+    let restored = restore_terminal();
+    let cursor = terminal.show_cursor();
+    match result {
+        Err(e) => Err(e),
+        Ok(()) if FATAL_SIGNAL.load(std::sync::atomic::Ordering::Relaxed) => Ok(()),
+        Ok(()) => {
+            restored?;
+            cursor?;
+            Ok(())
+        }
+    }
 }
 
 fn print_package_changes(
@@ -392,6 +415,127 @@ unsafe fn install_one(sig: libc::c_int, handler: libc::sighandler_t) {
 /// The longest the loop waits without looking for a fatal signal.
 const SIGNAL_CHECK: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Watches the terminal even while crossterm owns the input descriptor.
+#[cfg(unix)]
+struct TerminalWatch {
+    fd: Option<libc::c_int>,
+    _tty: Option<std::fs::File>,
+}
+
+#[cfg(unix)]
+impl TerminalWatch {
+    fn new() -> Self {
+        use std::os::fd::AsRawFd;
+
+        // crossterm reads stdin when it is a terminal and `/dev/tty`
+        // otherwise, so watch the same descriptor. A freshly opened
+        // `/dev/tty` reports POLLNVAL on macOS, which would look like a
+        // closed terminal; probe it and skip it unless it can be watched.
+        let stdin_is_tty = unsafe { libc::isatty(libc::STDIN_FILENO) } == 1;
+        let tty = if stdin_is_tty {
+            None
+        } else {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open("/dev/tty")
+                .ok()
+        };
+        let fd = if stdin_is_tty {
+            Some(libc::STDIN_FILENO)
+        } else {
+            tty.as_ref()
+                .map(AsRawFd::as_raw_fd)
+                .filter(|&fd| watchable(fd))
+        };
+        Self { fd, _tty: tty }
+    }
+
+    fn gone(&self) -> bool {
+        self.fd.is_some_and(fd_gone)
+    }
+}
+
+#[cfg(unix)]
+fn watchable(fd: libc::c_int) -> bool {
+    let mut poll_fd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ready = unsafe { libc::poll(&mut poll_fd, 1, 0) };
+    ready >= 0 && poll_fd.revents & libc::POLLNVAL == 0
+}
+
+#[cfg(unix)]
+fn fd_gone(fd: libc::c_int) -> bool {
+    let mut poll_fd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ready = unsafe { libc::poll(&mut poll_fd, 1, 0) };
+    ready > 0 && poll_fd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
+}
+
+#[cfg(not(unix))]
+struct TerminalWatch;
+
+#[cfg(not(unix))]
+impl TerminalWatch {
+    fn new() -> Self {
+        Self
+    }
+
+    fn gone(&self) -> bool {
+        false
+    }
+}
+
+fn terminal_closed(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe
+    )
+}
+
+struct Input {
+    events: std::sync::mpsc::Receiver<Event>,
+}
+
+impl Input {
+    fn spawn(watch: forge_editor::watch::Watch) -> io::Result<Self> {
+        let (sender, events) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("forge-input".into())
+            .spawn(move || {
+                while let Ok(ev) = event::read() {
+                    if watch.busy().is_some() {
+                        watch.handle_busy_event(ev);
+                    } else if sender.send(ev).is_err() {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self { events })
+    }
+
+    fn wait(&self, timeout: std::time::Duration) -> io::Result<Option<Event>> {
+        match self.events.recv_timeout(timeout) {
+            Ok(ev) => Ok(Some(ev)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "terminal input was closed",
+            )),
+        }
+    }
+
+    fn try_next(&self) -> Option<Event> {
+        self.events.try_recv().ok()
+    }
+}
+
 fn run(terminal: &mut Term, app: &mut App) -> anyhow::Result<()> {
     use forge_core::decoration::CursorShape;
     let mut mouse_on = false;
@@ -404,8 +548,14 @@ fn run(terminal: &mut Term, app: &mut App) -> anyhow::Result<()> {
     if gfx.proto() != forge_terminal::caps::GraphicsProto::Off {
         forge_core::org_display::set_inline_image_rows(8);
     }
+    let terminal_watch = TerminalWatch::new();
+    let input = Input::spawn(app.watch.clone())?;
     while !app.quit {
         if FATAL_SIGNAL.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+        if terminal_watch.gone() {
+            FATAL_SIGNAL.store(true, std::sync::atomic::Ordering::Relaxed);
             break;
         }
         // Copies (M-w and friends) reach the system clipboard, so there
@@ -455,15 +605,22 @@ fn run(terminal: &mut Term, app: &mut App) -> anyhow::Result<()> {
         // showing which keys can follow it.
         let delay = app.idle_timeout();
         let wait = delay.map_or(SIGNAL_CHECK, |d| d.min(SIGNAL_CHECK));
-        if !event::poll(wait)? {
-            // Idle work only when its own time has come (the auto-save
-            // timer counts from the last key, so it comes round).
-            if delay.is_some_and(|d| d <= wait) {
-                app.on_idle();
+        let ev = match input.wait(wait) {
+            Ok(Some(ev)) => ev,
+            Ok(None) => {
+                // Idle work only when its own time has come (the auto-save
+                // timer counts from the last key, so it comes round).
+                if delay.is_some_and(|d| d <= wait) {
+                    app.on_idle();
+                }
+                continue;
             }
-            continue;
-        }
-        let ev = event::read()?;
+            Err(e) if terminal_closed(&e) => {
+                FATAL_SIGNAL.store(true, std::sync::atomic::Ordering::Relaxed);
+                break;
+            }
+            Err(e) => return Err(e.into()),
+        };
         // A trackpad burst queues dozens of wheel events per frame;
         // working through them one frame each is the lag that keeps
         // scrolling after the fingers lift. Fold one burst into this
@@ -483,16 +640,15 @@ fn run(terminal: &mut Term, app: &mut App) -> anyhow::Result<()> {
         handle_event(app, ev);
         if let Some(kind) = wheel {
             for _ in 0..32 {
-                if !event::poll(std::time::Duration::from_secs(0)).unwrap_or(false) {
+                let Some(ev) = input.try_next() else {
                     break;
-                }
-                match event::read() {
-                    Ok(Event::Mouse(m2)) if m2.kind == kind => handle_event(app, Event::Mouse(m2)),
-                    Ok(other) => {
+                };
+                match ev {
+                    Event::Mouse(m2) if m2.kind == kind => handle_event(app, Event::Mouse(m2)),
+                    other => {
                         handle_event(app, other);
                         break;
                     }
-                    Err(_) => break,
                 }
             }
         }
@@ -668,5 +824,34 @@ mod cli_tests {
     fn rejects_bad_or_unattached_locations() {
         assert!(parse_cli(&["+0".into(), "file".into()]).is_err());
         assert!(parse_cli(&["+12".into()]).is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod hangup_tests {
+    use super::fd_gone;
+
+    #[test]
+    fn an_open_pipe_is_not_gone() {
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        assert!(!fd_gone(fds[0]));
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
+
+    #[test]
+    fn a_closed_descriptor_is_gone() {
+        let mut fds = [0; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        unsafe {
+            libc::close(fds[0]);
+        }
+        assert!(fd_gone(fds[0]));
+        unsafe {
+            libc::close(fds[1]);
+        }
     }
 }

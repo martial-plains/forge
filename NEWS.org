@@ -1,5 +1,14 @@
 #+title: Forge NEWS
 * 0.1.0
+** Headless package commands collect declarations
+=forge package declarations [--json]= evaluates =init.rhai= and theme
+files without running closures, prompting, installing system packages,
+loading plugins or writing files. Conditional declarations and deferred
+=preface=, =init=, =config= and =when= code are reported for later steps.
+The old headless package options are now =forge package doctor=,
+=forge package snapshot diff BEFORE AFTER= and
+=forge package lockfile diff BEFORE AFTER=; the old flag spellings are
+not accepted.
 ** Package sources can be allowlisted
 Set =forge.opt["package_allowed_sources"]= to restrict package indexes,
 downloads and Git repositories to exact hosts, =*.example.org= suffixes,
@@ -20,6 +29,9 @@ parsing the TOML. A signature from any listed key is accepted, so keys can
 be rotated without a gap. Set =forge.opt["package_index_strict"] = true= to
 also refuse unsigned indexes; without strict mode they still load when no
 signature is present. Tampered indexes and signatures are always refused.
+** Forge exits when its terminal goes away
+Closing the terminal no longer leaves Forge spinning at 100% CPU. The input
+loop now notices a hung-up tty, auto-saves, and exits.
 ** Git upgrades warn about rewritten history and moved tags
 Dry runs and upgrade reviews now warn when a Git package's new commit is
 not a descendant of the locked commit (a force-push or rewritten upstream

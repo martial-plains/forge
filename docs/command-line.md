@@ -26,13 +26,14 @@ forgeclient -s work -e '1 + 2'                        # evaluate Rhai there, pri
 | `-q`, `-Q`, `--no-init-file` | no init.rhai, no saved session |
 | `--init-directory DIR`, `-u USER` | another config directory |
 | `--chdir DIR` | change directory first |
-| `--package-snapshot-diff BEFORE AFTER [--json]` | compare saved package snapshots without starting the editor |
-| `--package-lockfile-diff BEFORE AFTER [--json]` | compare two lockfiles without starting the editor |
-| `--package-doctor [--json]` | check declared and installed plugins without starting the editor; exit status is 1 on an error finding |
+| `package declarations [--json]` | collect `use_package` declarations without starting the editor; closures are reported, not run |
+| `package doctor [--json]` | check declared and installed plugins without starting the editor; exit status is 1 on an error finding |
+| `package snapshot diff BEFORE AFTER [--json]` | compare saved package snapshots without starting the editor |
+| `package lockfile diff BEFORE AFTER [--json]` | compare two lockfiles without starting the editor |
 | `--headless ... [--test CMD]` | run the editor without a terminal; `--test` runs the plugin bisect with CMD (a nonzero exit status means the problem happens; CMD gets `FORGE_BISECT_ENABLED`) |
 
-`--json` emits the result as JSON and is only accepted with
-`--package-snapshot-diff`, `--package-lockfile-diff`, or `--package-doctor`.
+`--json` emits the result as JSON and is only accepted with a `package`
+command or `--profile-startup`.
 
 One difference: visited files open before the other actions, whatever their
 place on the command line.
