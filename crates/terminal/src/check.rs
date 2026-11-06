@@ -293,6 +293,12 @@ fn report(out: &Outcome) -> bool {
             Effect::Http { method, url, .. } => println!("web request: {method} {url}"),
             Effect::Ask { .. } => {}
             Effect::Locate => {}
+            Effect::SetPromptInput(t) => println!("sets prompt input: {t}"),
+            Effect::SuspendPrompt => println!("suspends the prompt"),
+            Effect::ResumeSession(i) => println!("resumes prompt session: {i}"),
+            Effect::JumpToRow { row, accept } => {
+                println!("jumps to row: {row} (accept: {accept})")
+            }
         }
     }
     for e in &out.errors {

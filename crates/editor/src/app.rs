@@ -165,6 +165,9 @@ pub struct App {
     /// The prompt a `completing-read-over` question took over (suspended
     /// while its question runs, then restored).
     pub suspended_prompt: Option<Minibuffer>,
+    /// Prompts a plugin suspended with minibuffer.suspend, newest first.
+    /// completion.sessions lists them and completion.resume brings one back.
+    pub suspended_prompts: Vec<Minibuffer>,
     /// Echo-area message, cleared on the next key.
     pub message: Option<String>,
     /// Name of the *Messages* buffer.
@@ -768,6 +771,7 @@ impl App {
             meta_pending: false,
             minibuffer: None,
             suspended_prompt: None,
+            suspended_prompts: Vec::new(),
             message: None,
             messages_buffer_name: "*Messages*".to_string(),
             message_log_max: forge_core::MessageLogMax::default(),
@@ -969,6 +973,11 @@ impl App {
 
     pub fn prompt(&mut self, prompt: impl Into<String>, purpose: Purpose) {
         self.minibuffer = Some(Minibuffer::new(prompt, purpose));
+        // minibuffer.on-open: run plugin hooks once the prompt is up, after
+        // this key (or plugin call) has finished.
+        for (_, command) in self.editor.completion.minibuffer_open_commands.clone() {
+            self.deferred_commands.push((command, None));
+        }
     }
 
     /// Mirror the open prompt into the core editor, so a plugin can read it

@@ -18,6 +18,8 @@ api!(OptApi);
 api!(KeymapApi);
 api!(CommandApi);
 api!(UiApi);
+api!(MinibufferApi);
+api!(CompletionApi);
 api!(BufferApi);
 api!(ModeApi);
 #[cfg(feature = "tree-sitter")]
@@ -91,6 +93,8 @@ impl RhaiConfig {
         engine.register_type_with_name::<KeymapApi>("Keymap");
         engine.register_type_with_name::<CommandApi>("Command");
         engine.register_type_with_name::<UiApi>("Ui");
+        engine.register_type_with_name::<MinibufferApi>("Minibuffer");
+        engine.register_type_with_name::<CompletionApi>("Completion");
         engine.register_type_with_name::<BufferApi>("Buffers");
         engine.register_type_with_name::<ModeApi>("Mode");
         #[cfg(feature = "tree-sitter")]
@@ -112,6 +116,8 @@ impl RhaiConfig {
         engine.register_get("keymap", |_: &mut Forge| KeymapApi);
         engine.register_get("command", |_: &mut Forge| CommandApi);
         engine.register_get("ui", |_: &mut Forge| UiApi);
+        engine.register_get("minibuffer", |_: &mut Forge| MinibufferApi);
+        engine.register_get("completion", |_: &mut Forge| CompletionApi);
         engine.register_get("buffer", |_: &mut Forge| BufferApi);
         engine.register_get("mode", |_: &mut Forge| ModeApi);
         #[cfg(feature = "tree-sitter")]
@@ -273,6 +279,8 @@ impl RhaiConfig {
         self.install_keymap(engine);
         self.install_command(engine);
         self.install_ui(engine);
+        self.install_minibuffer(engine);
+        self.install_completion(engine);
         self.install_buffer(engine);
         self.install_mode(engine);
         #[cfg(feature = "tree-sitter")]
@@ -468,6 +476,182 @@ impl RhaiConfig {
                     },
                     Pending::Confirm(callback),
                 ))
+            },
+        );
+    }
+
+    fn install_minibuffer(&self, engine: &mut Engine) {
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_input",
+            move |_: &mut MinibufferApi, text: ImmutableString| -> RhaiResult<()> {
+                let open = s.with_editor(|ed| {
+                    if ed.prompt_open {
+                        ed.prompt_input = text.to_string();
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                })?;
+                if open {
+                    s.effects
+                        .borrow_mut()
+                        .push(Effect::SetPromptInput(text.to_string()));
+                }
+                Ok(())
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn("active", move |_: &mut MinibufferApi| -> RhaiResult<bool> {
+            s.with_editor(|ed| Ok(ed.prompt_open))
+        });
+        let s = self.shared.clone();
+        engine.register_fn(
+            "input",
+            move |_: &mut MinibufferApi| -> RhaiResult<String> {
+                s.with_editor(|ed| Ok(ed.prompt_input.clone()))
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "history_kind",
+            move |_: &mut MinibufferApi| -> RhaiResult<Dynamic> {
+                s.with_editor(|ed| {
+                    Ok(ed
+                        .prompt_history
+                        .clone()
+                        .map(Dynamic::from)
+                        .unwrap_or(Dynamic::UNIT))
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "on_open",
+            move |_: &mut MinibufferApi, command: ImmutableString| -> RhaiResult<()> {
+                let name = SOURCE;
+                s.with_editor(|ed| {
+                    if !ed.commands.contains(&command) {
+                        return Err(format!("no command named {command}"));
+                    }
+                    ed.completion
+                        .minibuffer_open_commands
+                        .retain(|(p, _)| p != name);
+                    ed.completion
+                        .minibuffer_open_commands
+                        .push((name.to_string(), command.to_string()));
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn("suspend", move |_: &mut MinibufferApi| -> RhaiResult<()> {
+            let open = s.with_editor(|ed| Ok(ed.prompt_open))?;
+            if open {
+                s.effects.borrow_mut().push(Effect::SuspendPrompt);
+            }
+            Ok(())
+        });
+    }
+
+    fn install_completion(&self, engine: &mut Engine) {
+        let s = self.shared.clone();
+        engine.register_fn(
+            "group",
+            move |_: &mut CompletionApi,
+                  category: ImmutableString,
+                  then: FnPtr|
+                  -> RhaiResult<()> {
+                let callback = Callback::new(&s, then)?;
+                s.groups.borrow_mut().insert(category.to_string(), callback);
+                s.with_editor(|ed| {
+                    ed.completion
+                        .groupers
+                        .insert(category.to_string(), SOURCE.to_string());
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_group_format",
+            move |_: &mut CompletionApi, format: ImmutableString| -> RhaiResult<()> {
+                s.with_editor(|ed| {
+                    ed.completion.group_format = Some((format.to_string(), SOURCE.to_string()));
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_layout",
+            move |_: &mut CompletionApi, layout: ImmutableString, lines: i64| -> RhaiResult<()> {
+                let layout = crate::completion::Layout::from_name(&layout).map_err(err)?;
+                s.with_editor(|ed| {
+                    ed.completion.layout =
+                        Some((layout, lines.clamp(1, 50) as u32, SOURCE.to_string()));
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_row_labels",
+            move |_: &mut CompletionApi, labels: Vec<Dynamic>| -> RhaiResult<()> {
+                let labels = labels
+                    .iter()
+                    .map(|l| as_string(l, "row label"))
+                    .collect::<RhaiResult<Vec<_>>>()?;
+                s.with_editor(|ed| {
+                    ed.completion.row_labels = if labels.is_empty() {
+                        None
+                    } else {
+                        Some((labels.clone(), SOURCE.to_string()))
+                    };
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "jump_to_row",
+            move |_: &mut CompletionApi, row: i64, accept: bool| -> RhaiResult<()> {
+                let open = s.with_editor(|ed| Ok(ed.prompt_open))?;
+                if open {
+                    s.effects.borrow_mut().push(Effect::JumpToRow {
+                        row: row.max(0) as u32,
+                        accept,
+                    });
+                }
+                Ok(())
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "sessions",
+            move |_: &mut CompletionApi| -> RhaiResult<rhai::Array> {
+                let sessions = s.with_editor(|ed| Ok(ed.completion_sessions.clone()))?;
+                Ok(sessions
+                    .into_iter()
+                    .map(|session| {
+                        let mut m = Map::new();
+                        m.insert("category".into(), Dynamic::from(session.category));
+                        m.insert("prompt".into(), Dynamic::from(session.prompt));
+                        m.insert("input".into(), Dynamic::from(session.input));
+                        m.insert("total".into(), Dynamic::from(session.total as i64));
+                        Dynamic::from_map(m)
+                    })
+                    .collect())
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "resume",
+            move |_: &mut CompletionApi, index: i64| -> RhaiResult<()> {
+                s.effects
+                    .borrow_mut()
+                    .push(Effect::ResumeSession(index.max(0) as u32));
+                Ok(())
             },
         );
     }

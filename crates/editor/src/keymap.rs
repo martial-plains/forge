@@ -773,6 +773,8 @@ const COMPLETION_LIST_BINDINGS: &[(&str, &str)] = &[
     ("C-M-n", "minibuffer-list-next-page"),
     ("<prior>", "minibuffer-list-prev-page"),
     ("C-M-p", "minibuffer-list-prev-page"),
+    ("C-v", "minibuffer-list-next-page"),
+    ("M-v", "minibuffer-list-prev-page"),
 ];
 
 /// Prompts that answer yes or no.

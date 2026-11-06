@@ -167,6 +167,17 @@ pub enum Effect {
     /// it is defined (corfu-info-location). Carried out after the call
     /// returns, so a source can be asked without re-entering the host.
     Locate,
+    /// minibuffer.set-input: replace the open prompt's text.
+    SetPromptInput(String),
+    /// minibuffer.suspend: set the open prompt aside.
+    SuspendPrompt,
+    /// completion.resume: bring a suspended prompt back.
+    ResumeSession(u32),
+    /// completion.jump-to-row: highlight (and maybe accept) a visible row.
+    JumpToRow {
+        row: u32,
+        accept: bool,
+    },
 }
 
 pub(crate) const EVENT_KINDS: usize = 5;
@@ -756,6 +767,79 @@ impl forge::editor::completion::Host for PluginState {
         self.foreground_only("completion.set-minibuffer-ui")?;
         let name = self.name.clone();
         self.editor()?.completion.vertical = vertical.then(|| (lines.clamp(1, 50), name));
+        Ok(())
+    }
+
+    fn set_layout(
+        &mut self,
+        layout: forge::editor::completion::Layout,
+        lines: u32,
+    ) -> HostResult<()> {
+        self.foreground_only("completion.set-layout")?;
+        let layout = match layout {
+            forge::editor::completion::Layout::Vertical => crate::completion::Layout::Vertical,
+            forge::editor::completion::Layout::Flat => crate::completion::Layout::Flat,
+            forge::editor::completion::Layout::Grid => crate::completion::Layout::Grid,
+            forge::editor::completion::Layout::Reverse => crate::completion::Layout::Reverse,
+            forge::editor::completion::Layout::Unobtrusive => {
+                crate::completion::Layout::Unobtrusive
+            }
+            forge::editor::completion::Layout::Buffer => crate::completion::Layout::Buffer,
+        };
+        let name = self.name.clone();
+        self.editor()?.completion.layout = Some((layout, lines.clamp(1, 50), name));
+        Ok(())
+    }
+
+    fn group(&mut self, category: String) -> HostResult<()> {
+        self.foreground_only("completion.group")?;
+        let name = self.name.clone();
+        self.editor()?.completion.groupers.insert(category, name);
+        Ok(())
+    }
+
+    fn set_group_format(&mut self, format: String) -> HostResult<()> {
+        self.foreground_only("completion.set-group-format")?;
+        let name = self.name.clone();
+        self.editor()?.completion.group_format = Some((format, name));
+        Ok(())
+    }
+
+    fn set_row_labels(&mut self, labels: Vec<String>) -> HostResult<()> {
+        self.foreground_only("completion.set-row-labels")?;
+        let name = self.name.clone();
+        let labels = if labels.is_empty() {
+            None
+        } else {
+            Some((labels, name))
+        };
+        self.editor()?.completion.row_labels = labels;
+        Ok(())
+    }
+
+    fn jump_to_row(&mut self, row: u32, accept: bool) -> HostResult<()> {
+        self.foreground_only("completion.jump-to-row")?;
+        self.effects.push(Effect::JumpToRow { row, accept });
+        Ok(())
+    }
+
+    fn sessions(&mut self) -> HostResult<Vec<forge::editor::completion::PromptSession>> {
+        Ok(self
+            .editor()?
+            .completion_sessions
+            .iter()
+            .map(|s| forge::editor::completion::PromptSession {
+                category: s.category.clone(),
+                prompt: s.prompt.clone(),
+                input: s.input.clone(),
+                total: s.total,
+            })
+            .collect())
+    }
+
+    fn resume(&mut self, index: u32) -> HostResult<()> {
+        self.foreground_only("completion.resume")?;
+        self.effects.push(Effect::ResumeSession(index));
         Ok(())
     }
 
@@ -2711,6 +2795,45 @@ impl forge::editor::minibuffer::Host for PluginState {
         Ok(self.editor()?.prompt_input.clone())
     }
 
+    fn set_input(&mut self, text: String) -> HostResult<()> {
+        self.foreground_only("minibuffer.set-input")?;
+        let open = {
+            let ed = self.editor()?;
+            if ed.prompt_open {
+                ed.prompt_input = text.clone();
+                true
+            } else {
+                false
+            }
+        };
+        if open {
+            self.effects.push(Effect::SetPromptInput(text));
+        }
+        Ok(())
+    }
+
+    fn on_open(&mut self, command: String) -> HostResult<()> {
+        self.foreground_only("minibuffer.on-open")?;
+        let name = self.name.clone();
+        let ed = self.editor()?;
+        if !ed.commands.contains(&command) {
+            return Err(wasmtime::Error::msg(format!("no command named {command}")));
+        }
+        ed.completion
+            .minibuffer_open_commands
+            .retain(|(plugin, _)| plugin != &name);
+        ed.completion.minibuffer_open_commands.push((name, command));
+        Ok(())
+    }
+
+    fn suspend(&mut self) -> HostResult<()> {
+        self.foreground_only("minibuffer.suspend")?;
+        if self.editor()?.prompt_open {
+            self.effects.push(Effect::SuspendPrompt);
+        }
+        Ok(())
+    }
+
     fn on_input_changed(&mut self, command: String) -> HostResult<()> {
         self.foreground_only("minibuffer.on-input-changed")?;
         let name = self.name.clone();
@@ -3650,6 +3773,9 @@ struct HttpHandler {
 /// A plugin's completion-handler export (world plugin-with-completion).
 struct CompletionHandler {
     annotate: TypedFunc<(String, Vec<String>), (Vec<String>,)>,
+    /// Group names (since 0.1.31). Optional: a plugin built against an
+    /// older interface doesn't export it.
+    group: Option<TypedFunc<(String, Vec<String>), (Vec<String>,)>>,
     complete: TypedFunc<(u32, String, u32, Position), ()>,
     /// The exit callback (since 0.1.16). Optional: a plugin built against
     /// an older interface doesn't export it.
@@ -3907,6 +4033,26 @@ impl LoadedPlugin {
         candidates: &[String],
     ) -> (CallResult, Vec<String>) {
         let Some(f) = self.completion_handler.as_ref().map(|h| h.annotate) else {
+            return (Ok(Ok(())), Vec::new());
+        };
+        self.begin();
+        let exec = self.executor.clone();
+        let r = exec
+            .block_on(f.call_async(&mut self.store, (category.to_string(), candidates.to_vec())));
+        let (r, out) = match r {
+            Ok((v,)) => (Ok(Ok(())), v),
+            Err(e) => (Err(e), Vec::new()),
+        };
+        (self.end(r), out)
+    }
+
+    /// Ask for group names (one per candidate; missing ones are "").
+    pub(crate) fn call_group(
+        &mut self,
+        category: &str,
+        candidates: &[String],
+    ) -> (CallResult, Vec<String>) {
+        let Some(f) = self.completion_handler.as_ref().and_then(|h| h.group) else {
             return (Ok(Ok(())), Vec::new());
         };
         self.begin();
@@ -4346,6 +4492,9 @@ fn process_handler(
     }))
 }
 
+/// The newest 0.1.x version of the plugin API this build knows.
+const WIT_VERSION: u32 = 31;
+
 /// The export `iface` at the newest 0.1.x from `since` on, if any.
 fn find_export(
     store: &mut Store<PluginState>,
@@ -4353,7 +4502,7 @@ fn find_export(
     iface: &str,
     since: u32,
 ) -> Option<String> {
-    (since..30)
+    (since..=WIT_VERSION)
         .rev()
         .map(|v| format!("forge:editor/{iface}@0.1.{v}"))
         .find(|n| instance.get_export(&mut *store, None, n).is_some())
@@ -4402,8 +4551,11 @@ fn completion_handler(
     };
     let annotate = func(store, "annotate")?;
     let complete = func(store, "complete")?;
-    // The exit and location callbacks are optional, so a plugin from
-    // before 0.1.16 / 0.1.17 loads.
+    // Grouping is optional (0.1.31), like the exit and location callbacks
+    // from 0.1.16 / 0.1.17.
+    let group = func(store, "group")
+        .ok()
+        .and_then(|f| instance.get_typed_func(&mut *store, f).ok());
     let commit = func(store, "commit")
         .ok()
         .and_then(|f| instance.get_typed_func(&mut *store, f).ok());
@@ -4419,6 +4571,7 @@ fn completion_handler(
             .get_typed_func(&mut *store, complete)
             .map_err(anyhow::Error::from)
             .with_context(|| format!("{name}.complete"))?,
+        group,
         commit,
         resolve_location,
     }))

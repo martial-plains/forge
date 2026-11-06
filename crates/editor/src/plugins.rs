@@ -943,6 +943,18 @@ pub fn apply(app: &mut App, out: Outcome) {
                 start_rhai_http(app, request, &method, &url, headers, body);
             }
             Effect::Locate => locate(app),
+            Effect::SetPromptInput(text) => {
+                let input = app.minibuffer.as_mut().map(|mb| {
+                    mb.set_input(text);
+                    mb.current_input()
+                });
+                if let Some(input) = input {
+                    app.editor.prompt_input = input;
+                }
+            }
+            Effect::SuspendPrompt => crate::minibuffer::suspend(app),
+            Effect::ResumeSession(index) => crate::minibuffer::resume(app, index as usize),
+            Effect::JumpToRow { row, accept } => crate::minibuffer::jump_to_row(app, row, accept),
         }
     }
     if had_unloads {

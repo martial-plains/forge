@@ -442,6 +442,8 @@ struct Shared {
     logs: RefCell<Vec<LogLine>>,
     settings: RefCell<Settings>,
     commands: RefCell<HashMap<String, Callback>>,
+    /// forge.completion.group(category, fn): category -> callback.
+    groups: RefCell<HashMap<String, Callback>>,
     answers: RefCell<HashMap<u32, Pending>>,
     next_request: Cell<u32>,
     /// (keys, command) bound, to warn about unknown commands later.

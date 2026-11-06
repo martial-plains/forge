@@ -11,7 +11,7 @@
 //   p.write('some text');
 //   p.closeInput();
 
-import * as processes from 'forge:editor/processes@0.1.30';
+import * as processes from 'forge:editor/processes@0.1.31';
 
 const handlers = new Map();
 const decoder = new TextDecoder();

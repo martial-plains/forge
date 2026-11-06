@@ -244,6 +244,36 @@ interface covers both kinds.
 - `set-minibuffer-ui(vertical, lines)` lists candidates under every prompt
   that has them (M-x, C-x b, C-x C-f, plugin questions). C-n / C-p move,
   RET picks, TAB inserts, and M-RET takes the input as typed.
+- `set-layout(layout, lines)` (0.1.31) says how to draw that list:
+  `vertical` (the default, top-down), `flat` (every candidate on one row),
+  `grid` (fill up to `lines` rows across), `reverse` (the selection sits
+  near the bottom, the way vertico-reverse reads), `unobtrusive` (show only
+  the selected candidate) or `buffer` (list in the `*Completions*` buffer
+  in another window, as TAB does). `lines` is clamped to 1..50 and also
+  updates the count `set-minibuffer-ui` chose.
+- `group(category)` (0.1.31) has Forge call this plugin's
+  `completion-handler.group(category, candidates)` once per list and show
+  the matching headings; an empty name leaves a candidate ungrouped.
+  `set-group-format("-- %s --")` changes the heading, `%s` being the group
+  name, and `""` hides headings. Grouping applies to the vertical layouts
+  (`reverse` included); `flat`, `grid`, `unobtrusive` and `buffer` draw no
+  headings. Row labels follow the rows whichever layout draws.
+- `set-row-labels(["a", "s", "d"])` (0.1.31) shows a short label before
+  each visible row, in order, for commands like vertico-quick; an empty
+  list clears them. `jump-to-row(row, accept)` selects the candidate on
+  visible row `row` (0 is the top), taking it as RET would when `accept`
+  is true. Labels are a display aid: a list longer than the labels simply
+  leaves the rest unlabeled.
+- `minibuffer.suspend()` (0.1.31) hides the open prompt without answering
+  it, `sessions()` lists the prompts this plugin suspended (newest first,
+  as `{category, prompt, input, total}`), and `resume(index)` brings one
+  back, suspending the open prompt first. A plugin uses this to offer a
+  picker from inside a picker without nesting prompts.
+- `minibuffer.set-input(text)` (0.1.31) replaces what is typed in the open
+  prompt, leaving the cursor at the end; it does nothing when no prompt is
+  open. `minibuffer.on-open(command)` (0.1.31) runs one of the plugin's own
+  commands after a prompt opens, so a command can read `input`/`selected`
+  and adjust it.
 - `set-minibuffer-cycle(true)` makes C-n at the last candidate wrap around
   to the first (and C-p at the first to the last), and similarly for page
   moves. Off by default (vertico-cycle); a plugin that isn't loaded leaves
@@ -1003,7 +1033,7 @@ load and the message says why, so a typo isn't silent. Later
 
 ## Versions and compatibility
 
-The package is `forge:editor@0.1.29`. 0.1.1 added buffer options,
+The package is `forge:editor@0.1.31`. 0.1.1 added buffer options,
 `indent-line` and the `decorations` interface; 0.1.2 added `processes`,
 the `process-handler` export (world `plugin-with-processes`) and
 `buffer.visit`, and background calls (`commands.register-background`,
@@ -1146,8 +1176,22 @@ string, and a command bound in the `isearch` prompt map runs without
 ending the search, with the pick resuming it. All are additions, so a
 plugin built against an earlier 0.1.x loads unchanged.
 0.1.29 adds `menus.define-for-mode`, so a menu can be tied to a major mode
-and hidden while that mode is off. It is an addition, so a plugin built
-against an earlier 0.1.x loads unchanged.
+and hidden while that mode is off, and `kill-ring.push`, which puts text
+on the kill ring and the clipboard as M-w does (Rhai's `forge.kill` is the
+same call). It is an addition, so a plugin built against an earlier 0.1.x
+loads unchanged.
+0.1.30 adds `minibuffer.on-input-changed` and
+`completion.on-selection-changed`, so a plugin's command runs whenever the
+text or the selected candidate in an open prompt changes.
+0.1.31 lets a plugin shape the prompt list itself:
+`completion.set-layout` (vertical, flat, grid, reverse, unobtrusive or
+buffer), `completion.group` with `completion.set-group-format`,
+`completion.set-row-labels` and `completion.jump-to-row`, and
+`completion.sessions` with `completion.resume` so prompts can be suspended
+and brought back. `minibuffer.set-input` replaces the open prompt's text,
+`minibuffer.suspend` hides it, and `minibuffer.on-open` runs a command
+after a prompt opens. All are additions, so a plugin built against an
+earlier 0.1.x loads unchanged.
 
 Completing in the minibuffer and moving a popup completion there need no
 WIT either: both build on the prompt list (which

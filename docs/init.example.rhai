@@ -12,7 +12,7 @@
 // separated by spaces. Named keys: RET SPC TAB DEL ESC <left> <f5> ...
 //
 // The API is namespaced like Neovim's: forge.opt, forge.keymap,
-// forge.command, forge.ui, forge.buffer, forge.mode, forge.plugin,
+// forge.command, forge.ui, forge.minibuffer, forge.buffer, forge.mode, forge.plugin,
 // forge.process, forge.fs, forge.http, forge.env, forge.system, forge.menu,
 // forge.theme, forge.log. See docs/plugin-api.md for the whole list.
 // forge.env is the process environment: what you set is what
@@ -166,6 +166,21 @@ forge.command.create("insert-greeting", |n| {
   });
 }, #{ desc: "Ask for a name and insert a greeting." });
 forge.keymap.set("C-c H", "insert-greeting");
+
+// Replace what is typed in the open prompt, leaving the cursor at the end.
+// forge.command.create("try-dir", || forge.minibuffer.set_input("~/"));
+// forge.minibuffer.suspend() sets the open prompt aside (no answer);
+// forge.completion.sessions() lists what was set aside and
+// forge.completion.resume(0) brings one back.
+//
+// The prompt list can be grouped, labelled and laid out:
+// forge.completion.set_layout("grid", 8);       // vertical, flat, grid, reverse,
+//                                               // unobtrusive or buffer
+// forge.completion.set_group_format("-- %s --");
+// forge.completion.group("candidate", |names| /* one name per candidate */ names);
+// forge.completion.set_row_labels(["a", "s", "d"]);
+// forge.completion.jump_to_row(0, true);         // select row 0 and accept it
+// forge.minibuffer.on_open("fill-prompt");       // command must already exist
 
 // Positions are (line, column) as the mode line shows them: lines from 1,
 // columns from 0.

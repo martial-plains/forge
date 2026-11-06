@@ -505,8 +505,16 @@ pub struct Minibuffer {
     pub list: Option<CandidateList>,
 }
 
-/// A row of the vertical list: candidate, annotation, selected.
-pub type Row = (String, String, bool);
+/// A row of the vertical list: candidate, annotation, selected, whether
+/// it is a group heading, and the quick key label a plugin gave it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    pub text: String,
+    pub note: String,
+    pub selected: bool,
+    pub header: bool,
+    pub label: String,
+}
 
 /// A prompt's candidates, as the vertical list (and TAB) see them.
 pub struct CandidateList {
@@ -517,6 +525,10 @@ pub struct CandidateList {
     all: Vec<String>,
     /// Annotations (from a plugin), parallel to `all`; may be empty.
     notes: Vec<String>,
+    /// Group names (from a plugin), parallel to `all`; may be empty.
+    groups: Vec<String>,
+    /// Quick key labels for the visible rows, in display order.
+    labels: Vec<String>,
     /// For files: the directory part of the input, put before a name.
     prefix: String,
     /// Indexes into `all` that match the input, best first.
@@ -538,29 +550,145 @@ impl CandidateList {
         self.full(self.selected)
     }
 
-    /// Rows to show: (candidate, annotation, selected), `lines` of them
-    /// around the selection. For files the candidate is the short name
-    /// (`wit/`); the directory stays in the prompt input, traditional, and
-    /// the annotation carries the metadata.
-    pub fn rows(&self, lines: usize) -> Vec<(String, String, bool)> {
+    /// The matches in display order: reverse layouts show the last match
+    /// first. Each item is an index into `all`.
+    fn display_order(&self, layout: forge_core::completion::Layout) -> Vec<usize> {
+        let mut order = self.matches.clone();
+        if layout == forge_core::completion::Layout::Reverse {
+            order.reverse();
+        }
+        order
+    }
+
+    /// The first match of the visible window for a scrolling layout.
+    fn window_start(&self, lines: usize, layout: forge_core::completion::Layout) -> usize {
+        let n = self.matches.len();
+        let selected = if layout == forge_core::completion::Layout::Reverse {
+            n.saturating_sub(1).saturating_sub(self.selected)
+        } else {
+            self.selected
+        };
+        selected
+            .saturating_sub(lines.max(1) - 1)
+            .min(n.saturating_sub(lines.max(1)))
+    }
+
+    fn candidate_row(&self, pos: usize, k: usize, selected: bool) -> Row {
+        Row {
+            text: self.all[k].clone(),
+            note: self.notes.get(k).cloned().unwrap_or_default(),
+            selected,
+            header: false,
+            label: self.labels.get(pos).cloned().unwrap_or_default(),
+        }
+    }
+
+    /// Rows to show: `lines` of them around the selection, laid out as
+    /// `layout` says. Group headings are inserted when a plugin groups the
+    /// candidates and `group_format` is not empty. For files the candidate
+    /// is the short name (`wit/`); the directory stays in the prompt input,
+    /// traditional, and the annotation carries the metadata.
+    pub fn rows(
+        &self,
+        lines: usize,
+        layout: forge_core::completion::Layout,
+        group_format: &str,
+    ) -> Vec<Row> {
+        use forge_core::completion::Layout;
         let lines = lines.max(1);
-        let start = self
-            .selected
-            .saturating_sub(lines - 1)
-            .min(self.matches.len().saturating_sub(lines));
-        self.matches
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(lines)
-            .map(|(i, &k)| {
-                (
-                    self.all[k].clone(),
-                    self.notes.get(k).cloned().unwrap_or_default(),
-                    i == self.selected,
-                )
-            })
-            .collect()
+        let n = self.matches.len();
+        if n == 0 || layout == Layout::Buffer {
+            return Vec::new();
+        }
+        let mut rows = Vec::new();
+        match layout {
+            Layout::Flat | Layout::Grid => {
+                // These fit as many candidates per row as the width allows;
+                // the renderer truncates. Keep the selection on its row.
+                let per_row = if layout == Layout::Grid {
+                    n.div_ceil(lines).max(1)
+                } else {
+                    n
+                };
+                for (r, chunk) in self.matches.chunks(per_row).enumerate() {
+                    let selected = chunk
+                        .iter()
+                        .enumerate()
+                        .any(|(i, _)| r * per_row + i == self.selected);
+                    rows.push(Row {
+                        text: chunk
+                            .iter()
+                            .map(|&k| self.all[k].as_str())
+                            .collect::<Vec<_>>()
+                            .join("  "),
+                        note: String::new(),
+                        selected,
+                        header: false,
+                        label: self.labels.get(r).cloned().unwrap_or_default(),
+                    });
+                }
+            }
+            Layout::Unobtrusive => {
+                if let Some(&k) = self.matches.get(self.selected) {
+                    rows.push(self.candidate_row(0, k, true));
+                }
+            }
+            Layout::Vertical | Layout::Reverse | Layout::Buffer => {
+                let order = self.display_order(layout);
+                let start = self.window_start(lines, layout);
+                let visible = &order[start..(start + lines).min(n)];
+                let selected = self.matches.get(self.selected).copied();
+                let mut last_group: Option<&str> = None;
+                for (pos, &k) in visible.iter().enumerate() {
+                    let group = self.groups.get(k).map(String::as_str).unwrap_or("");
+                    if !group.is_empty() && last_group != Some(group) {
+                        if !group_format.is_empty() {
+                            rows.push(Row {
+                                text: group_format.replace("%s", group),
+                                note: String::new(),
+                                selected: false,
+                                header: true,
+                                label: String::new(),
+                            });
+                        }
+                        last_group = Some(group);
+                    }
+                    rows.push(self.candidate_row(pos, k, Some(k) == selected));
+                }
+            }
+        }
+        rows
+    }
+
+    /// The match on visible candidate row `row` (group headings don't
+    /// count).
+    pub fn match_at_row(
+        &self,
+        row: usize,
+        lines: usize,
+        layout: forge_core::completion::Layout,
+    ) -> Option<usize> {
+        use forge_core::completion::Layout;
+        let n = self.matches.len();
+        if n == 0 {
+            return None;
+        }
+        match layout {
+            Layout::Flat | Layout::Grid => (row < n).then_some(row),
+            Layout::Unobtrusive => (row == 0).then_some(self.selected),
+            Layout::Buffer => Some(self.selected),
+            Layout::Vertical | Layout::Reverse => {
+                let pos = self.window_start(lines.max(1), layout) + row;
+                if pos >= n {
+                    return None;
+                }
+                Some(if layout == Layout::Reverse {
+                    n - 1 - pos
+                } else {
+                    pos
+                })
+            }
+        }
     }
 }
 
@@ -702,6 +830,16 @@ impl Minibuffer {
             .map_or(self.input.len(), |(i, _)| i)
     }
 
+    /// Replace the whole input with `text`, leaving the cursor at its end.
+    pub fn set_input(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        if let Purpose::Isearch(s) = &mut self.purpose {
+            s.query = text.clone();
+        }
+        self.input = text;
+        self.edit = None;
+    }
+
     /// Insert text at the cursor.
     pub fn insert(&mut self, s: &str) {
         let p = self.pos();
@@ -833,7 +971,15 @@ pub fn vertical_height(app: &App) -> u16 {
     let Some(list) = mb.list.as_ref().filter(|l| !l.matches.is_empty()) else {
         return 0;
     };
-    list.rows(lines as usize).len() as u16
+    list.rows(
+        lines as usize,
+        app.editor
+            .completion
+            .list_layout()
+            .map_or(forge_core::completion::Layout::Vertical, |l| l.0),
+        app.editor.completion.group_format(),
+    )
+    .len() as u16
 }
 
 /// How many rows the vertical list shows, if any: what a plugin set
@@ -1996,10 +2142,16 @@ fn source(
             // keeping the fields already typed in front (so the list
             // rebuilds when that part changes, like the file directory).
             let f = forge_core::completion::fields(&input, &forge_core::completion::CRM_SEPARATORS);
+            // Fields already entered aren't offered again.
+            let left: Vec<String> = c
+                .iter()
+                .filter(|x| !f.done.contains(&x.as_str()))
+                .cloned()
+                .collect();
             Some((
                 format!("question:{}", f.prefix),
                 "candidate",
-                c.clone(),
+                left,
                 f.field.to_string(),
                 f.prefix.to_string(),
             ))
@@ -2085,11 +2237,35 @@ pub fn refresh(app: &mut App, mb: &mut Minibuffer) {
             // The popup's annotations travel with the moved completion.
             notes = carried.clone();
         }
+        let mut groups = Vec::new();
+        if app
+            .editor
+            .completion
+            .groupers
+            .get(category)
+            .is_some_and(|p| p == forge_core::rhai::SOURCE)
+        {
+            if let Some(rhai) = app.rhai.take() {
+                let (g, out) = rhai.group(&mut app.editor, category, &all);
+                app.rhai = Some(rhai);
+                groups = g;
+                plugins::apply(app, out);
+            }
+        } else if app.editor.completion.groupers.contains_key(category)
+            && let Some(mut h) = app.plugin_host.take()
+        {
+            let (g, out) = h.group(&mut app.editor, category, &all);
+            app.plugin_host = Some(h);
+            groups = g;
+            plugins::apply(app, out);
+        }
         mb.list = Some(CandidateList {
             key,
             category,
             all,
             notes,
+            groups,
+            labels: Vec::new(),
             prefix,
             matches: Vec::new(),
             selected: 0,
@@ -2102,7 +2278,9 @@ pub fn refresh(app: &mut App, mb: &mut Minibuffer) {
     // so the history of this prompt's category feeds the sort.
     let hist: Vec<String> = app.editor.session.history(category).to_vec();
     let rank = |c: &str| hist.iter().position(|h| h == c);
+    let labels = app.editor.completion.row_labels().to_vec();
     let list = mb.list.as_mut().expect("just made");
+    list.labels = labels;
     if list.input != needle {
         list.matches =
             forge_core::completion::filter_with(&styles, &sorting, &needle, &list.all, &rank)
@@ -2152,16 +2330,119 @@ pub fn vertical_view(app: &mut App) -> Option<(Vec<Row>, String)> {
         return None;
     }
     refresh(app, &mut mb);
+    let layout = app
+        .editor
+        .completion
+        .list_layout()
+        .map_or(forge_core::completion::Layout::Vertical, |l| l.0);
+    let group_format = app.editor.completion.group_format().to_string();
+    if layout == forge_core::completion::Layout::Buffer
+        && let Some(items) = mb.list.as_ref().map(|l| {
+            l.matches
+                .iter()
+                .map(|&k| l.all[k].clone())
+                .collect::<Vec<_>>()
+        })
+    {
+        show_completions(app, &mut mb, &items);
+    }
     let view = mb.list.as_ref().map(|l| {
         let count = if l.matches.is_empty() {
             "0/0".to_string()
         } else {
             format!("{}/{}", l.selected + 1, l.matches.len())
         };
-        (l.rows(lines), count)
+        (l.rows(lines, layout, &group_format), count)
     });
     app.minibuffer = Some(mb);
     view
+}
+
+/// What `completion.sessions` reports for a suspended prompt.
+fn session_of(mb: &Minibuffer) -> forge_core::completion::PromptSession {
+    forge_core::completion::PromptSession {
+        category: mb
+            .list
+            .as_ref()
+            .map(|l| l.category.to_string())
+            .unwrap_or_default(),
+        prompt: mb.prompt.clone(),
+        input: mb.current_input().to_string(),
+        total: mb.list.as_ref().map_or(0, |l| l.matches.len() as u32),
+    }
+}
+
+/// Keep the core editor's view of suspended prompts (and which prompt is
+/// open) up to date after suspending or resuming one.
+fn sync_sessions(app: &mut App) {
+    app.editor.completion_sessions = app.suspended_prompts.iter().map(session_of).collect();
+    match app.minibuffer.as_ref() {
+        Some(mb) => {
+            app.editor.prompt_open = true;
+            app.editor.prompt_history = prompt_history_kind(mb).map(str::to_string);
+            app.editor.prompt_input = mb.current_input().to_string();
+        }
+        None => {
+            app.editor.prompt_open = false;
+            app.editor.prompt_history = None;
+            app.editor.prompt_input.clear();
+        }
+    }
+}
+
+/// Set the open prompt aside (minibuffer.suspend), keeping its input and
+/// selection so `completion.resume` can bring it back.
+pub fn suspend(app: &mut App) {
+    let Some(mut mb) = app.minibuffer.take() else {
+        return;
+    };
+    refresh(app, &mut mb);
+    hide_completions(app, &mut mb);
+    app.suspended_prompts.insert(0, mb);
+    sync_sessions(app);
+}
+
+/// Bring suspended prompt `index` back (completion.resume), setting the
+/// open prompt aside first.
+pub fn resume(app: &mut App, index: usize) {
+    if index >= app.suspended_prompts.len() {
+        return;
+    }
+    let target = app.suspended_prompts.remove(index);
+    if let Some(mut current) = app.minibuffer.take() {
+        refresh(app, &mut current);
+        app.suspended_prompts.insert(0, current);
+    }
+    app.minibuffer = Some(target);
+    if let Some(mut mb) = app.minibuffer.take() {
+        refresh(app, &mut mb);
+        app.minibuffer = Some(mb);
+    }
+    sync_sessions(app);
+}
+
+/// Move the highlight to visible candidate row `row`, and optionally take
+/// it as RET would (completion.jump-to-row).
+pub fn jump_to_row(app: &mut App, row: u32, accept: bool) {
+    let Some(mut mb) = app.minibuffer.take() else {
+        return;
+    };
+    refresh(app, &mut mb);
+    let (layout, lines) = app
+        .editor
+        .completion
+        .list_layout()
+        .unwrap_or((forge_core::completion::Layout::Vertical, 10));
+    if let Some(list) = mb.list.as_mut()
+        && let Some(i) = list.match_at_row(row as usize, lines as usize, layout)
+    {
+        list.selected = i;
+    }
+    if accept {
+        submit(app, mb);
+    } else {
+        app.minibuffer = Some(mb);
+    }
 }
 
 fn file_candidates_in(input: &str, default_dir: Option<&std::path::Path>) -> Vec<String> {
@@ -2758,10 +3039,21 @@ pub fn cmd_insert_candidate(app: &mut App) {
     with_prompt(app, |app, mut mb| {
         refresh(app, &mut mb);
         if let Some(c) = mb.list.as_ref().and_then(|l| l.selected_full()) {
-            mb.input = c;
+            // Multi-value prompt: leave a separator behind, ready for the
+            // next field (RET on that empty field then answers).
+            mb.input = if is_multiple(&mb.purpose) {
+                format!("{c}, ")
+            } else {
+                c
+            };
         }
         app.minibuffer = Some(mb);
     });
+}
+
+/// Is this a multi-value prompt (fields separated by commas)?
+fn is_multiple(purpose: &Purpose) -> bool {
+    matches!(purpose, Purpose::PluginAsk { multiple: true, .. })
 }
 
 pub fn cmd_delete_backward(app: &mut App) {
@@ -2948,6 +3240,21 @@ pub fn cmd_exit_completion(app: &mut App) {
         return;
     };
     refresh(app, &mut mb);
+    // Multi-value prompt: with nothing typed in the current field
+    // ("" or "a, b, "), RET answers with the fields so far instead of
+    // adding the highlighted candidate. That is how a list ends, and how
+    // an empty one (none picked) is given.
+    if is_multiple(&mb.purpose) {
+        let blank =
+            forge_core::completion::fields(&mb.input, &forge_core::completion::CRM_SEPARATORS)
+                .field
+                .trim()
+                .is_empty();
+        if blank {
+            submit(app, mb);
+            return;
+        }
+    }
     let take = mb.list.as_ref().is_some_and(|list| {
         let exact = list
             .all

@@ -20,7 +20,16 @@
 ///
 /// 0.1.29 adds `menus.define-for-mode`, so a mode's menu only shows while
 /// that major mode (or one deriving from it) is on.
-package forge:editor@0.1.30;
+///
+/// 0.1.30 adds `minibuffer.on-input-changed` and
+/// `completion.on-selection-changed`, so a plugin's command runs whenever
+/// the text or the selected candidate in an open prompt changes.
+///
+/// 0.1.31 adds `minibuffer.set-input`, so a plugin can replace the text in
+/// the prompt that is open; `minibuffer.on-open` and `.suspend`; layouts,
+/// grouping, row labels, jump-to-row, and suspended prompt sessions on
+/// `completion`.
+package forge:editor@0.1.31;
 
 /// Values shared by several interfaces.
 interface types {
@@ -658,6 +667,9 @@ interface minibuffer {
     history-kind: func() -> option<string>;
     /// What the user has typed into the open prompt so far ("" when none).
     input: func() -> string;
+    /// Replace the open prompt's input with `text`, leaving the cursor at
+    /// the end. Does nothing when no prompt is open. Since 0.1.31.
+    set-input: func(text: string);
     /// Run `command` whenever the input of an open prompt changes. The
     /// command may read the new text with `input`. Since 0.1.30.
     on-input-changed: func(command: string);
@@ -670,6 +682,14 @@ interface minibuffer {
     /// (`consult-history`). With no prompt open, it acts like
     /// `completing-read`.
     completing-read-over: func(prompt: string, candidates: list<string>, require-match: bool) -> request;
+    /// Run `command` whenever a prompt opens. It runs after the prompt is
+    /// open, like a hook, and may read minibuffer.input and
+    /// completion.selected. Since 0.1.31.
+    on-open: func(command: string);
+    /// Suspend the open prompt without answering it. completion.sessions
+    /// lists it and completion.resume brings it back. Does nothing when no
+    /// prompt is open. Since 0.1.31.
+    suspend: func();
 }
 
 /// Major and minor modes: a major mode gives a buffer its syntax and
@@ -1438,6 +1458,34 @@ interface completion {
         location: option<location>,
     }
 
+    /// How the minibuffer list is drawn. Since 0.1.31.
+    enum layout {
+        /// One candidate per row, under the prompt.
+        vertical,
+        /// Every candidate on one line.
+        flat,
+        /// Candidates in columns.
+        grid,
+        /// Like vertical, last candidate first.
+        reverse,
+        /// Only the selected candidate.
+        unobtrusive,
+        /// The candidates in a *Completions* buffer.
+        buffer,
+    }
+
+    /// A prompt a plugin suspended, as `sessions` reports it. Since 0.1.31.
+    record prompt-session {
+        /// The completion category ("command", "file", ...).
+        category: string,
+        /// What the prompt asked.
+        prompt: string,
+        /// What was typed when it was suspended.
+        input: string,
+        /// How many candidates matched then.
+        total: u32,
+    }
+
     /// The popup's session at point, for a plugin driving it. Since 0.1.14.
     record session-info {
         /// A completion session is open.
@@ -1490,6 +1538,30 @@ interface completion {
     /// under the prompt, updated as you type (C-n / C-p to move, RET
     /// picks, TAB inserts). Otherwise TAB completes in the prompt.
     set-minibuffer-ui: func(vertical: bool, lines: u32);
+    /// Draw the minibuffer list as `layout`, up to `lines` rows (clamped to
+    /// 1..50). Replaces the old vertical setting; `lines` also updates the
+    /// count from `set-minibuffer-ui`. Since 0.1.31.
+    set-layout: func(layout: layout, lines: u32);
+    /// Group candidates of `category` by calling completion-handler.group
+    /// once per list. A group name of "" leaves a candidate ungrouped.
+    /// Since 0.1.31.
+    group: func(category: string);
+    /// Draw group headings with `format`; `%s` is replaced by the group
+    /// name, and "" hides headings. Since 0.1.31.
+    set-group-format: func(format: string);
+    /// Show `labels` before the visible candidate rows, in order. They are
+    /// a display aid for commands like vertico-quick; an empty list clears
+    /// them. Since 0.1.31.
+    set-row-labels: func(labels: list<string>);
+    /// Select the candidate on visible row `row` (0 is the top row).
+    /// `accept` also takes it as RET would; otherwise the highlight just
+    /// moves. Since 0.1.31.
+    jump-to-row: func(row: u32, accept: bool);
+    /// Prompts the plugin suspended, newest first. Since 0.1.31.
+    sessions: func() -> list<prompt-session>;
+    /// Resume suspended prompt `index`, suspending the open one first.
+    /// Since 0.1.31.
+    resume: func(index: u32);
     /// Whether C-n at the last candidate wraps around to the first (and
     /// C-p at the first to the last) in the minibuffer list, and similarly
     /// for page moves. Off by default (vertico-cycle). Since 0.1.19.
@@ -1638,6 +1710,10 @@ interface completion-handler {
 
     /// Annotations for `candidates`, one per candidate ("" for none).
     annotate: func(category: string, candidates: list<string>) -> list<string>;
+    /// Group names for `candidates`, one per candidate ("" for none),
+    /// asked when a plugin calls completion.group for `category`. A plugin
+    /// that doesn't group leaves it out. Since 0.1.31.
+    group: func(category: string, candidates: list<string>) -> list<string>;
     /// Start completing at `point` in buffer `buffer` for source
     /// `source`; answer with completion.deliver(request, ...).
     complete: func(request: u32, source: string, buffer: u32, point: position);

@@ -41,28 +41,43 @@ pub fn display_options(app: &App) -> DisplayOptions {
 
 /// The vertical completion list's rows as spans, `width` cells each:
 /// candidate, then its annotation (dimmed), the selected one highlighted.
-pub fn vertical_rows(rows: &[(String, String, bool)], width: usize) -> Vec<Vec<CoreSpan>> {
+/// Group headings are dimmed and take the whole row; quick key labels go
+/// in front of their candidate.
+pub fn vertical_rows(rows: &[crate::minibuffer::Row], width: usize) -> Vec<Vec<CoreSpan>> {
     let text_w = rows
         .iter()
-        .map(|r| r.0.width())
+        .filter(|r| !r.header)
+        .map(|r| r.text.width() + r.label.width() + usize::from(!r.label.is_empty()))
         .max()
         .unwrap_or(0)
         .min(width.saturating_sub(2) * 2 / 3);
     rows.iter()
-        .map(|(text, note, selected)| {
-            let face = if *selected {
+        .map(|row| {
+            if row.header {
+                return vec![CoreSpan {
+                    text: forge_core::width::truncate(&row.text, width),
+                    face: Face::LineNumber,
+                }];
+            }
+            let face = if row.selected {
                 Face::PopupSelected
             } else {
                 Face::Default
             };
-            let mut t = forge_core::width::truncate(text, text_w);
+            let mut label = row.label.clone();
+            if !label.is_empty() {
+                label.push(' ');
+            }
+            let mut t = label;
+            let room_for_text = text_w.saturating_sub(t.width());
+            t.push_str(&forge_core::width::truncate(&row.text, room_for_text));
             t.push_str(&" ".repeat(text_w.saturating_sub(t.width()) + 2));
             let room = width.saturating_sub(t.width());
-            let mut n = forge_core::width::truncate(note, room);
-            if *selected {
+            let mut n = forge_core::width::truncate(&row.note, room);
+            if row.selected {
                 n.push_str(&" ".repeat(room.saturating_sub(n.width())));
             }
-            let note_face = if *selected {
+            let note_face = if row.selected {
                 Face::PopupSelected
             } else {
                 Face::LineNumber

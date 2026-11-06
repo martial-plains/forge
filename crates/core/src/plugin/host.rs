@@ -1129,6 +1129,31 @@ impl PluginHost {
         (notes, out)
     }
 
+    /// Group names for a completion list from the plugin that groups
+    /// `category` (empty if none, or it failed).
+    pub fn group(
+        &mut self,
+        editor: &mut Editor,
+        category: &str,
+        candidates: &[String],
+    ) -> (Vec<String>, Outcome) {
+        let mut out = Outcome::default();
+        let Some(plugin) = editor.completion.groupers.get(category).cloned() else {
+            return (Vec::new(), out);
+        };
+        if self.away.contains_key(&plugin) || !self.activate(editor, &plugin, &mut out) {
+            return (Vec::new(), out);
+        }
+        let mut groups = Vec::new();
+        self.call(editor, &plugin, &mut out, |p| {
+            let (r, g) = p.call_group(category, candidates);
+            groups = g;
+            r
+        });
+        groups.resize(candidates.len(), String::new());
+        (groups, out)
+    }
+
     /// Ask a completion source for candidates at `point` in `buffer`
     /// (they come back as Effect::Completions, now or later).
     pub fn complete(
