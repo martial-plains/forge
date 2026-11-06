@@ -143,6 +143,15 @@ fn main() -> anyhow::Result<()> {
         };
         unsafe { std::env::set_var("FORGE_CONFIG_DIR", format!("{home}/{user}/.config/forge")) };
     }
+    if opts.package_doctor {
+        std::process::exit(
+            if forge_terminal::package_doctor::run_headless(opts.json)? {
+                0
+            } else {
+                1
+            },
+        );
+    }
     if let Some((before, after)) = &opts.package_snapshot_diff {
         let config = forge_core::config::config_dir()
             .ok_or_else(|| anyhow::anyhow!("no config directory for package snapshots"))?;

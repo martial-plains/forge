@@ -60,6 +60,7 @@ pub mod org_table;
 pub mod org_time;
 pub mod org_work;
 pub mod package;
+pub mod package_doctor;
 pub mod package_journal;
 pub mod permissions;
 pub mod plugin;

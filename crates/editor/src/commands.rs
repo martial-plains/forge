@@ -948,6 +948,10 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
         "package-delete",
         "Delete a plugin installed from a package index.",
     ),
+    forge_docs::CommandDoc::line(
+        "package-doctor",
+        "Check package declarations, installs, hashes, permissions, and caches.",
+    ),
     forge_docs::CommandDoc::new("package-install", "Install a plugin from the package index (checked against its sha256),").body("then load it."),
     forge_docs::CommandDoc::line("package-list-packages", "Same as list-packages."),
     forge_docs::CommandDoc::line(

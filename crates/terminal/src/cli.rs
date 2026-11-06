@@ -57,6 +57,9 @@ Forge's own:
                     compare two saved package snapshots
   --package-lockfile-diff BEFORE AFTER [--json]
                     compare two lockfiles
+  --package-doctor [--json]
+                    check declared and installed plugins without starting
+                    the editor; exit status is 1 on an error finding
   -h, --help        show this help
   -V, --version     show the version
 
@@ -95,6 +98,7 @@ pub struct CliOptions {
     pub user: Option<String>,
     pub package_snapshot_diff: Option<(String, String)>,
     pub package_lockfile_diff: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    pub package_doctor: bool,
     pub json: bool,
 }
 
@@ -158,6 +162,7 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
                 let after = value("the second lockfile")?;
                 opts.package_lockfile_diff = Some((before.into(), after.into()));
             }
+            "--package-doctor" => opts.package_doctor = true,
             "--json" => opts.json = true,
             "--kill" => opts.kill = true,
             "--batch" => opts.batch = true,
@@ -205,9 +210,13 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
             "--package-snapshot-diff and --package-lockfile-diff cannot be used together\n{USAGE}"
         );
     }
-    if opts.json && opts.package_snapshot_diff.is_none() && opts.package_lockfile_diff.is_none() {
+    if opts.json
+        && opts.package_snapshot_diff.is_none()
+        && opts.package_lockfile_diff.is_none()
+        && !opts.package_doctor
+    {
         anyhow::bail!(
-            "--json is only used with --package-snapshot-diff or --package-lockfile-diff\n{USAGE}"
+            "--json is only used with --package-snapshot-diff, --package-lockfile-diff, or --package-doctor\n{USAGE}"
         );
     }
     Ok(opts)
@@ -331,6 +340,14 @@ mod tests {
         );
         assert!(options.json);
         assert!(p(&["--json"]).is_err());
+    }
+
+    #[test]
+    fn package_doctor_cli_accepts_json() {
+        let options = p(&["--package-doctor", "--json"]).unwrap();
+        assert!(options.package_doctor);
+        assert!(options.json);
+        assert!(p(&["--package-doctor"]).is_ok());
     }
 
     #[test]

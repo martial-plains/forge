@@ -1346,6 +1346,9 @@ fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
     ];
     for k in spec.keys() {
         if !KEYS.contains(&k.as_str()) {
+            s.use_log
+                .borrow_mut()
+                .push(format!("{name}: skipped, unknown key {k:?}"));
             return Err(err(format!(
                 "unknown key {k:?} in a plugin declaration (known: {})",
                 KEYS.join(", ")

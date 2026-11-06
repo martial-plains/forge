@@ -309,6 +309,7 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             Purpose::PackageSnapshot(crate::minibuffer::PackageSnapshotAction::Restore),
         ),
         "package-restore" => restore_locked(app),
+        "package-doctor" => crate::package_doctor::show(app),
         "package-delete" => {
             let names: Vec<String> = db(app)
                 .map(|d| d.packages.keys().cloned().collect())

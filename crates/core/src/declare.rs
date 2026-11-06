@@ -42,6 +42,10 @@ pub struct PluginUse {
     pub on_extensions: Vec<String>,
     /// Plugins to load after (a name, or a built-in that must be ready).
     pub after: Vec<String>,
+    /// Plugins that must be declared before this one (`requires`).
+    pub requires: Vec<String>,
+    /// The line in init.rhai that declared it, when known.
+    pub line: Option<usize>,
     /// Directories to look for `NAME.wasm` in before the plugins directory
     /// (`load_path`).
     pub load_path: Vec<String>,

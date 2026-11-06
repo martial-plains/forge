@@ -4493,7 +4493,7 @@ fn process_handler(
 }
 
 /// The newest 0.1.x version of the plugin API this build knows.
-const WIT_VERSION: u32 = 31;
+pub const WIT_VERSION: u32 = 31;
 
 /// The export `iface` at the newest 0.1.x from `since` on, if any.
 fn find_export(

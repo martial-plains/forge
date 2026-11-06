@@ -159,6 +159,8 @@ pub struct App {
     pub init_path: Option<PathBuf>,
     /// The Rhai state init.rhai ran in (its commands live here).
     pub rhai: Option<RhaiConfig>,
+    /// Errors from the last init.rhai/theme load (used by the package doctor).
+    pub init_errors: Vec<String>,
     /// ESC was pressed; the next key gets Meta.
     pub meta_pending: bool,
     pub minibuffer: Option<Minibuffer>,
@@ -768,6 +770,7 @@ impl App {
             prefix_help_delay: DEFAULT_PREFIX_HELP_DELAY,
             init_path: None,
             rhai: None,
+            init_errors: Vec::new(),
             meta_pending: false,
             minibuffer: None,
             suspended_prompt: None,
@@ -2357,6 +2360,7 @@ impl App {
         forge_core::backup::set_config(Default::default());
         crate::vc::set_config(Default::default());
         self.rhai = None;
+        self.init_errors.clear();
 
         let Some(path) = self.init_path.clone() else {
             self.sync_docs();
@@ -2378,16 +2382,20 @@ impl App {
         let rhai = match RhaiConfig::new() {
             Ok(l) => l,
             Err(e) => {
+                self.init_errors.push(format!("Can't start Rhai: {e}"));
                 self.sync_docs();
                 return self.error(format!("Can't start Rhai: {e}"));
             }
         };
         let out = rhai.load_file(&mut self.editor, &path);
+        self.init_errors = out.errors.clone();
         // Theme files load next and only define themes; `forge.theme.load`
         // in init.rhai or in one of them applies one.
         let mut theme_outs = Vec::new();
         for theme_path in forge_core::config::theme_files() {
-            theme_outs.push(rhai.load_file(&mut self.editor, &theme_path));
+            let out = rhai.load_file(&mut self.editor, &theme_path);
+            self.init_errors.extend(out.errors.iter().cloned());
+            theme_outs.push(out);
         }
         self.watch.set_rhai_monitor(Some(rhai.monitor()));
         self.rhai = Some(rhai);

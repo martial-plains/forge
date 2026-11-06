@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::*;
 use crate::theme::{FaceStyle, NamedTheme, all_faces, parse_color};
+use rhai::NativeCallContext;
 use std::cell::OnceCell;
 use std::rc::{Rc, Weak};
 
@@ -880,8 +881,14 @@ impl RhaiConfig {
         let cell = engine_cell.clone();
         engine.register_fn(
             "use_package",
-            move |name: ImmutableString, spec: Map| -> RhaiResult<()> {
-                use_package_spec(&s, &cell, name.to_string(), &spec)
+            move |ctx: NativeCallContext, name: ImmutableString, spec: Map| -> RhaiResult<()> {
+                use_package_spec(
+                    &s,
+                    &cell,
+                    name.to_string(),
+                    &spec,
+                    ctx.call_position().line(),
+                )
             },
         );
         let s = self.shared.clone();
@@ -897,8 +904,18 @@ impl RhaiConfig {
         let cell = engine_cell;
         engine.register_fn(
             "use_package",
-            move |_: &mut PluginApi, name: ImmutableString, spec: Map| -> RhaiResult<()> {
-                use_package_spec(&s, &cell, name.to_string(), &spec)
+            move |ctx: NativeCallContext,
+                  _: &mut PluginApi,
+                  name: ImmutableString,
+                  spec: Map|
+                  -> RhaiResult<()> {
+                use_package_spec(
+                    &s,
+                    &cell,
+                    name.to_string(),
+                    &spec,
+                    ctx.call_position().line(),
+                )
             },
         );
     }
@@ -1524,9 +1541,14 @@ fn use_package_spec(
     engine_cell: &Weak<OnceCell<Engine>>,
     name: String,
     spec: &Map,
+    line: Option<usize>,
 ) -> RhaiResult<()> {
     for key in spec.keys() {
         if !USE_PACKAGE_KEYS.contains(&key.as_str()) {
+            let where_ = line.map(|n| format!(" (line {n})")).unwrap_or_default();
+            s.use_log
+                .borrow_mut()
+                .push(format!("{name}: skipped, unknown key {key:?}{where_}"));
             return Err(err(format!(
                 "unknown key {key:?} in use_package (known: {})",
                 USE_PACKAGE_KEYS.join(", ")
@@ -1601,11 +1623,18 @@ fn use_package_spec(
         skip("unless was true");
         return Ok(());
     }
-    if let Some(v) = spec.get("requires") {
+    let requires = match spec.get("requires") {
+        Some(v) => name_or_names(v, "requires")?,
+        None => Vec::new(),
+    };
+    {
         let declared: Vec<String> = s.uses.borrow().iter().map(|u| u.name.clone()).collect();
-        for need in name_or_names(v, "requires")? {
-            if !declared.contains(&need) {
-                skip(&format!("requires {need}, which isn't declared"));
+        for need in &requires {
+            if !declared.contains(need) {
+                let where_ = line.map(|n| format!(" (line {n})")).unwrap_or_default();
+                s.use_log.borrow_mut().push(format!(
+                    "{name}: skipped, requires {need}, which isn't declared{where_}"
+                ));
                 return Ok(());
             }
         }
@@ -1807,6 +1836,8 @@ fn use_package_spec(
             u.git_dir = git_dir;
             u.build = build;
             u.features = features;
+            u.requires = requires;
+            u.line = line;
         }
     }
     let lazy = s

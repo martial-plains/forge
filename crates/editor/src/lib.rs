@@ -62,6 +62,7 @@ mod org_keys_tests;
 pub mod org_publish;
 pub mod org_rich;
 pub mod org_table_cmds;
+pub mod package_doctor;
 pub mod package_vc;
 pub mod packages;
 pub mod plugins;
