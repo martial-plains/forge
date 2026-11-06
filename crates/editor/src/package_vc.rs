@@ -44,7 +44,6 @@ pub struct VcJob {
     /// The commits an upgrade brings (git log since the locked commit),
     /// shown before building it (see `forge-lock.toml`).
     review: Option<String>,
-    backup: Option<crate::packages::PackageBackup>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,7 +74,27 @@ enum Stage {
     Build,
 }
 
-#[derive(Default)]
+/// Git operations the package manager needs without mutating installed
+/// state. Tests replace this with a fixture that never touches the network.
+pub trait GitRemote: Send + Sync {
+    /// Resolve a tag, branch, commit or HEAD at the remote.
+    fn remote_commit(&self, repository: &str, rev: Option<&str>) -> Result<String, String>;
+
+    /// Detect the build command in the remote revision's tree.
+    fn build_plan_at(
+        &self,
+        repository: &str,
+        commit: &str,
+        name: &str,
+        dir: Option<&str>,
+        build: Option<&str>,
+        features: &[String],
+    ) -> Result<BuildPlan, String>;
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemGit;
+
 pub struct Vc {
     processes: Processes,
     queue: VecDeque<VcJob>,
@@ -86,6 +105,21 @@ pub struct Vc {
     /// That question, until the minibuffer is free to ask it.
     ask: Option<(String, VcQuestion)>,
     reviewing: Option<VcJob>,
+    git: Box<dyn GitRemote>,
+}
+
+impl Default for Vc {
+    fn default() -> Self {
+        Self {
+            processes: Processes::default(),
+            queue: VecDeque::new(),
+            current: None,
+            confirming: None,
+            ask: None,
+            reviewing: None,
+            git: Box::new(SystemGit),
+        }
+    }
 }
 
 impl Vc {
@@ -95,6 +129,16 @@ impl Vc {
 
     pub fn has_question(&self) -> bool {
         self.ask.is_some()
+    }
+
+    /// Drop jobs that have not started yet (a failed batch update).
+    pub(crate) fn cancel_queued(&mut self) {
+        self.queue.clear();
+    }
+
+    /// Replace remote Git access (tests use a fixture implementation).
+    pub fn set_git_remote(&mut self, remote: Box<dyn GitRemote>) {
+        self.git = remote;
     }
 }
 
@@ -224,14 +268,6 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
         commit: String::new(),
         plan: None,
         review: None,
-        backup: if upgrade {
-            match crate::packages::capture_package_backup(app, name) {
-                Ok(backup) => Some(backup),
-                Err(error) => return app.error(error),
-            }
-        } else {
-            None
-        },
     };
     app.packages.vc.queue.push_back(job);
     next(app);
@@ -244,11 +280,18 @@ pub fn upgrade(app: &mut App, name: &str) {
     let Some(entry) = db(app).and_then(|d| d.from_vc().into_iter().find(|v| v.0 == name)) else {
         return app.error(format!("{name} wasn't installed from version control"));
     };
+    if let Err(error) = crate::packages::begin_update(app, "upgrade", false) {
+        return app.error(format!("Can't start package update: {error}"));
+    }
     install(app, &entry.0, &entry.1, entry.2, true);
 }
 
 /// Upgrade every package from version control; returns how many.
 pub fn upgrade_all(app: &mut App) -> usize {
+    if let Err(error) = crate::packages::begin_update(app, "upgrade-all", true) {
+        app.error(format!("Can't start package upgrade: {error}"));
+        return 0;
+    }
     let all = db(app).map(|d| d.from_vc()).unwrap_or_default();
     let frozen: std::collections::BTreeSet<String> = app
         .rhai
@@ -295,11 +338,33 @@ pub fn dry_run_lines(app: &App) -> Result<Vec<String>, String> {
             .get(&name)
             .ok_or_else(|| format!("{name}: installed record disappeared"))?;
         let old = package.commit.as_deref().unwrap_or("(unknown commit)");
-        let new = remote_commit(&repository, rev.as_deref())?;
+        let new = app
+            .packages
+            .vc
+            .git
+            .remote_commit(&repository, rev.as_deref())?;
         if new == old {
             continue;
         }
-        let build = package.build.as_deref().unwrap_or("(no build command)");
+        let declared = crate::declare::declared(app, &name);
+        let dir = declared.as_ref().and_then(|u| u.git_dir.as_deref());
+        let build = declared.as_ref().and_then(|u| u.build.as_deref());
+        let features = declared
+            .as_ref()
+            .map(|u| u.features.as_slice())
+            .unwrap_or(&[]);
+        let build =
+            match app
+                .packages
+                .vc
+                .git
+                .build_plan_at(&repository, &new, &name, dir, build, features)
+            {
+                Ok(plan) => plan
+                    .command
+                    .unwrap_or_else(|| "(no build command)".to_string()),
+                Err(error) => format!("(no build command: {error})"),
+            };
         lines.push(format!(
             "{name}: {} -> {}; build: {build}",
             short(old),
@@ -309,63 +374,144 @@ pub fn dry_run_lines(app: &App) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
-fn remote_commit(repository: &str, rev: Option<&str>) -> Result<String, String> {
-    let args = match rev {
-        Some(rev) => vec![
-            "ls-remote".to_string(),
-            "--heads".into(),
-            "--tags".into(),
-            repository.to_string(),
-            format!("refs/heads/{rev}"),
-            format!("refs/tags/{rev}"),
-            format!("refs/tags/{rev}^{{}}"),
-        ],
-        None => vec![
-            "ls-remote".to_string(),
-            "--symref".into(),
-            repository.to_string(),
-            "HEAD".into(),
-        ],
-    };
-    let current = std::env::current_dir().map_err(|e| e.to_string())?;
+impl GitRemote for SystemGit {
+    fn remote_commit(&self, repository: &str, rev: Option<&str>) -> Result<String, String> {
+        let args = match rev {
+            Some(rev) => vec![
+                "ls-remote".to_string(),
+                "--heads".into(),
+                "--tags".into(),
+                repository.to_string(),
+                format!("refs/heads/{rev}"),
+                format!("refs/tags/{rev}"),
+                format!("refs/tags/{rev}^{{}}"),
+            ],
+            None => vec![
+                "ls-remote".to_string(),
+                "--symref".into(),
+                repository.to_string(),
+                "HEAD".into(),
+            ],
+        };
+        let current = std::env::current_dir().map_err(|e| e.to_string())?;
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let result = forge_core::process::run_sync(
+            Program::Argv("git", &args),
+            &current,
+            None,
+            std::time::Duration::from_secs(15),
+            &stop,
+        )
+        .map_err(|e| format!("{repository}: couldn't query remote revision: {e}"))?;
+        if result.code != Some(0) {
+            let error = String::from_utf8_lossy(&result.stderr).trim().to_string();
+            return Err(format!("{repository}: git ls-remote failed: {error}"));
+        }
+        let mut hashes = std::collections::BTreeMap::new();
+        for line in String::from_utf8_lossy(&result.stdout).lines() {
+            let mut fields = line.split_whitespace();
+            let Some(first) = fields.next() else { continue };
+            let Some(reference) = fields.next() else {
+                continue;
+            };
+            if reference == "HEAD" || reference.starts_with("refs/") {
+                hashes.insert(reference.to_string(), first.to_string());
+            }
+        }
+        let commit = if let Some(rev) = rev {
+            hashes
+                .get(&format!("refs/heads/{rev}"))
+                .or_else(|| hashes.get(&format!("refs/tags/{rev}^{{}}")))
+                .or_else(|| hashes.get(&format!("refs/tags/{rev}")))
+        } else {
+            hashes.get("HEAD")
+        };
+        commit.cloned().ok_or_else(|| {
+            format!(
+                "{repository}: remote revision {} was not found",
+                rev.unwrap_or("HEAD")
+            )
+        })
+    }
+
+    fn build_plan_at(
+        &self,
+        repository: &str,
+        commit: &str,
+        name: &str,
+        dir: Option<&str>,
+        build: Option<&str>,
+        features: &[String],
+    ) -> Result<BuildPlan, String> {
+        let temp = temp_checkout_dir();
+        let _ = std::fs::remove_dir_all(&temp);
+        let result = (|| {
+            let parent = temp
+                .parent()
+                .ok_or_else(|| "temporary checkout path has no parent".to_string())?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("creating temporary checkout: {error}"))?;
+            let args = vec![
+                "clone".to_string(),
+                "--quiet".into(),
+                "--no-checkout".into(),
+                repository.to_string(),
+                temp.display().to_string(),
+            ];
+            run_git(&args, parent)?;
+            let args = vec![
+                "checkout".to_string(),
+                "--quiet".into(),
+                "--detach".into(),
+                commit.to_string(),
+            ];
+            run_git(&args, &temp)?;
+            let root = match dir {
+                Some(dir)
+                    if !std::path::Path::new(dir).is_absolute()
+                        && !std::path::Path::new(dir)
+                            .components()
+                            .any(|part| matches!(part, std::path::Component::ParentDir)) =>
+                {
+                    temp.join(dir)
+                }
+                Some(_) => {
+                    return Err("git directory must stay inside the repository".into());
+                }
+                None => temp.clone(),
+            };
+            resolve_build_plan(&root, name, build, features)
+        })();
+        let _ = std::fs::remove_dir_all(&temp);
+        result
+    }
+}
+
+fn run_git(args: &[String], dir: &std::path::Path) -> Result<(), String> {
     let stop = std::sync::atomic::AtomicBool::new(false);
     let result = forge_core::process::run_sync(
-        Program::Argv("git", &args),
-        &current,
+        Program::Argv("git", args),
+        dir,
         None,
-        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(60),
         &stop,
     )
-    .map_err(|e| format!("{repository}: couldn't query remote revision: {e}"))?;
-    if result.code != Some(0) {
-        let error = String::from_utf8_lossy(&result.stderr).trim().to_string();
-        return Err(format!("{repository}: git ls-remote failed: {error}"));
+    .map_err(|error| format!("running git: {error}"))?;
+    if result.code == Some(0) {
+        return Ok(());
     }
-    let mut hashes = std::collections::BTreeMap::new();
-    for line in String::from_utf8_lossy(&result.stdout).lines() {
-        let mut fields = line.split_whitespace();
-        let Some(first) = fields.next() else { continue };
-        let Some(reference) = fields.next() else {
-            continue;
-        };
-        if reference == "HEAD" || reference.starts_with("refs/") {
-            hashes.insert(reference.to_string(), first.to_string());
-        }
-    }
-    let commit = if let Some(rev) = rev {
-        hashes
-            .get(&format!("refs/heads/{rev}"))
-            .or_else(|| hashes.get(&format!("refs/tags/{rev}^{{}}")))
-            .or_else(|| hashes.get(&format!("refs/tags/{rev}")))
-    } else {
-        hashes.get("HEAD")
-    };
-    commit.cloned().ok_or_else(|| {
-        format!(
-            "{repository}: remote revision {} was not found",
-            rev.unwrap_or("HEAD")
-        )
-    })
+    let error = String::from_utf8_lossy(&result.stderr).trim().to_string();
+    Err(format!("git failed: {error}"))
+}
+
+fn temp_checkout_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "forge-git-inspect-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// Start the next queued job, if nothing is running.
@@ -375,6 +521,7 @@ fn next(app: &mut App) {
         return;
     }
     let Some(job) = vc.queue.pop_front() else {
+        crate::packages::finish_update(app);
         return;
     };
     clear_output(app);
@@ -441,7 +588,13 @@ fn fail(app: &mut App, job: &VcJob, why: &str) {
     if let Some(id) = app.editor.find_buffer(BUFFER) {
         crate::compile::display_buffer(app, id);
     }
-    app.error(format!("Can't install {}: {why}", job.name));
+    let message = format!("Can't install {}: {why}", job.name);
+    let message = if job.upgrade {
+        crate::packages::abort_update_message(app, message)
+    } else {
+        message
+    };
+    app.error(message);
     app.packages.vc.current = None;
     next(app);
 }
@@ -620,6 +773,41 @@ fn tag_was_moved(job: &VcJob) -> bool {
     result.success()
 }
 
+fn resolve_build_plan(
+    root: &std::path::Path,
+    name: &str,
+    build: Option<&str>,
+    features: &[String],
+) -> Result<BuildPlan, String> {
+    let planned = package::build_plan(root, name);
+    match (planned, build) {
+        (Ok(mut plan), Some(command)) => {
+            plan.command = Some(command.to_string());
+            plan.output = root
+                .join(".forge-build")
+                .join(format!("{}.wasm", plan.name));
+            plan.how = "make in the declaration".into();
+            Ok(plan)
+        }
+        (Err(_), Some(command)) => Ok(package::BuildPlan {
+            name: name.to_string(),
+            command: Some(command.to_string()),
+            output: root.join(".forge-build").join(format!("{name}.wasm")),
+            how: "make in the declaration".into(),
+        }),
+        (Ok(mut plan), None) => {
+            if !features.is_empty()
+                && plan.how == "Cargo.toml"
+                && let Some(command) = plan.command.as_mut()
+            {
+                command.push_str(&format!(" --features {}", shell_quote(&features.join(","))));
+            }
+            Ok(plan)
+        }
+        (Err(error), None) => Err(error),
+    }
+}
+
 fn checkout_complete(app: &mut App, mut job: VcJob) {
     let installed = db(app).and_then(|d| d.packages.get(&job.name).cloned());
     if job.upgrade
@@ -634,33 +822,9 @@ fn checkout_complete(app: &mut App, mut job: VcJob) {
         return next(app);
     }
     let root = job.root();
-    let planned = package::build_plan(&root, &job.name);
-    let plan = match (planned, &job.build) {
-        (Ok(mut p), Some(cmd)) => {
-            p.command = Some(cmd.clone());
-            p.output = root.join(".forge-build").join(format!("{}.wasm", p.name));
-            p.how = "make in the declaration".into();
-            p
-        }
-        (Err(_), Some(cmd)) => package::BuildPlan {
-            name: job.name.clone(),
-            command: Some(cmd.clone()),
-            output: root.join(".forge-build").join(format!("{}.wasm", job.name)),
-            how: "make in the declaration".into(),
-        },
-        (Ok(mut p), None) => {
-            if !job.features.is_empty()
-                && p.how == "Cargo.toml"
-                && let Some(c) = p.command.as_mut()
-            {
-                c.push_str(&format!(
-                    " --features {}",
-                    shell_quote(&job.features.join(","))
-                ));
-            }
-            p
-        }
-        (Err(e), None) => return fail(app, &job, &e),
+    let plan = match resolve_build_plan(&root, &job.name, job.build.as_deref(), &job.features) {
+        Ok(plan) => plan,
+        Err(error) => return fail(app, &job, &error),
     };
     job.name = plan.name.clone();
     job.plan = Some(plan);
@@ -814,7 +978,7 @@ fn build(app: &mut App, job: VcJob) {
     step(app, job, Stage::Build, r);
 }
 
-fn install_output(app: &mut App, mut job: VcJob) {
+fn install_output(app: &mut App, job: VcJob) {
     app.packages.vc.current = None;
     let plan = job.plan.clone().expect("planned");
     let bytes = match std::fs::read(&plan.output) {
@@ -829,6 +993,11 @@ fn install_output(app: &mut App, mut job: VcJob) {
     };
     if job.upgrade
         && let Err(error) = crate::packages::smoke_test_component(app, &job.name, &bytes)
+    {
+        return fail(app, &job, &error);
+    }
+    if job.upgrade
+        && let Err(error) = crate::packages::prepare_update(app, &job.name)
     {
         return fail(app, &job, &error);
     }
@@ -850,15 +1019,13 @@ fn install_output(app: &mut App, mut job: VcJob) {
     match db.install_built(&job.name, &version, &source, &bytes) {
         Ok(path) => {
             if let Err(error) = crate::declare::record_checked(app, &job.name, &path) {
-                let rollback = rollback_job(app, &mut job);
-                return fail(
-                    app,
-                    &job,
-                    &match rollback {
-                        Ok(()) => error,
-                        Err(rollback) => format!("{error}; rollback failed: {rollback}"),
-                    },
-                );
+                return fail(app, &job, &error);
+            }
+            if job.upgrade
+                && !crate::packages::update_is_batch(app)
+                && let Err(error) = crate::packages::commit_update(app)
+            {
+                return fail(app, &job, &format!("finishing update: {error}"));
             }
             append(
                 app,
@@ -877,22 +1044,8 @@ fn install_output(app: &mut App, mut job: VcJob) {
             crate::plugins::load(app, &path);
         }
         Err(e) => {
-            let rollback = rollback_job(app, &mut job);
-            return fail(
-                app,
-                &job,
-                &match rollback {
-                    Ok(()) => e,
-                    Err(rollback) => format!("{e}; rollback failed: {rollback}"),
-                },
-            );
+            return fail(app, &job, &e);
         }
-    }
-
-    fn rollback_job(app: &App, job: &mut VcJob) -> Result<(), String> {
-        job.backup.take().map_or(Ok(()), |backup| {
-            crate::packages::restore_package_backup(app, &job.name, backup)
-        })
     }
     next(app);
 }

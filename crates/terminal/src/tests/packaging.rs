@@ -2,6 +2,52 @@
 //! packaging tests.
 
 use super::*;
+use std::sync::{Mutex, MutexGuard};
+
+static PACKAGE_ENV: Mutex<()> = Mutex::new(());
+
+fn package_env() -> MutexGuard<'static, ()> {
+    PACKAGE_ENV
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+struct EnvGuard {
+    data: Option<std::ffi::OsString>,
+    config: Option<std::ffi::OsString>,
+}
+
+impl EnvGuard {
+    fn set(data: &std::path::Path, config: &std::path::Path) -> Self {
+        let data_old = std::env::var_os("FORGE_DATA_DIR");
+        let config_old = std::env::var_os("FORGE_CONFIG_DIR");
+        // SAFETY: package_env serializes the tests that change these.
+        unsafe {
+            std::env::set_var("FORGE_DATA_DIR", data);
+            std::env::set_var("FORGE_CONFIG_DIR", config);
+        }
+        Self {
+            data: data_old,
+            config: config_old,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: package_env serializes the tests that change these.
+        unsafe {
+            match &self.data {
+                Some(value) => std::env::set_var("FORGE_DATA_DIR", value),
+                None => std::env::remove_var("FORGE_DATA_DIR"),
+            }
+            match &self.config {
+                Some(value) => std::env::set_var("FORGE_CONFIG_DIR", value),
+                None => std::env::remove_var("FORGE_CONFIG_DIR"),
+            }
+        }
+    }
+}
 
 #[test]
 fn compile_next_error_shell_commands_and_projects() {
@@ -197,6 +243,8 @@ fn packages_install_list_and_delete() {
 fn packages_from_version_control() {
     let dir = std::env::temp_dir().join(format!("forge-vc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
+    let _env_lock = package_env();
+    let _env = EnvGuard::set(&dir.join("data with spaces"), &dir.join("config"));
     let repo = dir.join("forge-demo");
     let wasm = demo_plugin_file(&repo.join("dist"));
     let git = |args: &[&str]| {
@@ -225,8 +273,6 @@ fn packages_from_version_control() {
     git(&["add", "."]);
     git(&["commit", "-q", "-m", "prebuilt"]);
     git(&["tag", "v1"]);
-    // SAFETY: tests that read FORGE_DATA_DIR are only this one.
-    unsafe { std::env::set_var("FORGE_DATA_DIR", dir.join("data with spaces")) };
     let mut app = app_with("");
     app.plugin_cache = None;
     app.packages.plugin_dir = Some(dir.join("plugins"));
@@ -440,7 +486,10 @@ fn packages_from_version_control() {
     let data_before = tree_snapshot(&dir.join("data with spaces"));
     press(&mut app, "C-u M-x package-vc-upgrade-all RET");
     let plan = buffer_text(&app, "*Package Upgrade Plan*");
-    assert!(plan.contains("demo:") && plan.contains("build:"), "{plan}");
+    assert!(
+        plan.contains("demo:") && plan.contains(&format!("build: {changed_build}")),
+        "dry run should detect the remote build command: {plan}"
+    );
     assert_eq!(tree_snapshot(&dir.join("plugins")), plugins_before);
     assert_eq!(tree_snapshot(&dir.join("data with spaces")), data_before);
 
@@ -462,5 +511,232 @@ fn packages_from_version_control() {
 
     press(&mut app, "M-x package-delete RET demo RET");
     assert!(!dir.join("data with spaces/vc/demo").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn startup_recovers_an_interrupted_package_update() {
+    let dir = std::env::temp_dir().join(format!("forge-recover-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _env_lock = package_env();
+    let config = dir.join("config");
+    let plugins = dir.join("plugins");
+    let data = dir.join("data");
+    let _env = EnvGuard::set(&data, &config);
+    std::fs::create_dir_all(&config).unwrap();
+    let old = b"\0asm\x0d\0\x01\0old".to_vec();
+    let new = b"\0asm\x0d\0\x01\0new".to_vec();
+    let old_hash = forge_core::package::sha256_hex(&old);
+    let new_hash = forge_core::package::sha256_hex(&new);
+    let package = |sha: &str| forge_core::package::Package {
+        name: "demo".into(),
+        version: "1.0.0".into(),
+        description: String::new(),
+        url: "demo.wasm".into(),
+        sha256: sha.into(),
+        git: None,
+        rev: None,
+        release_notes: None,
+    };
+    let mut installed = forge_core::package::InstalledDb::load(&plugins);
+    installed.install(&package(&old_hash), &old).unwrap();
+    let mut lock = forge_core::LockFile::load(&config).unwrap();
+    lock.set(
+        "demo",
+        forge_core::LockEntry {
+            sha256: old_hash.clone(),
+            artifact_sha256: Some(old_hash.clone()),
+            version: Some("1.0.0".into()),
+            ..Default::default()
+        },
+    );
+    lock.save().unwrap();
+    let mut journal =
+        forge_core::package_journal::Journal::new(&data, "upgrade", &config, &plugins);
+    journal.add("demo").unwrap();
+    drop(journal);
+    std::fs::write(plugins.join("demo.wasm"), &new).unwrap();
+    let mut half_applied = forge_core::package::InstalledDb::load(&plugins);
+    half_applied.install(&package(&new_hash), &new).unwrap();
+
+    let app = forge_editor::start(&forge_editor::StartOptions {
+        no_config: true,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), old);
+    assert_eq!(
+        forge_core::package::InstalledDb::load(&plugins).packages["demo"].version,
+        "1.0.0"
+    );
+    assert_eq!(
+        forge_core::LockFile::load(&config)
+            .unwrap()
+            .get("demo")
+            .and_then(|entry| entry.artifact_sha256.as_deref()),
+        Some(old_hash.as_str())
+    );
+    assert!(!data.join("package-journal.toml").exists());
+    drop(app);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn package_upgrade_all_rolls_back_the_whole_batch() {
+    let dir = std::env::temp_dir().join(format!("forge-batch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _env_lock = package_env();
+    let _env = EnvGuard::set(&dir.join("data"), &dir.join("config"));
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    let repo = dir.join("repo");
+    let old = std::fs::read(demo_plugin_file(&dir.join("old"))).unwrap();
+    let old_hash = forge_core::package::sha256_hex(&old);
+    let new_good = include_str!("../../../../tests/fixtures/demo-plugin.wat")
+        .replace("demo-greet", "demo-great");
+    let good_path = plugin_file_from_wat(&repo, "one-new", &new_good);
+    let good = std::fs::read(&good_path).unwrap();
+    let failing = r#"
+        (module
+          (memory (export "memory") 1)
+          (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+            (i32.const 0))
+          (func (export "init") (result i32)
+            (unreachable))
+          (func (export "forge:editor/handler@0.1.0#run-command")
+            (param i32 i32 i32 i64) (result i32)
+            (i32.const 0))
+          (func (export "forge:editor/handler@0.1.0#on-event") (param i32 i32))
+          (func (export "forge:editor/handler@0.1.0#on-answer") (param i32 i32 i32 i32)))
+    "#;
+    let bad_path = plugin_file_from_wat(&repo, "two-new", failing);
+    let bad = std::fs::read(&bad_path).unwrap();
+    let index = format!(
+        "[[package]]\nname = \"one\"\nversion = \"2.0.0\"\nurl = \"one-new.wasm\"\nsha256 = \"{}\"\n\n\
+         [[package]]\nname = \"two\"\nversion = \"2.0.0\"\nurl = \"two-new.wasm\"\nsha256 = \"{}\"\n",
+        forge_core::package::sha256_hex(&good),
+        forge_core::package::sha256_hex(&bad)
+    );
+    std::fs::write(repo.join("index.toml"), index).unwrap();
+
+    let plugins = dir.join("plugins");
+    let mut installed = forge_core::package::InstalledDb::load(&plugins);
+    for name in ["one", "two"] {
+        installed
+            .install(
+                &forge_core::package::Package {
+                    name: name.into(),
+                    version: "1.0.0".into(),
+                    description: String::new(),
+                    url: format!("{name}-old.wasm"),
+                    sha256: old_hash.clone(),
+                    git: None,
+                    rev: None,
+                    release_notes: None,
+                },
+                &old,
+            )
+            .unwrap();
+    }
+    let mut lock = forge_core::LockFile::load(&dir.join("config")).unwrap();
+    for name in ["one", "two"] {
+        lock.set(
+            name,
+            forge_core::LockEntry {
+                sha256: old_hash.clone(),
+                artifact_sha256: Some(old_hash.clone()),
+                version: Some("1.0.0".into()),
+                ..Default::default()
+            },
+        );
+    }
+    lock.save().unwrap();
+
+    let mut app = app_with("");
+    app.plugin_cache = None;
+    app.packages.indexes = vec![repo.join("index.toml").display().to_string()];
+    app.packages.plugin_dir = Some(plugins.clone());
+
+    press(&mut app, "M-x package-upgrade-all RET");
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("Apply one 1.0.0 -> 2.0.0")),
+        "message: {:?}",
+        app.message
+    );
+    press(&mut app, "y");
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("Apply two 1.0.0 -> 2.0.0")),
+        "message: {:?}",
+        app.message
+    );
+    press(&mut app, "y");
+    assert!(
+        app.message
+            .as_deref()
+            .unwrap_or("")
+            .contains("Can't upgrade two"),
+        "message: {:?}",
+        app.message
+    );
+
+    assert_eq!(std::fs::read(plugins.join("one.wasm")).unwrap(), old);
+    assert_eq!(std::fs::read(plugins.join("two.wasm")).unwrap(), old);
+    let restored = forge_core::package::InstalledDb::load(&plugins);
+    assert_eq!(restored.packages["one"].version, "1.0.0");
+    assert_eq!(restored.packages["two"].version, "1.0.0");
+    let lock = forge_core::LockFile::load(&dir.join("config")).unwrap();
+    assert_eq!(
+        lock.get("one").and_then(|e| e.artifact_sha256.as_deref()),
+        Some(old_hash.as_str())
+    );
+    assert!(
+        !dir.join("data/package-journal.toml").exists(),
+        "a completed rollback removes the journal"
+    );
+    assert_eq!(
+        app.editor.commands.plugin_for("demo-greet"),
+        Some("one"),
+        "the first package is running its restored artifact again"
+    );
+    assert_eq!(app.editor.commands.plugin_for("demo-great"), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn smoke_test_uses_the_doctor_check_seam() {
+    use forge_editor::packages::SmokeTestCheck;
+
+    struct FailingCheck;
+    impl SmokeTestCheck for FailingCheck {
+        fn check(
+            &self,
+            _app: &App,
+            _editor: &forge_core::Editor,
+            name: &str,
+        ) -> Result<(), String> {
+            assert_eq!(name, "demo");
+            Err("doctor found a problem".into())
+        }
+    }
+
+    let dir = std::env::temp_dir().join(format!("forge-smoke-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = demo_plugin_file(&dir);
+    let bytes = std::fs::read(path).unwrap();
+    let app = app_with("");
+    let error =
+        forge_editor::packages::smoke_test_component_with(&app, "demo", &bytes, &FailingCheck)
+            .unwrap_err();
+    assert_eq!(error, "doctor found a problem");
+    forge_editor::packages::smoke_test_component_with(
+        &app,
+        "demo",
+        &bytes,
+        &forge_editor::packages::NoSmokeTestCheck,
+    )
+    .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 }

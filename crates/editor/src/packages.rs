@@ -43,83 +43,165 @@ enum Fetch {
     },
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct PackageBackup {
-    artifact: Option<Vec<u8>>,
-    installed: Option<forge_core::package::Installed>,
-    locked: Option<forge_core::LockEntry>,
+#[derive(Default)]
+pub(crate) struct UpdateTransaction {
+    operation: Option<String>,
+    batch: bool,
+    journal: Option<forge_core::package_journal::Journal>,
+    blocked: Option<String>,
 }
 
-pub(crate) fn capture_package_backup(app: &App, name: &str) -> Result<PackageBackup, String> {
-    let dir = app
+fn update_paths(app: &App) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let data = forge_core::config::data_dir()
+        .ok_or_else(|| "no data directory (set HOME or FORGE_DATA_DIR)".to_string())?;
+    let config = forge_core::config::config_dir()
+        .ok_or_else(|| "no config directory (set HOME or FORGE_CONFIG_DIR)".to_string())?;
+    let plugins = app
         .packages
-        .plugin_dir
-        .clone()
-        .or_else(forge_core::config::plugin_dir)
+        .dir()
         .ok_or_else(|| "no plugins directory".to_string())?;
-    let installed = InstalledDb::load(&dir);
-    let artifact = match std::fs::read(installed.plugin_file(name)) {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(format!("{name}: reading current artifact: {error}")),
-    };
-    let locked = match forge_core::config::config_dir() {
-        Some(config) => LockFile::load(&config)
-            .map_err(|error| format!("{name}: reading the package lock: {error}"))?
-            .get(name)
-            .cloned(),
-        None => None,
-    };
-    Ok(PackageBackup {
-        artifact,
-        installed: installed.packages.get(name).cloned(),
-        locked,
-    })
+    Ok((data, config, plugins))
 }
 
-pub(crate) fn restore_package_backup(
-    app: &App,
-    name: &str,
-    backup: PackageBackup,
-) -> Result<(), String> {
-    let dir = app
-        .packages
-        .plugin_dir
-        .clone()
-        .or_else(forge_core::config::plugin_dir)
-        .ok_or_else(|| "no plugins directory".to_string())?;
-    let mut installed = InstalledDb::load(&dir);
-    let path = installed.plugin_file(name);
-    match backup.artifact {
-        Some(bytes) => forge_core::fsutil::write_atomic(&path, bytes)
-            .map_err(|error| format!("{name}: restoring artifact: {error}"))?,
-        None => match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("{name}: removing failed artifact: {error}")),
-        },
-    }
-    if let Some(record) = backup.installed {
-        installed.packages.insert(name.to_string(), record);
-    } else {
-        installed.packages.remove(name);
-    }
-    installed
-        .save()
-        .map_err(|error| format!("{name}: {error}"))?;
-
-    if let Some(config) = forge_core::config::config_dir() {
-        let mut lock = LockFile::load(&config)
-            .map_err(|error| format!("{name}: reading the package lock: {error}"))?;
-        if let Some(entry) = backup.locked {
-            lock.set(name, entry);
-        } else {
-            lock.remove(name);
+pub(crate) fn recover_startup(app: &mut App) {
+    use forge_core::package_journal::{self, Recovery};
+    let Some(data) = forge_core::config::data_dir() else {
+        return;
+    };
+    match package_journal::recover(&data) {
+        Ok(Some(Recovery::RolledBack { packages })) => app.msg(format!(
+            "Rolled back interrupted package update ({packages} package{})",
+            if packages == 1 { "" } else { "s" }
+        )),
+        Ok(Some(Recovery::Finished)) => {}
+        Ok(None) => {}
+        Err(error) => {
+            app.packages.update.blocked = Some(error.clone());
+            app.error(format!("Package update recovery failed: {error}"));
         }
-        lock.save()
-            .map_err(|error| format!("{name}: restoring lock entry: {error}"))?;
     }
+}
+
+pub(crate) fn begin_update(app: &mut App, operation: &str, batch: bool) -> Result<(), String> {
+    if let Some(error) = &app.packages.update.blocked {
+        return Err(format!(
+            "package updates are blocked after a failed journal recovery: {error}"
+        ));
+    }
+    if app.packages.update.operation.is_none() {
+        app.packages.update.operation = Some(operation.to_string());
+    }
+    app.packages.update.batch |= batch;
     Ok(())
+}
+
+pub(crate) fn prepare_update(app: &mut App, name: &str) -> Result<(), String> {
+    if let Some(error) = &app.packages.update.blocked {
+        return Err(format!(
+            "package updates are blocked after a failed journal recovery: {error}"
+        ));
+    }
+    if app.packages.update.operation.is_none() {
+        app.packages.update.operation = Some("upgrade".to_string());
+    }
+    if app.packages.update.journal.is_none() {
+        let (data, config, plugins) = update_paths(app)?;
+        let operation = app
+            .packages
+            .update
+            .operation
+            .clone()
+            .unwrap_or_else(|| "upgrade".to_string());
+        app.packages.update.journal = Some(forge_core::package_journal::Journal::new(
+            &data, &operation, &config, &plugins,
+        ));
+    }
+    app.packages
+        .update
+        .journal
+        .as_mut()
+        .ok_or_else(|| "no package update transaction".to_string())?
+        .add(name)
+        .map(|_| ())
+}
+
+pub(crate) fn commit_update(app: &mut App) -> Result<(), String> {
+    if let Some(mut journal) = app.packages.update.journal.take()
+        && let Err(error) = journal.commit()
+    {
+        app.packages.update.journal = Some(journal);
+        return Err(error);
+    }
+    app.packages.update.operation = None;
+    app.packages.update.batch = false;
+    Ok(())
+}
+
+pub(crate) fn rollback_update(app: &mut App) -> Result<(), String> {
+    if let Some(mut journal) = app.packages.update.journal.take()
+        && let Err(error) = journal.rollback()
+    {
+        app.packages.update.journal = Some(journal);
+        app.packages.update.blocked = Some(error.clone());
+        return Err(error);
+    }
+    app.packages.update.operation = None;
+    app.packages.update.batch = false;
+    Ok(())
+}
+
+pub(crate) fn update_is_batch(app: &App) -> bool {
+    app.packages.update.batch
+}
+
+pub(crate) fn finish_update(app: &mut App) {
+    if let Err(error) = commit_update(app) {
+        abort_update(app, format!("Couldn't finish package update: {error}"));
+    }
+}
+
+pub(crate) fn abort_update_message(app: &mut App, error: String) -> String {
+    let reload = app
+        .packages
+        .update
+        .journal
+        .as_ref()
+        .map(forge_core::package_journal::Journal::names)
+        .unwrap_or_default();
+    let rollback = rollback_update(app);
+    app.packages.upgrade_queue.clear();
+    app.packages.pending_upgrade = None;
+    app.packages.upgrade_git_after_index = false;
+    app.packages.vc.cancel_queued();
+    match rollback {
+        Ok(()) => {
+            reload_after_rollback(app, &reload);
+            error
+        }
+        Err(rollback) => format!("{error}; rollback failed: {rollback}"),
+    }
+}
+
+/// A rolled-back package may already be running the new artifact in memory.
+/// Load the restored file again, but only for plugins that were loaded.
+fn reload_after_rollback(app: &mut App, names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+    let loaded: BTreeSet<String> = crate::plugins::loaded_names(app).into_iter().collect();
+    let Some(plugins) = app.packages.dir() else {
+        return;
+    };
+    for name in names {
+        if loaded.contains(name) {
+            crate::plugins::load(app, &plugins.join(format!("{name}.wasm")));
+        }
+    }
+}
+
+pub(crate) fn abort_update(app: &mut App, error: String) {
+    let error = abort_update_message(app, error);
+    app.error(error);
 }
 
 #[derive(Default)]
@@ -139,6 +221,8 @@ pub struct Packages {
     upgrade_git_after_index: bool,
     /// Indexes read so far in a refresh, and what to do after.
     refreshing: Option<(Index, Vec<String>, Then)>,
+    /// Durable rollback state for an in-progress update.
+    pub(crate) update: UpdateTransaction,
     /// Packages from version control (package_vc.rs).
     pub vc: crate::package_vc::Vc,
     /// Tree-sitter grammar installs (grammar_install.rs).
@@ -768,10 +852,11 @@ fn after_refresh(app: &mut App, then: Then) {
                 let vc = crate::package_vc::upgrade_all(app);
                 if vc == 0 {
                     app.msg("All packages are up to date");
+                    finish_update(app);
                 }
             } else {
                 app.packages.upgrade_git_after_index = true;
-                start_upgrade_queue(app, todo);
+                start_upgrade_queue(app, todo, true);
             }
         }
         Then::UpgradeDryRun => {
@@ -878,20 +963,26 @@ pub fn upgrade_named(app: &mut App, name: &str) {
     if declaration.as_ref().is_some_and(|u| u.frozen) {
         return app.msg(format!("{name} is pinned or frozen; not upgrading"));
     }
-    start_upgrade_queue(app, vec![selected]);
+    start_upgrade_queue(app, vec![selected], false);
 }
 
-fn start_upgrade_queue(app: &mut App, packages: Vec<Package>) {
+fn start_upgrade_queue(app: &mut App, packages: Vec<Package>, batch: bool) {
+    if let Err(error) = begin_update(app, if batch { "upgrade-all" } else { "upgrade" }, batch) {
+        return app.error(format!("Can't start package update: {error}"));
+    }
     app.packages.upgrade_queue = packages.into();
     next_upgrade_prompt(app);
 }
 
 fn next_upgrade_prompt(app: &mut App) {
     let Some(package) = app.packages.upgrade_queue.pop_front() else {
-        if std::mem::take(&mut app.packages.upgrade_git_after_index)
-            && crate::package_vc::upgrade_all(app) == 0
-        {
-            app.msg("No Git packages need upgrading");
+        if std::mem::take(&mut app.packages.upgrade_git_after_index) {
+            if crate::package_vc::upgrade_all(app) == 0 {
+                app.msg("No Git packages need upgrading");
+                finish_update(app);
+            }
+        } else {
+            finish_update(app);
         }
         return;
     };
@@ -928,12 +1019,14 @@ pub fn package_upgrade_confirmed(app: &mut App, yes: bool) {
         return;
     };
     if yes {
-        install(app, package.clone());
         app.msg(format!("Applying upgrade for {}", package.name));
+        if !install(app, package.clone()) {
+            next_upgrade_prompt(app);
+        }
     } else {
         app.msg(format!("Skipped upgrade for {}", package.name));
+        next_upgrade_prompt(app);
     }
-    next_upgrade_prompt(app);
 }
 
 /// Show declared, installed, and indexed packages without requiring an index.
@@ -1372,21 +1465,24 @@ fn install_named_version(app: &mut App, name: &str, requirement: Option<&str>) {
         None => return app.error("No package index is loaded"),
     };
     if db(app).is_some_and(|db| db.packages.contains_key(name)) {
-        start_upgrade_queue(app, vec![package]);
+        start_upgrade_queue(app, vec![package], false);
     } else {
-        install(app, package);
+        let _ = install(app, package);
     }
 }
 
-fn install(app: &mut App, p: Package) {
+/// Start installing a package; returns true when a download will finish later.
+fn install(app: &mut App, p: Package) -> bool {
     let upgrading = db(app).is_some_and(|db| db.packages.contains_key(&p.name));
     if let Some(git) = &p.git {
-        return crate::package_vc::install(app, &p.name, git, p.rev.clone(), upgrading);
+        crate::package_vc::install(app, &p.name, git, p.rev.clone(), upgrading);
+        return false;
     }
     match package::local_path(&p.url) {
         Some(path) => {
             let r = std::fs::read(&path).map_err(|e| format!("{}: {e}", p.url));
             installed(app, p, r, upgrading);
+            false
         }
         None => {
             let file = temp_file(&p.name);
@@ -1401,8 +1497,17 @@ fn install(app: &mut App, p: Package) {
                             upgrade: upgrading,
                         },
                     );
+                    true
                 }
-                Err(e) => app.error(e),
+                Err(error) => {
+                    let message = format!("Can't install {}: {error}", p.name);
+                    if upgrading {
+                        abort_update(app, message);
+                    } else {
+                        app.error(message);
+                    }
+                    false
+                }
             }
         }
     }
@@ -1410,39 +1515,37 @@ fn install(app: &mut App, p: Package) {
 
 /// A download finished (or a local file was read): check, install, load.
 fn installed(app: &mut App, p: Package, bytes: Result<Vec<u8>, String>, upgrade: bool) {
-    let backup = if upgrade {
-        match capture_package_backup(app, &p.name) {
-            Ok(backup) => Some(backup),
-            Err(error) => return app.error(error),
-        }
-    } else {
-        None
-    };
     let Some(mut db) = db(app) else {
         return app.error("No plugins directory (set HOME or FORGE_CONFIG_DIR)");
     };
-    let bytes = bytes.and_then(|b| {
-        if upgrade {
-            smoke_test_component(app, &p.name, &b)?;
+    let bytes = match bytes {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let message = format!("Can't install {}: {error}", p.name);
+            if upgrade {
+                return abort_update(app, message);
+            }
+            return app.error(message);
         }
-        Ok(b)
-    });
-    let r = bytes.and_then(|b| db.install(&p, &b));
-    match r {
+    };
+    if upgrade {
+        if let Err(error) = smoke_test_component(app, &p.name, &bytes) {
+            return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
+        }
+        if let Err(error) = prepare_update(app, &p.name) {
+            return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
+        }
+    }
+    match db.install(&p, &bytes) {
         Ok(path) => {
             if let Err(error) = crate::declare::record_checked(app, &p.name, &path) {
-                let rollback = backup
-                    .map(|backup| restore_package_backup(app, &p.name, backup))
-                    .transpose();
-                return app.error(match rollback {
-                    Ok(_) => format!("Can't upgrade {}: {error}", p.name),
-                    Err(rollback) => {
-                        format!(
-                            "Can't upgrade {}: {error}; rollback failed: {rollback}",
-                            p.name
-                        )
-                    }
-                });
+                return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
+            }
+            if upgrade
+                && !app.packages.update.batch
+                && let Err(error) = commit_update(app)
+            {
+                return abort_update(app, format!("Can't finish upgrading {}: {error}", p.name));
             }
             app.msg(format!("Installed {} {}", p.name, p.version));
             crate::plugins::load(app, &path);
@@ -1458,20 +1561,43 @@ fn installed(app: &mut App, p: Package, bytes: Result<Vec<u8>, String>, upgrade:
             }
         }
         Err(e) => {
-            let rollback = backup
-                .map(|backup| restore_package_backup(app, &p.name, backup))
-                .transpose();
-            app.error(match rollback {
-                Ok(_) => format!("Can't install {}: {e}", p.name),
-                Err(rollback) => {
-                    format!("Can't install {}: {e}; rollback failed: {rollback}", p.name)
-                }
-            });
+            let message = format!("Can't install {}: {e}", p.name);
+            if upgrade {
+                abort_update(app, message);
+            } else {
+                app.error(message);
+            }
         }
     }
 }
 
+/// Extra checks run after a candidate plugin loads and registers commands.
+/// Phase 3's `package-doctor` will provide the real implementation; until
+/// then the default is deliberately a no-op.
+pub trait SmokeTestCheck {
+    fn check(&self, app: &App, editor: &forge_core::Editor, name: &str) -> Result<(), String>;
+}
+
+/// The default smoke test: no diagnostics beyond the isolated load itself.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoSmokeTestCheck;
+
+impl SmokeTestCheck for NoSmokeTestCheck {
+    fn check(&self, _app: &App, _editor: &forge_core::Editor, _name: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 pub(crate) fn smoke_test_component(app: &App, name: &str, bytes: &[u8]) -> Result<(), String> {
+    smoke_test_component_with(app, name, bytes, &NoSmokeTestCheck)
+}
+
+pub fn smoke_test_component_with(
+    app: &App,
+    name: &str,
+    bytes: &[u8],
+    check: &dyn SmokeTestCheck,
+) -> Result<(), String> {
     let path = temp_file(&format!("{name}-smoke")).with_extension("wasm");
     let Some(parent) = path.parent() else {
         return Err("smoke-test path has no parent".into());
@@ -1504,7 +1630,7 @@ pub(crate) fn smoke_test_component(app: &App, name: &str, bytes: &[u8]) -> Resul
                 }
             }
         }
-        Ok(())
+        check.check(app, &editor, name)
     })();
     let _ = std::fs::remove_file(&path);
     result
@@ -1671,6 +1797,9 @@ pub fn poll(app: &mut App) {
                         };
                         let _ = std::fs::remove_file(&file);
                         installed(app, package, r, upgrade);
+                        if upgrade {
+                            next_upgrade_prompt(app);
+                        }
                     }
                 }
             }

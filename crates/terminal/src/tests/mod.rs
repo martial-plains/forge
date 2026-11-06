@@ -389,6 +389,19 @@ fn left_click(app: &mut App, column: u16, row: u16) {
 
 /// Build tests/fixtures/demo-plugin.wat into a component file.
 pub(crate) fn demo_plugin_file(dir: &std::path::Path) -> std::path::PathBuf {
+    plugin_file_from_wat(
+        dir,
+        "demo",
+        include_str!("../../../../tests/fixtures/demo-plugin.wat"),
+    )
+}
+
+/// Build a test plugin from WAT source into `NAME.wasm`.
+pub(crate) fn plugin_file_from_wat(
+    dir: &std::path::Path,
+    name: &str,
+    source: &str,
+) -> std::path::PathBuf {
     use wit_component::{ComponentEncoder, StringEncoding};
     let mut resolve = wit_parser::Resolve::default();
     let pkg = resolve
@@ -398,8 +411,7 @@ pub(crate) fn demo_plugin_file(dir: &std::path::Path) -> std::path::PathBuf {
         ))
         .unwrap();
     let world = resolve.select_world(&[pkg], Some("plugin")).unwrap();
-    let mut module =
-        wat::parse_str(include_str!("../../../../tests/fixtures/demo-plugin.wat")).unwrap();
+    let mut module = wat::parse_str(source).unwrap();
     wit_component::embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
         .unwrap();
     let bytes = ComponentEncoder::default()
@@ -408,7 +420,7 @@ pub(crate) fn demo_plugin_file(dir: &std::path::Path) -> std::path::PathBuf {
         .encode()
         .unwrap();
     std::fs::create_dir_all(dir).unwrap();
-    let path = dir.join("demo.wasm");
+    let path = dir.join(format!("{name}.wasm"));
     std::fs::write(&path, bytes).unwrap();
     path
 }

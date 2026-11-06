@@ -130,6 +130,10 @@ pub fn start(opts: &StartOptions) -> anyhow::Result<App> {
     let mut app = App::new(editor);
     // Like *scratch*, *Messages* is there from the start; plugins never see events from it.
     crate::messages::messages_buffer(&mut app);
+    // Finish or undo an interrupted package update before declarations can
+    // observe a half-written installation. The journal is machine-local, so
+    // this also applies with -q.
+    crate::packages::recover_startup(&mut app);
     app.graphical = opts.graphical;
     // The frame furniture is on by default: the menu bar, tab bar and the
     // vertical scroll bar in every frontend, and the tool bar in a GUI.

@@ -842,8 +842,8 @@ The commands:
 - `M-x package-upgrade NAME` upgrades one installed package after showing
   index release notes and asking for confirmation.
 - `M-x package-upgrade-all-dry-run` lists changed versions or commits and
-  recorded build commands without changing plugin or data files.
-  `C-u M-x package-upgrade-all` shows the same plan.
+  the build commands at the new revision without changing plugin or data
+  files. `C-u M-x package-upgrade-all` shows the same plan.
 - Automatic upgrades skip declarations with `pin` or `freeze: true`.
   Index declarations may select a semver range, for example
   `version: "^1.2"`.
@@ -895,12 +895,20 @@ the same rev again (a branch moves on, a tag stays unless it was moved)
 and rebuild only if the commit changed. Forge shows commit subjects before
 applying, flags `BREAKING` markers and moved tags, and asks for confirmation.
 `C-u` on either Git upgrade command shows a plan using `git ls-remote`
-without fetching or changing the checkout. Failed builds, smoke tests or
-lock recording restore the previous artifact and installed record. A smoke
-test loads the candidate in an isolated editor, runs its `init`, and checks
-that manifest commands registered. `package-upgrade-all` includes Git
-packages; `package-delete` removes the clone too. `packages.toml` records
-the repository, rev, commit and build command of each.
+without fetching or changing the checkout, and detects the build command
+in the remote revision rather than reusing the installed one. Failed
+builds, smoke tests or lock recording restore the previous artifact,
+installed record and lock entry. A smoke test loads the candidate in an
+isolated editor, runs its `init`, and checks that manifest commands
+registered. `package-upgrade-all` includes Git packages and rolls back the
+whole run if any package fails; `package-delete` removes the clone too.
+`packages.toml` records the repository, rev, commit and build command of
+each.
+
+Updates keep a journal beside the Forge data directory. If Forge exits
+before an update finishes, the next start restores the previous artifact,
+installed record and lock entry. A failed recovery keeps the journal and
+blocks further package updates until it is repaired.
 
 An index entry can include a `release_notes` string; Forge displays it in
 the review buffer before asking to apply an update. Semver requirements use

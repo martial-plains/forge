@@ -31,8 +31,12 @@ Package upgrades can be previewed with =package-upgrade-all-dry-run= or
 =freeze: true=; pins are held from automatic updates. Forge shows index
 release notes or Git commit subjects before applying an update, smoke-tests
 the candidate plugin in an isolated editor, and restores the previous
-artifact and installed record if building, smoke testing or lock recording
-fails.
+artifact, installed record and lock entry if building, smoke testing or lock
+recording fails. Updates keep a durable journal: an interrupted update is
+rolled back on the next start, and =package-upgrade-all= rolls back every
+package in the run when one fails. Dry runs now inspect the remote Git
+revision's own build metadata instead of reusing the installed command.
+A no-op doctor-check seam is in place for the later package diagnostics work.
 ** Package locks can be snapshotted and restored
 Lock entries now record the declaration and build-recipe hashes, artifact hash,
 source tier and component capabilities, while preserving unknown fields and
