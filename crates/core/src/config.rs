@@ -110,6 +110,19 @@ pub fn state_dir() -> Option<PathBuf> {
         })
 }
 
+/// Interactive plugin approvals: `plugin-grants.toml` in the state
+/// directory, because they are machine-local and must not travel with a
+/// shared configuration.
+pub fn grants_file() -> Option<PathBuf> {
+    state_dir().map(|d| d.join("plugin-grants.toml"))
+}
+
+/// Where older Forge versions kept interactive approvals. Read only as a
+/// migration source when the state file does not exist yet.
+pub fn legacy_grants_file() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("plugin-grants.toml"))
+}
+
 /// Plugin files in a plugins directory, sorted by name.
 pub fn discover_plugins(dir: &std::path::Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {

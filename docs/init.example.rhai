@@ -276,6 +276,10 @@ forge.command.create("two-space-indent", || {
 // prints the same report from the command line (--json for JSON). This warns
 // in *Messages* when plugin startup takes longer than the budget:
 // forge.opt["startup_budget_ms"] = 250;
+// Review an init.rhai that changed outside Forge before evaluating it. If
+// the new file adds a grant, process, network request or writable directory,
+// Forge shows the diff and asks; declining behaves like starting with -q.
+// forge.opt["init_review"] = true;
 // forge.plugin.grant("spell", #{
 //   directories: ["~/dict", #{ path: "~/.cache/spell", write: true }],
 //   network: false,

@@ -535,7 +535,7 @@ plugin takes its menu and its items away again.
   Rhai state as your init.rhai. **It only runs once the user has granted
   it.** That is the `.dir-locals` problem, answered: code from a directory
   you may have just cloned is the user's decision, not Forge's.
-  It is asked for and remembered in `~/.config/forge/plugin-grants.toml`,
+  It is asked for and remembered in `~/.local/state/forge/plugin-grants.toml`,
   but in a section of its own rather than as one of a plugin's
   capabilities — a manifest can't ask for it, and it isn't one:
 
@@ -719,8 +719,9 @@ wrong types before loading.
 When a plugin asks for something it hasn't been granted, Forge shows the
 request and every interface the component imports, and asks: `y` grants
 and loads, `n` loads it without those permissions, `C-g` doesn't load it.
-Answers are kept in `~/.config/forge/plugin-grants.toml`; Forge asks again
-only when a plugin wants something new. Users can also grant in init.rhai,
+Answers are kept in `~/.local/state/forge/plugin-grants.toml`, bound to the
+plugin's binary; Forge asks again when a plugin wants something new or the
+same name points at a different binary. Users can also grant in init.rhai,
 and then aren't asked at all:
 
 ```rhai
@@ -742,8 +743,9 @@ appear under their real paths. Stdout and stderr always work; they go to
 
 When syncing a Forge configuration, share `init.rhai` and `forge-lock.toml`.
 Keep per-machine approvals, installed plugin binaries, saved sessions and
-credential files private. In current installations, interactive plugin
-approvals are stored in `~/.config/forge/plugin-grants.toml`.
+credential files private. Interactive plugin approvals are stored in
+`~/.local/state/forge/plugin-grants.toml`; an older config-directory file is
+migrated on first use.
 
 | Share | Keep local |
 |---|---|
@@ -840,7 +842,9 @@ The commands:
 - `M-x package-install`, `package-delete`, `package-upgrade-all` and
   `package-refresh-contents` do the same from anywhere.
 - `M-x package-upgrade NAME` upgrades one installed package after showing
-  index release notes and asking for confirmation.
+  index release notes and asking for confirmation. If the new manifest asks
+  for capabilities the lockfile did not record, the review lists the
+  additions and asks again; removals are only listed.
 - `M-x package-upgrade-all-dry-run` lists changed versions or commits and
   the build commands at the new revision without changing plugin or data
   files. `C-u M-x package-upgrade-all` shows the same plan.
@@ -851,7 +855,9 @@ The commands:
 Downloads happen in the background. A download whose sha256 doesn't
 match the index isn't installed. Installed plugins go in the plugins
 directory, recorded in `packages.toml` there, and load like any other:
-Forge asks for their permissions.
+Forge asks for their permissions. An unattended upgrade (`--batch` or
+`--headless`) stops when it would add capabilities: it reports what changed
+and leaves the installed plugin and lockfile as they were.
 
 There is no central index yet: any static file host (a Git repository's
 raw files, GitHub Pages, S3) can serve one.
@@ -894,6 +900,9 @@ Git's and the build's output go to `*Package Build*`.
 the same rev again (a branch moves on, a tag stays unless it was moved)
 and rebuild only if the commit changed. Forge shows commit subjects before
 applying, flags `BREAKING` markers and moved tags, and asks for confirmation.
+Before installing the built component it applies the same capability diff as
+an index upgrade. Unattended runs stop on additions; a checkout and build may
+already exist, but the installed component and lock entry are not replaced.
 `C-u` on either Git upgrade command shows a plan using `git ls-remote`
 without fetching or changing the checkout, and detects the build command
 in the remote revision rather than reusing the installed one. Failed

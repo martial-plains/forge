@@ -78,6 +78,13 @@ smoke test, or lock update restores the previous installed artifact. Mark a
 declaration with =freeze: true= to exclude it from automatic upgrades; =pin=
 also freezes it and selects the pinned Git revision.
 
+** Package operation log
+   :PROPERTIES:
+   :ID:       package-log
+   :CUSTOM_ID: package-log
+   :SUMMARY:  View and export the structured package operation log
+   :END:
+
 ~M-x package-log~ shows structured fetch, build, install, upgrade, and
 rollback records with timings, source and revision details, and errors.
 ~M-x package-log-export~ writes the same records as JSON lines. The log is
@@ -103,3 +110,43 @@ with a nonzero exit status when the budget is exceeded; so does
 =forge --profile-startup= for a report over budget. Profiling is off by
 default, and while it is off the cost is one atomic flag check per call: no
 clock read, lock or label allocation.
+
+** Sharing your configuration
+   :PROPERTIES:
+   :ID:       sharing
+   :CUSTOM_ID: sharing
+   :SUMMARY:  Share settings without committing credentials or machine-local state
+   :END:
+
+Forge's configuration directory can be a Git repository, so settings and
+package declarations travel between machines. Share =init.rhai= and
+=forge-lock.toml=. Keep the files Forge writes for this machine, and the
+credentials that auth-source reads, out of the repository:
+=plugin-grants.toml=, =session.toml=, the =plugins/= directory,
+=~/.authinfo.gpg=, =~/.authinfo= and =~/.netrc=. The state directory may be
+outside the configuration directory; if it is inside the same repository,
+ignore its files too.
+
+A .gitignore for a repository rooted at the configuration directory:
+
+#+begin_src gitignore
+# Shared explicitly: init.rhai and forge-lock.toml.
+# Machine-local approvals and session state:
+plugin-grants.toml
+session.toml
+# Installed plugins are rebuilt from forge-lock.toml:
+plugins/
+# Credentials read by auth-source:
+.authinfo
+.authinfo.gpg
+.netrc
+#+end_src
+
+=M-x package-doctor= warns when one of those paths is inside a Git work
+tree and is not ignored, and prints the exact lines to add.
+
+To review an =init.rhai= that changed outside Forge, set
+~forge.opt["init_review"] = true~. If the new file adds a plugin grant,
+process, network request or writable directory, Forge shows the diff and
+asks before evaluating it. Declining evaluates nothing and behaves like
+starting with =-q=: no init file, grants or plugins directory.

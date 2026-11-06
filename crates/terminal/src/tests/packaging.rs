@@ -587,6 +587,300 @@ fn packages_from_version_control() {
 }
 
 #[test]
+fn package_upgrade_with_new_capabilities_asks_and_blocks_unattended() {
+    let dir = std::env::temp_dir().join(format!("forge-capability-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _env_lock = package_env();
+    let config = dir.join("config");
+    let plugins = dir.join("plugins");
+    let _env = EnvGuard::set(&dir.join("data"), &config);
+    std::fs::create_dir_all(&config).unwrap();
+    let repo = dir.join("repo");
+    let old = std::fs::read(demo_plugin_file(&dir.join("old"))).unwrap();
+    let old_hash = forge_core::package::sha256_hex(&old);
+    let new = include_str!("../../../../tests/fixtures/demo-plugin.wat")
+        .replace("demo-greet", "demo-great");
+    let new_path = plugin_file_from_wat(&repo, "demo", &new);
+    std::fs::write(
+        repo.join("demo.toml"),
+        "version = \"2.0.0\"\n\
+         [permissions]\n\
+         network = true\n\
+         [[permissions.directories]]\n\
+         path = \"~/.cache/forge-demo\"\n\
+         write = true\n",
+    )
+    .unwrap();
+    let new = std::fs::read(&new_path).unwrap();
+    let index = format!(
+        "[[package]]\nname = \"demo\"\nversion = \"2.0.0\"\nurl = \"demo.wasm\"\nsha256 = \"{}\"\n",
+        forge_core::package::sha256_hex(&new)
+    );
+    std::fs::write(repo.join("index.toml"), index).unwrap();
+
+    let mut installed = forge_core::package::InstalledDb::load(&plugins);
+    installed
+        .install(
+            &forge_core::package::Package {
+                name: "demo".into(),
+                version: "1.0.0".into(),
+                description: String::new(),
+                url: "old.wasm".into(),
+                sha256: old_hash.clone(),
+                git: None,
+                rev: None,
+                release_notes: None,
+            },
+            &old,
+        )
+        .unwrap();
+    let mut lock = forge_core::LockFile::load(&config).unwrap();
+    lock.set(
+        "demo",
+        forge_core::LockEntry {
+            sha256: old_hash.clone(),
+            artifact_sha256: Some(old_hash.clone()),
+            version: Some("1.0.0".into()),
+            ..Default::default()
+        },
+    );
+    lock.save().unwrap();
+
+    fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        fn visit(
+            root: &std::path::Path,
+            path: &std::path::Path,
+            files: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+        ) {
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    visit(root, &path, files);
+                } else if entry.file_type().is_ok_and(|kind| kind.is_file())
+                    && let Ok(bytes) = std::fs::read(&path)
+                    && let Ok(relative) = path.strip_prefix(root)
+                {
+                    files.push((relative.to_path_buf(), bytes));
+                }
+            }
+        }
+        let mut files = Vec::new();
+        visit(root, root, &mut files);
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        files
+    }
+
+    let mut app = app_with("");
+    app.plugin_cache = None;
+    app.packages.indexes = vec![repo.join("index.toml").display().to_string()];
+    app.packages.plugin_dir = Some(plugins.clone());
+
+    press(&mut app, "M-x package-upgrade-all RET");
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("Apply demo 1.0.0 -> 2.0.0")),
+        "message: {:?}",
+        app.message
+    );
+    press(&mut app, "y");
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("new capabilities")),
+        "message: {:?}",
+        app.message
+    );
+    let review = buffer_text(&app, "*Package Upgrade Review*");
+    assert!(
+        review.contains("network")
+            && review.contains("~/.cache/forge-demo")
+            && review.contains("read and write")
+            && review.contains("New capabilities"),
+        "{review}"
+    );
+    press(&mut app, "n");
+    assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), old);
+    assert_eq!(lock.get("demo").unwrap().sha256, old_hash);
+
+    let plugins_before = snapshot(&plugins);
+    let config_before = snapshot(&config);
+    app.unattended = true;
+    press(&mut app, "M-x package-upgrade-all RET");
+    let message = app.message.as_deref().unwrap_or("");
+    assert!(
+        message.contains("new capabilities") && message.contains("No changes were made"),
+        "message: {:?}",
+        app.message
+    );
+    assert_eq!(snapshot(&plugins), plugins_before);
+    assert_eq!(snapshot(&config), config_before);
+
+    app.unattended = false;
+    press(&mut app, "M-x package-upgrade-all RET");
+    press(&mut app, "y");
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("new capabilities")),
+        "message: {:?}",
+        app.message
+    );
+    press(&mut app, "y");
+    assert_eq!(
+        std::fs::read(plugins.join("demo.wasm")).unwrap(),
+        new,
+        "message: {:?}",
+        app.message
+    );
+    assert_eq!(app.message.as_deref(), Some("Installed demo 2.0.0"));
+    drop(app);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn vc_upgrade_with_new_capabilities_asks_and_blocks_unattended() {
+    let dir = std::env::temp_dir().join(format!("forge-vc-capability-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _env_lock = package_env();
+    let _env = EnvGuard::set(&dir.join("data"), &dir.join("config"));
+    let repo = dir.join("forge-demo");
+    let wasm = demo_plugin_file(&repo.join("dist"));
+    let manifest = repo.join("dist/demo.toml");
+    std::fs::write(&manifest, "version = \"1.0.0\"\ndescription = \"Demo\"\n").unwrap();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "init.defaultBranch=main",
+                "-c",
+                "tag.gpgSign=false",
+            ])
+            .args(args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(
+            ok.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
+    };
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "one"]);
+    git(&["tag", "v1"]);
+
+    let mut app = app_with("");
+    app.plugin_cache = None;
+    app.packages.plugin_dir = Some(dir.join("plugins"));
+    let wait = |app: &mut App, done: &dyn Fn(&App) -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !done(app) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            app.on_idle();
+        }
+    };
+    press(&mut app, "M-x package-vc-install RET");
+    answer(&mut app, &format!("{}@v1", repo.display()));
+    wait(&mut app, &|a| {
+        a.message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Installed"))
+    });
+    let old = std::fs::read(&wasm).unwrap();
+    assert!(dir.join("plugins/demo.wasm").exists());
+
+    std::fs::write(
+        &manifest,
+        "version = \"2.0.0\"\ndescription = \"Demo\"\n[permissions]\nnetwork = true\n",
+    )
+    .unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "two"]);
+    git(&["tag", "-f", "v1"]);
+
+    press(&mut app, "M-x package-vc-upgrade-all RET");
+    wait(&mut app, &|a| a.minibuffer.is_some());
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("changelog")),
+        "message: {:?}",
+        app.message
+    );
+    press(&mut app, "y");
+    wait(&mut app, &|a| {
+        a.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("new capabilities"))
+    });
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("new capabilities")),
+        "message: {:?}",
+        app.message
+    );
+    press(&mut app, "n");
+    assert_eq!(std::fs::read(dir.join("plugins/demo.wasm")).unwrap(), old);
+
+    fn snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        fn visit(
+            root: &std::path::Path,
+            path: &std::path::Path,
+            files: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+        ) {
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    visit(root, &path, files);
+                } else if entry.file_type().is_ok_and(|kind| kind.is_file())
+                    && let Ok(bytes) = std::fs::read(&path)
+                    && let Ok(relative) = path.strip_prefix(root)
+                {
+                    files.push((relative.to_path_buf(), bytes));
+                }
+            }
+        }
+        let mut files = Vec::new();
+        visit(root, root, &mut files);
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        files
+    }
+
+    let plugins_before = snapshot(&dir.join("plugins"));
+    let config_before = snapshot(&dir.join("config"));
+    app.unattended = true;
+    press(&mut app, "M-x package-vc-upgrade-all RET");
+    wait(&mut app, &|a| {
+        a.message
+            .as_deref()
+            .is_some_and(|m| m.contains("new capabilities"))
+    });
+    let message = app.message.as_deref().unwrap_or("");
+    assert!(
+        message.contains("new capabilities") && message.contains("No changes were made"),
+        "message: {:?}",
+        app.message
+    );
+    assert_eq!(snapshot(&dir.join("plugins")), plugins_before);
+    assert_eq!(snapshot(&dir.join("config")), config_before);
+    drop(app);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn startup_recovers_an_interrupted_package_update() {
     let dir = std::env::temp_dir().join(format!("forge-recover-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

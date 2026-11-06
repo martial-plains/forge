@@ -22,15 +22,18 @@
 //! That's trusting it a lot: a program runs with your rights, outside the
 //! sandbox.
 //!
-//! The user's answers are kept in `~/.config/forge/plugin-grants.toml`, so
-//! Forge only asks again when a plugin wants something new. Without a
-//! grant a plugin gets no directories, no network, no environment and the
-//! default memory limit. Using a denied capability fails the way WASI
-//! reports it (access denied, no such directory); a denied environment
-//! read returns an error naming the permission; neither crashes the
-//! plugin.
+//! The user's answers are kept in `plugin-grants.toml` in the state
+//! directory (`~/.local/state/forge`, following the platform convention),
+//! so Forge only asks again when a plugin wants something new. An older
+//! file next to `init.rhai` is read once as a migration source, then new
+//! answers go only to the state directory. Without a grant a plugin gets
+//! no directories, no network, no environment and the default memory
+//! limit. Using a denied capability fails the way WASI reports it (access
+//! denied, no such directory); a denied environment read returns an error
+//! naming the permission; neither crashes the plugin.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -190,18 +193,34 @@ impl Grants {
 
     /// One line per capability, for prompts and listings.
     pub fn describe(&self) -> Vec<String> {
+        self.describe_keyed()
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect()
+    }
+
+    /// One line per capability, paired with the stable key used to record
+    /// when that particular grant last changed.
+    pub fn describe_keyed(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
         if self.network {
-            out.push("network: open connections and look up host names".to_string());
+            out.push((
+                "network".to_string(),
+                "network: open connections and look up host names".to_string(),
+            ));
         }
         if self.http {
-            out.push("http: make web requests (a request can send data out)".to_string());
+            out.push((
+                "http".to_string(),
+                "http: make web requests (a request can send data out)".to_string(),
+            ));
         }
         if self.environment {
-            out.push(
+            out.push((
+                "environment".to_string(),
                 "environment: read the process environment (variables may hold secrets)"
                     .to_string(),
-            );
+            ));
         }
         for d in &self.directories {
             let mode = if d.write { "read and write" } else { "read" };
@@ -210,12 +229,18 @@ impl Grants {
                 .as_deref()
                 .map(|w| format!(" ({w})"))
                 .unwrap_or_default();
-            out.push(format!("files: {mode} {}{why}", d.path));
+            out.push((
+                directory_key(&d.path),
+                format!("files: {mode} {}{why}", d.path),
+            ));
         }
         if let Some(m) = self.memory_mb {
-            out.push(format!(
-                "memory: up to {} MB (default {DEFAULT_MEMORY_MB} MB)",
-                m.min(MAX_MEMORY_MB)
+            out.push((
+                "memory".to_string(),
+                format!(
+                    "memory: up to {} MB (default {DEFAULT_MEMORY_MB} MB)",
+                    m.min(MAX_MEMORY_MB)
+                ),
             ));
         }
         for p in &self.processes {
@@ -224,12 +249,304 @@ impl Grants {
             } else {
                 p.clone()
             };
-            out.push(format!(
-                "programs: run {what} (outside the sandbox, with your rights)"
+            out.push((
+                process_key(p),
+                format!("programs: run {what} (outside the sandbox, with your rights)"),
             ));
         }
         out
     }
+
+    /// The stable keys for every capability in this set.
+    pub fn capability_keys(&self) -> Vec<String> {
+        self.describe_keyed()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect()
+    }
+}
+
+fn directory_key(path: &str) -> String {
+    format!("files:{path}")
+}
+
+fn process_key(program: &str) -> String {
+    format!("process:{program}")
+}
+
+/// A permission a component import needs, and the manifest field that
+/// declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionKind {
+    Network,
+    Http,
+    Environment,
+    Directories,
+    Processes,
+}
+
+impl PermissionKind {
+    /// The manifest field that declares this permission.
+    pub fn key(self) -> &'static str {
+        match self {
+            PermissionKind::Network => "network",
+            PermissionKind::Http => "http",
+            PermissionKind::Environment => "environment",
+            PermissionKind::Directories => "directories",
+            PermissionKind::Processes => "processes",
+        }
+    }
+
+    /// How to name the permission in a message.
+    pub fn describe(self) -> &'static str {
+        match self {
+            PermissionKind::Network => "network",
+            PermissionKind::Http => "http",
+            PermissionKind::Environment => "environment",
+            PermissionKind::Directories => "directories",
+            PermissionKind::Processes => "processes",
+        }
+    }
+}
+
+/// An import the component uses whose permission its manifest doesn't
+/// declare. This is refused rather than treated as an implicit grant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportMismatch {
+    pub import: String,
+    pub permission: PermissionKind,
+}
+
+impl ImportMismatch {
+    pub fn describe(&self) -> String {
+        format!(
+            "{} needs the {} permission, but the manifest doesn't declare it",
+            self.import,
+            self.permission.describe()
+        )
+    }
+}
+
+/// The permission an import needs, if any.
+pub fn import_permission(import: &str) -> Option<PermissionKind> {
+    if import.starts_with("wasi:sockets/") {
+        Some(PermissionKind::Network)
+    } else if import.starts_with("wasi:filesystem/") {
+        Some(PermissionKind::Directories)
+    } else if import.starts_with("wasi:cli/environment")
+        || import.starts_with("forge:editor/environment")
+    {
+        Some(PermissionKind::Environment)
+    } else if import.starts_with("forge:editor/processes") {
+        Some(PermissionKind::Processes)
+    } else if import.starts_with("forge:editor/http") {
+        Some(PermissionKind::Http)
+    } else {
+        None
+    }
+}
+
+impl Grants {
+    /// Does this set declare `kind` at all?
+    pub fn declares(&self, kind: PermissionKind) -> bool {
+        match kind {
+            PermissionKind::Network => self.network,
+            PermissionKind::Http => self.http,
+            PermissionKind::Environment => self.environment,
+            PermissionKind::Directories => !self.directories.is_empty(),
+            PermissionKind::Processes => !self.processes.is_empty(),
+        }
+    }
+
+    /// Imports that need a permission this set doesn't declare.
+    pub fn uncovered_imports(&self, imports: &[String]) -> Vec<ImportMismatch> {
+        let mut out: Vec<ImportMismatch> = Vec::new();
+        for import in imports {
+            let Some(permission) = import_permission(import) else {
+                continue;
+            };
+            if !self.declares(permission)
+                && !out
+                    .iter()
+                    .any(|m| m.permission == permission && m.import == *import)
+            {
+                out.push(ImportMismatch {
+                    import: import.clone(),
+                    permission,
+                });
+            }
+        }
+        out
+    }
+}
+
+/// Imports a manifest doesn't declare permission for. A missing manifest
+/// declares nothing, so an import that needs a permission is a mismatch.
+pub fn uncovered_imports(manifest: Option<&Manifest>, imports: &[String]) -> Vec<ImportMismatch> {
+    match manifest {
+        Some(manifest) => manifest.permissions.uncovered_imports(imports),
+        None => Grants::default().uncovered_imports(imports),
+    }
+}
+
+/// A capability that changed between two manifests, for upgrade review.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapabilityChange {
+    Network,
+    Http,
+    Environment,
+    Directory { path: String, write: bool },
+    Process(String),
+    Memory { from: u32, to: u32 },
+}
+
+impl CapabilityChange {
+    /// One line describing the capability, for prompts and listings.
+    pub fn describe(&self) -> String {
+        match self {
+            CapabilityChange::Network => {
+                "network: open connections and look up host names".to_string()
+            }
+            CapabilityChange::Http => {
+                "http: make web requests (a request can send data out)".to_string()
+            }
+            CapabilityChange::Environment => {
+                "environment: read the process environment (variables may hold secrets)".to_string()
+            }
+            CapabilityChange::Directory { path, write } => {
+                let mode = if *write { "read and write" } else { "read" };
+                format!("files: {mode} {path}")
+            }
+            CapabilityChange::Process(program) => {
+                let what = if program == "*" {
+                    "any program".to_string()
+                } else {
+                    program.clone()
+                };
+                format!("programs: run {what} (outside the sandbox, with your rights)")
+            }
+            CapabilityChange::Memory { from, to } => {
+                format!("memory: up to {to} MB (was {from} MB)")
+            }
+        }
+    }
+}
+
+/// What an upgrade would add and remove: additions need confirmation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CapabilityDiff {
+    pub additions: Vec<CapabilityChange>,
+    pub removals: Vec<CapabilityChange>,
+}
+
+impl CapabilityDiff {
+    /// Compare what an old and a new manifest ask for.
+    pub fn between(old: &Grants, new: &Grants) -> Self {
+        let mut diff = CapabilityDiff::default();
+        if new.network && !old.network {
+            diff.additions.push(CapabilityChange::Network);
+        }
+        if !new.network && old.network {
+            diff.removals.push(CapabilityChange::Network);
+        }
+        if new.http && !old.http {
+            diff.additions.push(CapabilityChange::Http);
+        }
+        if !new.http && old.http {
+            diff.removals.push(CapabilityChange::Http);
+        }
+        if new.environment && !old.environment {
+            diff.additions.push(CapabilityChange::Environment);
+        }
+        if !new.environment && old.environment {
+            diff.removals.push(CapabilityChange::Environment);
+        }
+        for d in &new.directories {
+            if !old.covers_dir(d) {
+                diff.additions.push(CapabilityChange::Directory {
+                    path: d.path.clone(),
+                    write: d.write,
+                });
+            }
+        }
+        for d in &old.directories {
+            if !new.covers_dir(d) {
+                diff.removals.push(CapabilityChange::Directory {
+                    path: d.path.clone(),
+                    write: d.write,
+                });
+            }
+        }
+        let old_memory = old.memory_mb();
+        let new_memory = new.memory_mb();
+        if new_memory > old_memory {
+            diff.additions.push(CapabilityChange::Memory {
+                from: old_memory,
+                to: new_memory,
+            });
+        } else if new_memory < old_memory {
+            diff.removals.push(CapabilityChange::Memory {
+                from: old_memory,
+                to: new_memory,
+            });
+        }
+        for p in &new.processes {
+            if !old.may_run(p) {
+                diff.additions.push(CapabilityChange::Process(p.clone()));
+            }
+        }
+        for p in &old.processes {
+            if !new.may_run(p) {
+                diff.removals.push(CapabilityChange::Process(p.clone()));
+            }
+        }
+        diff
+    }
+
+    pub fn has_additions(&self) -> bool {
+        !self.additions.is_empty()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.additions.is_empty() && self.removals.is_empty()
+    }
+
+    /// Lines for the additions, in prompt order.
+    pub fn describe_additions(&self) -> Vec<String> {
+        self.additions
+            .iter()
+            .map(CapabilityChange::describe)
+            .collect()
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// A Unix timestamp as a short UTC date and time, without a date library.
+pub fn format_grant_time(seconds: i64) -> String {
+    let days = seconds.div_euclid(86_400);
+    let day_seconds = seconds.rem_euclid(86_400);
+    let hour = day_seconds / 3_600;
+    let minute = (day_seconds % 3_600) / 60;
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02} UTC")
 }
 
 /// `~/x` -> `$HOME/x`.
@@ -566,23 +883,91 @@ fn json_kind(v: &serde_json::Value) -> &'static str {
     }
 }
 
+/// The binary an interactive grant was approved for.
+///
+/// A grant belongs to a plugin *name and binary*, not just a name: the
+/// same name can point at a rebuilt or replaced component. The hash is
+/// what decisions are enforced against; the source is kept so a person
+/// can see where the approved artifact came from. A binding with no hash
+/// (an old hand-written file) falls back to the source.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct GrantBinding {
+    /// The path the component was loaded from, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// SHA-256 of the component's bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// Fields introduced by later Forge versions survive a read/write cycle.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+impl GrantBinding {
+    /// The binding for a component read from `path`.
+    pub fn for_file(path: &Path, bytes: &[u8]) -> Self {
+        Self {
+            source: Some(path.display().to_string()),
+            sha256: Some(sha256_hex(bytes)),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    /// Is `self` (the saved approval) for the same binary as `other` (the
+    /// one about to load)? A hash wins over a path; a binding with
+    /// neither is an old, unbound approval and matches until it is bound.
+    pub fn matches(&self, other: &Self) -> bool {
+        match (&self.sha256, &other.sha256) {
+            (Some(saved), Some(now)) => saved == now,
+            _ => match (&self.source, &other.source) {
+                (Some(saved), Some(now)) => saved == now,
+                _ => self.sha256.is_none() && self.source.is_none(),
+            },
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.source.is_none() && self.sha256.is_none() && self.extra.is_empty()
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// What the user has granted, per plugin name and per project, saved in
 /// one TOML file.
 ///
 /// A plugin's grant is a table of its own (`[spell]`), as it has always
 /// been. A project's is in one section of its own, keyed by the directory
 /// (`[projects."/home/me/src/forge"]`), so it can't be asked for by a
-/// manifest and doesn't have to pretend to be a capability.
+/// manifest and doesn't have to pretend to be a capability. Bindings are
+/// additive metadata in `[plugin-bindings.spell]`, so files written by
+/// older Forge versions still load.
 #[derive(Debug, Default)]
 pub struct GrantStore {
     path: Option<PathBuf>,
     grants: BTreeMap<String, Grants>,
     projects: BTreeMap<String, ProjectGrants>,
+    bindings: BTreeMap<String, GrantBinding>,
+    /// When each capability was last added or widened, by plugin and
+    /// capability key. Additive metadata like `plugin-bindings`.
+    grant_times: BTreeMap<String, BTreeMap<String, i64>>,
+    /// Root values this version doesn't understand, kept for a rewrite.
+    extra: toml::Table,
 }
 
 /// The one table name the file reserves for itself, so a plugin can't
 /// take it over. A plugin with that name can be granted nothing.
 const PROJECTS: &str = "projects";
+/// The other reserved section: which binary each interactive grant belongs to.
+const BINDINGS: &str = "plugin-bindings";
+/// When each grant last changed, by plugin and capability key.
+const GRANT_TIMES: &str = "plugin-grant-times";
 
 /// The name a project is revoked and talked about by: the directory,
 /// tagged so it can't be confused with a plugin's name.
@@ -598,27 +983,88 @@ impl GrantStore {
 
     /// Read the grants file; a missing file means nothing is granted yet.
     pub fn load(path: PathBuf) -> Result<Self, String> {
+        Self::read(&path.clone(), path)
+    }
+
+    /// Load the state-directory grants, migrating an old config-directory
+    /// file the first time. Once the state file exists it is authoritative:
+    /// the old file is never merged again, so a revocation can't be undone
+    /// by a stale copy. Migration writes through [`crate::fsutil::write_atomic`],
+    /// so a killed run leaves either the complete old world or the complete
+    /// new one, and rerunning converges.
+    pub fn load_default() -> Result<Self, String> {
+        match (
+            crate::config::grants_file(),
+            crate::config::legacy_grants_file(),
+        ) {
+            (Some(state), legacy) => Self::load_migrating(state, legacy),
+            (None, Some(legacy)) => Self::load(legacy),
+            (None, None) => Ok(Self::in_memory()),
+        }
+    }
+
+    /// Load `state`, or copy `legacy` into it on first use. Kept public so
+    /// the migration contract can be tested without touching the home
+    /// directory.
+    pub fn load_migrating(state: PathBuf, legacy: Option<PathBuf>) -> Result<Self, String> {
+        if state.exists() {
+            return Self::load(state);
+        }
+        let Some(legacy) = legacy.filter(|p| p.exists() && p != &state) else {
+            return Self::load(state);
+        };
+        // Read as the old file, but remember that saving goes to the new
+        // one. Nothing is removed from the old file, so a failed or killed
+        // migration is safe to retry.
+        let store = Self::read(&legacy, state)?;
+        store.save()?;
+        Ok(store)
+    }
+
+    fn read(read_path: &Path, save_path: PathBuf) -> Result<Self, String> {
         let mut store = Self {
-            path: Some(path.clone()),
+            path: Some(save_path),
             ..Default::default()
         };
-        let src = match std::fs::read_to_string(&path) {
+        let src = match std::fs::read_to_string(read_path) {
             Ok(src) => src,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(store),
-            Err(e) => return Err(format!("{}: {e}", path.display())),
+            Err(e) => return Err(format!("{}: {e}", read_path.display())),
         };
-        // Read it as a table first, so the projects section can be taken
+        // Read it as a table first, so the reserved sections can be taken
         // out and the rest still parsed as grants — one section of the
         // file being a different shape shouldn't lose the strictness of
         // every other one (a typo in a plugin's grant is still an error).
         let mut table: toml::Table =
-            toml::from_str(&src).map_err(|e| format!("{}: {e}", path.display()))?;
+            toml::from_str(&src).map_err(|e| format!("{}: {e}", read_path.display()))?;
         let projects = table.remove(PROJECTS);
-        store.grants = grants_from_table(&table, &path)?;
+        let bindings = table.remove(BINDINGS);
+        let grant_times = table.remove(GRANT_TIMES);
+        // A plugin grant is always a table. Bare root values are not one,
+        // so they are future metadata (not a capability) and survive.
+        let mut grants = toml::Table::new();
+        for (name, value) in table {
+            if value.is_table() {
+                grants.insert(name, value);
+            } else {
+                store.extra.insert(name, value);
+            }
+        }
+        store.grants = grants_from_table(&grants, read_path)?;
         if let Some(p) = projects {
             store.projects = p
                 .try_into()
-                .map_err(|e| format!("{}[{PROJECTS}]: {e}", path.display()))?;
+                .map_err(|e| format!("{}[{PROJECTS}]: {e}", read_path.display()))?;
+        }
+        if let Some(b) = bindings {
+            store.bindings = b
+                .try_into()
+                .map_err(|e| format!("{}[{BINDINGS}]: {e}", read_path.display()))?;
+        }
+        if let Some(times) = grant_times {
+            store.grant_times = times
+                .try_into()
+                .map_err(|e| format!("{}[{GRANT_TIMES}]: {e}", read_path.display()))?;
         }
         Ok(store)
     }
@@ -627,16 +1073,117 @@ impl GrantStore {
         self.grants.get(plugin).cloned().unwrap_or_default()
     }
 
+    /// What `plugin` may do for the binary described by `binding`. A grant
+    /// bound to another binary gives nothing here; an old unbound grant
+    /// still applies (and is bound when the plugin loads).
+    pub fn get_for(&self, plugin: &str, binding: &GrantBinding) -> Grants {
+        if self
+            .bindings
+            .get(plugin)
+            .is_some_and(|saved| !saved.matches(binding))
+        {
+            return Grants::default();
+        }
+        self.get(plugin)
+    }
+
+    pub fn binding(&self, plugin: &str) -> Option<&GrantBinding> {
+        self.bindings.get(plugin)
+    }
+
+    pub fn bindings(&self) -> &BTreeMap<String, GrantBinding> {
+        &self.bindings
+    }
+
+    /// When `plugin`'s grant of `key` last changed, as Unix seconds.
+    pub fn grant_time(&self, plugin: &str, key: &str) -> Option<i64> {
+        self.grant_times
+            .get(plugin)
+            .and_then(|times| times.get(key).copied())
+    }
+
+    /// Every recorded grant-change time for `plugin`, by capability key.
+    pub fn grant_times(&self, plugin: &str) -> Option<&BTreeMap<String, i64>> {
+        self.grant_times.get(plugin)
+    }
+
+    /// Was a grant saved for a different binary than `binding`?
+    pub fn binding_mismatch(&self, plugin: &str, binding: &GrantBinding) -> bool {
+        self.bindings
+            .get(plugin)
+            .is_some_and(|saved| !saved.matches(binding))
+    }
+
+    /// Give an old, unbound grant the identity of the binary that first
+    /// used it. Migrated files have no binding until then.
+    pub fn bind_if_unbound(
+        &mut self,
+        plugin: &str,
+        binding: &GrantBinding,
+    ) -> Result<bool, String> {
+        let has_grant = self.grants.get(plugin).is_some_and(|g| !g.is_empty());
+        if !has_grant || self.bindings.contains_key(plugin) {
+            return Ok(false);
+        }
+        self.bindings.insert(plugin.to_string(), binding.clone());
+        self.save()?;
+        Ok(true)
+    }
+
     pub fn all(&self) -> &BTreeMap<String, Grants> {
         &self.grants
     }
 
     /// Add to a plugin's grants and save.
     pub fn grant(&mut self, plugin: &str, more: &Grants) -> Result<(), String> {
+        let current = self.grants.get(plugin).cloned().unwrap_or_default();
+        let added = current.missing(more);
         self.grants
             .entry(plugin.to_string())
             .or_default()
             .merge(more);
+        self.mark_changed(plugin, &added.capability_keys());
+        self.save()
+    }
+
+    fn mark_changed(&mut self, plugin: &str, keys: &[String]) {
+        if keys.is_empty() {
+            return;
+        }
+        let now = unix_now();
+        let times = self.grant_times.entry(plugin.to_string()).or_default();
+        for key in keys {
+            times.insert(key.clone(), now);
+        }
+    }
+
+    /// Add to a plugin's grants for a particular binary and save. A grant
+    /// already bound to another binary is replaced, not merged: approvals
+    /// for two different components must not add up. An old unbound grant
+    /// keeps its decisions and gains the current binding.
+    pub fn grant_for(
+        &mut self,
+        plugin: &str,
+        more: &Grants,
+        binding: &GrantBinding,
+    ) -> Result<(), String> {
+        match self.bindings.get(plugin) {
+            Some(saved) if !saved.matches(binding) => {
+                self.grants.insert(plugin.to_string(), more.clone());
+                self.grant_times.remove(plugin);
+                self.mark_changed(plugin, &more.capability_keys());
+            }
+            _ => {
+                let current = self.grants.get(plugin).cloned().unwrap_or_default();
+                let added = current.missing(more);
+                self.grants
+                    .entry(plugin.to_string())
+                    .or_default()
+                    .merge(more);
+                self.mark_changed(plugin, &added.capability_keys());
+            }
+        }
+        self.bindings.insert(plugin.to_string(), binding.clone());
         self.save()
     }
 
@@ -665,6 +1212,8 @@ impl GrantStore {
     /// [`project_key`]. Either way it asks again.
     pub fn revoke(&mut self, plugin: &str) -> Result<bool, String> {
         let mut had = self.grants.remove(plugin).is_some();
+        had |= self.bindings.remove(plugin).is_some();
+        had |= self.grant_times.remove(plugin).is_some();
         if let Some(root) = plugin.strip_prefix("project:") {
             had |= self.projects.remove(root).is_some();
         }
@@ -683,7 +1232,21 @@ impl GrantStore {
                 path.display()
             ));
         }
-        let mut table = toml::Table::new();
+        if self.grants.contains_key(BINDINGS) {
+            return Err(format!(
+                "a plugin named {BINDINGS:?} cannot be granted anything: that name is \
+                 the plugin-bindings section of {}",
+                path.display()
+            ));
+        }
+        if self.grants.contains_key(GRANT_TIMES) {
+            return Err(format!(
+                "a plugin named {GRANT_TIMES:?} cannot be granted anything: that name is \
+                 the plugin-grant-times section of {}",
+                path.display()
+            ));
+        }
+        let mut table = self.extra.clone();
         for (name, grants) in &self.grants {
             let value = toml::Value::try_from(grants).map_err(|e| e.to_string())?;
             table.insert(name.clone(), value);
@@ -692,11 +1255,19 @@ impl GrantStore {
             let value = toml::Value::try_from(&self.projects).map_err(|e| e.to_string())?;
             table.insert(PROJECTS.to_string(), value);
         }
+        if !self.bindings.is_empty() {
+            let value = toml::Value::try_from(&self.bindings).map_err(|e| e.to_string())?;
+            table.insert(BINDINGS.to_string(), value);
+        }
+        if !self.grant_times.is_empty() {
+            let value = toml::Value::try_from(&self.grant_times).map_err(|e| e.to_string())?;
+            table.insert(GRANT_TIMES.to_string(), value);
+        }
         let body = toml::to_string_pretty(&table).map_err(|e| e.to_string())?;
         let text = format!(
             "# Permissions granted to Forge plugins, and the projects Forge may run\n\
              # code from. Delete a section (or use M-x revoke-plugin-permissions) and\n\
-             # it asks again.\n\n{body}"
+             # it asks again. Approvals are for the binary named in plugin-bindings.\n\n{body}"
         );
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -705,7 +1276,7 @@ impl GrantStore {
     }
 }
 
-/// Everything but the projects section, as plugin grants. The file is
+/// Everything but the reserved sections, as plugin grants. The file is
 /// parsed by hand rather than through one `deserialize` so each plugin's
 /// table keeps its `deny_unknown_fields`.
 fn grants_from_table(table: &toml::Table, path: &Path) -> Result<BTreeMap<String, Grants>, String> {
@@ -897,6 +1468,276 @@ mod tests {
     }
 
     #[test]
+    fn imports_must_be_declared_by_the_manifest() {
+        let manifest = Manifest::parse(
+            "[permissions]\nnetwork = true\n[[permissions.directories]]\npath = \"/tmp/x\"\n",
+        )
+        .unwrap();
+        let imports = vec![
+            "wasi:sockets/ip-name-lookup@0.2.0".to_string(),
+            "wasi:filesystem/types@0.2.0".to_string(),
+            "forge:editor/buffers@0.1.0".to_string(),
+        ];
+        assert!(uncovered_imports(Some(&manifest), &imports).is_empty());
+        assert_eq!(
+            import_permission("wasi:cli/environment@0.2.0").map(PermissionKind::key),
+            Some("environment")
+        );
+        assert_eq!(
+            import_permission("forge:editor/http@0.1.0"),
+            Some(PermissionKind::Http)
+        );
+
+        let uncovered = uncovered_imports(
+            Some(&manifest),
+            &[
+                "forge:editor/http@0.1.0".to_string(),
+                "wasi:cli/environment@0.2.0".to_string(),
+            ],
+        );
+        assert_eq!(uncovered.len(), 2);
+        assert!(uncovered[0].describe().contains("forge:editor/http@0.1.0"));
+        assert!(
+            uncovered[1]
+                .describe()
+                .contains("wasi:cli/environment@0.2.0")
+        );
+
+        // A missing manifest declares nothing, so permission imports are
+        // mismatches. (The host still loads manifest-less components that
+        // only use forge:editor imports.)
+        let uncovered = uncovered_imports(None, &imports);
+        assert_eq!(uncovered.len(), 2);
+        assert!(
+            uncovered
+                .iter()
+                .all(|m| m.import != "forge:editor/buffers@0.1.0")
+        );
+    }
+
+    #[test]
+    fn grant_times_are_saved_and_removed_with_the_grant() {
+        let dir = std::env::temp_dir().join(format!("forge-grants-time-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("plugin-grants.toml");
+        let mut store = GrantStore::load(path.clone()).unwrap();
+        store
+            .grant(
+                "spell",
+                &Grants {
+                    network: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let network_time = store.grant_time("spell", "network").expect("a time");
+        assert!(network_time > 0);
+        assert_eq!(format_grant_time(0), "1970-01-01 00:00 UTC");
+
+        let again = GrantStore::load(path.clone()).unwrap();
+        assert_eq!(again.grant_time("spell", "network"), Some(network_time));
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[plugin-grant-times.spell]"), "{text}");
+        assert!(text.contains("network ="), "{text}");
+
+        let mut again = again;
+        again.revoke("spell").unwrap();
+        assert_eq!(again.grant_time("spell", "network"), None);
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("plugin-grant-times")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn grants_migrate_once_without_losing_or_broadening_decisions() {
+        let dir = std::env::temp_dir().join(format!("forge-grants-migrate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let state = dir.join("state/plugin-grants.toml");
+        let legacy = dir.join("config/plugin-grants.toml");
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        let root = Path::new("/home/me/src/forge");
+        let old = format!(
+            "[spell]\nnetwork = true\n\n[projects.\"{}\"]\ncode = true\n",
+            root.display()
+        );
+        fs::write(&legacy, &old).unwrap();
+
+        // The first load copies every decision to the state directory.
+        let store = GrantStore::load_migrating(state.clone(), Some(legacy.clone())).unwrap();
+        assert!(store.get("spell").network);
+        assert!(store.project_code(root));
+        assert!(state.exists());
+        assert_eq!(
+            fs::read_to_string(&legacy).unwrap(),
+            old,
+            "the source is untouched"
+        );
+
+        // A stale change to the old file is not merged into the state file:
+        // that would let a revoked grant come back.
+        fs::write(&legacy, "[spell]\nnetwork = true\nenvironment = true\n").unwrap();
+        let store = GrantStore::load_migrating(state.clone(), Some(legacy.clone())).unwrap();
+        assert!(store.get("spell").network);
+        assert!(!store.get("spell").environment, "no broadening on re-load");
+        assert!(
+            store.project_code(root),
+            "the project decision survives too"
+        );
+
+        // Revoking is durable even though the old file still names it.
+        let mut store = store;
+        store.revoke("spell").unwrap();
+        let store = GrantStore::load_migrating(state.clone(), Some(legacy)).unwrap();
+        assert!(!store.get("spell").network);
+
+        // Running it again is a no-op, not a new merge.
+        let before = fs::read_to_string(&state).unwrap();
+        let store = GrantStore::load_migrating(state.clone(), None).unwrap();
+        assert!(!store.get("spell").network);
+        assert_eq!(fs::read_to_string(&state).unwrap(), before);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn grants_are_bound_to_the_binary_not_just_the_name() {
+        let dir = std::env::temp_dir().join(format!("forge-grants-bind-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("plugin-grants.toml");
+        let first = GrantBinding::for_file(Path::new("/plugins/demo.wasm"), b"first");
+        let second = GrantBinding::for_file(Path::new("/plugins/demo.wasm"), b"second");
+        assert!(first.matches(&first));
+        assert!(!first.matches(&second));
+        assert!(
+            GrantBinding::default().matches(&first),
+            "old grants are unbound"
+        );
+
+        let mut store = GrantStore::load(path.clone()).unwrap();
+        store
+            .grant_for(
+                "demo",
+                &Grants {
+                    network: true,
+                    ..Default::default()
+                },
+                &first,
+            )
+            .unwrap();
+        assert!(store.get_for("demo", &first).network);
+        assert!(
+            store.get_for("demo", &second).is_empty(),
+            "another binary gets nothing from the old approval"
+        );
+        assert!(store.binding_mismatch("demo", &second));
+
+        // Accepting the second binary replaces the first approval instead
+        // of adding the two capability sets together.
+        let mut store = GrantStore::load(path.clone()).unwrap();
+        store
+            .grant_for(
+                "demo",
+                &Grants {
+                    environment: true,
+                    ..Default::default()
+                },
+                &second,
+            )
+            .unwrap();
+        let now = store.get_for("demo", &second);
+        assert!(now.environment);
+        assert!(!now.network, "old binary's capabilities are gone");
+        assert!(store.get_for("demo", &first).is_empty());
+
+        // The binding is on disk with the grant.
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[plugin-bindings.demo]"), "{written}");
+        assert!(
+            written.contains(second.sha256.as_deref().unwrap()),
+            "{written}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unbound_old_grant_binds_on_first_use() {
+        let dir = std::env::temp_dir().join(format!("forge-grants-unbound-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("plugin-grants.toml");
+        fs::write(&path, "[spell]\nnetwork = true\n").unwrap();
+        let first = GrantBinding::for_file(Path::new("/plugins/spell.wasm"), b"first");
+        let second = GrantBinding::for_file(Path::new("/plugins/spell.wasm"), b"second");
+
+        let mut store = GrantStore::load(path.clone()).unwrap();
+        assert!(
+            store.get_for("spell", &second).network,
+            "old files still apply"
+        );
+        assert!(store.bind_if_unbound("spell", &first).unwrap());
+        assert!(
+            !store.bind_if_unbound("spell", &first).unwrap(),
+            "idempotent"
+        );
+        assert!(
+            !GrantStore::load(path.clone())
+                .unwrap()
+                .binding_mismatch("spell", &first)
+        );
+        let mut store = GrantStore::load(path).unwrap();
+        assert!(store.binding_mismatch("spell", &second));
+        assert!(
+            store
+                .grant_for("spell", &Grants::default(), &second)
+                .is_ok()
+        );
+        assert!(store.get_for("spell", &first).is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unknown_root_and_binding_fields_survive_a_rewrite() {
+        let dir = std::env::temp_dir().join(format!("forge-grants-extra-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("plugin-grants.toml");
+        fs::write(
+            &path,
+            r#"future-root = "keep"
+[demo]
+network = true
+[plugin-bindings.demo]
+sha256 = "abc"
+future-binding = 7
+"#,
+        )
+        .unwrap();
+        let mut store = GrantStore::load(path.clone()).unwrap();
+        assert!(store.get("demo").network);
+        assert_eq!(
+            store.binding("demo").unwrap().sha256.as_deref(),
+            Some("abc")
+        );
+        store
+            .grant(
+                "demo",
+                &Grants {
+                    environment: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("future-root = \"keep\""), "{written}");
+        assert!(written.contains("future-binding = 7"), "{written}");
+        assert!(written.contains("environment = true"), "{written}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn declared_settings_are_checked() {
         // (no settings: anything goes)
         assert!(Manifest::parse("").unwrap().check_config("{}").is_ok());
@@ -1034,5 +1875,128 @@ mod tests {
         all.merge(&want);
         assert!(all.missing(&want).is_empty());
         assert!(all.describe().iter().any(|l| l.contains("run clangd")));
+    }
+
+    #[test]
+    fn capability_diff_names_additions_and_removals() {
+        let old = Grants {
+            network: true,
+            directories: vec![DirGrant {
+                path: "~/old".into(),
+                write: true,
+                why: Some("old reason".into()),
+            }],
+            memory_mb: Some(256),
+            processes: vec!["old-program".into()],
+            ..Default::default()
+        };
+        let new = Grants {
+            environment: true,
+            directories: vec![
+                DirGrant {
+                    path: "~/old".into(),
+                    write: true,
+                    why: Some("new reason".into()),
+                },
+                DirGrant {
+                    path: "~/new".into(),
+                    write: true,
+                    why: None,
+                },
+            ],
+            memory_mb: Some(512),
+            processes: vec!["*".into()],
+            ..Default::default()
+        };
+        let diff = CapabilityDiff::between(&old, &new);
+        assert!(diff.has_additions());
+        assert!(diff.additions.contains(&CapabilityChange::Environment));
+        assert!(diff.additions.contains(&CapabilityChange::Directory {
+            path: "~/new".into(),
+            write: true,
+        }));
+        assert!(
+            diff.additions
+                .contains(&CapabilityChange::Memory { from: 256, to: 512 })
+        );
+        assert!(
+            diff.additions
+                .contains(&CapabilityChange::Process("*".into()))
+        );
+        assert!(diff.removals.contains(&CapabilityChange::Network));
+        assert!(
+            !diff
+                .removals
+                .contains(&CapabilityChange::Process("old-program".into())),
+            "a wildcard grant still covers the old program"
+        );
+        assert!(
+            !diff.additions.iter().any(|c| matches!(
+                c,
+                CapabilityChange::Directory { path, .. } if path == "~/old"
+            )),
+            "the same directory with a different why is not a change"
+        );
+        let lines = diff.describe_additions();
+        assert!(lines.iter().any(|l| l.contains("environment")));
+        assert!(lines.iter().any(|l| l.contains("~/new")));
+        assert!(lines.iter().any(|l| l.contains("512 MB")));
+    }
+
+    #[test]
+    fn capability_diff_treats_a_writable_directory_as_an_addition() {
+        let read_only = Grants {
+            directories: vec![DirGrant {
+                path: "~/cache".into(),
+                write: false,
+                why: None,
+            }],
+            ..Default::default()
+        };
+        let writable = Grants {
+            directories: vec![DirGrant {
+                path: "~/cache".into(),
+                write: true,
+                why: None,
+            }],
+            ..Default::default()
+        };
+        let widened = CapabilityDiff::between(&read_only, &writable);
+        assert_eq!(
+            widened.additions,
+            [CapabilityChange::Directory {
+                path: "~/cache".into(),
+                write: true,
+            }]
+        );
+        assert!(widened.removals.is_empty());
+
+        let narrowed = CapabilityDiff::between(&writable, &read_only);
+        assert!(!narrowed.has_additions(), "narrowing needs no approval");
+        assert_eq!(
+            narrowed.removals,
+            [CapabilityChange::Directory {
+                path: "~/cache".into(),
+                write: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn capability_diff_uses_the_effective_memory_default() {
+        assert!(CapabilityDiff::between(&Grants::default(), &Grants::default()).is_empty());
+        let old = Grants {
+            memory_mb: Some(DEFAULT_MEMORY_MB),
+            ..Default::default()
+        };
+        assert!(
+            !CapabilityDiff::between(&old, &Grants::default()).has_additions(),
+            "the default and an explicit default are the same limit"
+        );
+        let more = Grants {
+            memory_mb: Some(DEFAULT_MEMORY_MB + 1),
+            ..Default::default()
+        };
+        assert!(CapabilityDiff::between(&Grants::default(), &more).has_additions());
     }
 }

@@ -388,6 +388,10 @@ fn plugins_ask_before_getting_permissions() {
         saved.contains("[demo]") && saved.contains("network = true"),
         "{saved}"
     );
+    assert!(
+        saved.contains("[plugin-grant-times.demo]") && saved.contains("network = "),
+        "{saved}"
+    );
 
     // Loading it again doesn't ask.
     crate::plugins::load(&mut app, &path);
@@ -407,6 +411,7 @@ fn plugins_ask_before_getting_permissions() {
             && t.contains("memory limit: 128 MB"),
         "{t}"
     );
+    assert!(t.contains("last changed"), "{t}");
 
     // Revoke: it asks again; n loads it without; C-g doesn't load it.
     press(&mut app, "q M-x revoke-plugin-permissions RET demo RET");
@@ -433,6 +438,55 @@ fn plugins_ask_before_getting_permissions() {
 }
 
 #[test]
+fn the_same_name_with_a_different_binary_asks_again() {
+    let dir = std::env::temp_dir().join(format!("forge-perm-bind-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let data = dir.join("templates");
+    let path = demo_with_manifest(&dir, &data);
+    let grants = dir.join("plugin-grants.toml");
+    let mut app = app_with("");
+    app.grants = forge_core::GrantStore::load(grants.clone()).unwrap();
+
+    crate::plugins::load(&mut app, &path);
+    press(&mut app, "y");
+    assert!(app.grants.get("demo").network);
+    let first = app.grants.binding("demo").unwrap().sha256.clone();
+
+    // Replace the binary under the same name. The old approval is for
+    // different bytes, so it is not reused.
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend([0, 3, 1, b'x', b'y']);
+    std::fs::write(&path, bytes).unwrap();
+    crate::plugins::load(&mut app, &path);
+    let prompt = app.minibuffer.as_ref().unwrap().prompt.clone();
+    assert!(prompt.contains("same name, different binary."), "{prompt}");
+    assert!(
+        text(&app).contains("same name, different binary."),
+        "{}",
+        text(&app)
+    );
+    assert!(
+        !app.grants.binding_mismatch(
+            "demo",
+            &forge_core::GrantBinding {
+                sha256: first.clone(),
+                ..Default::default()
+            }
+        ),
+        "the old approval was forgotten before asking"
+    );
+
+    press(&mut app, "y");
+    assert!(app.grants.get("demo").network);
+    assert_ne!(
+        app.grants.binding("demo").unwrap().sha256,
+        first,
+        "the new approval names the new binary"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_plugin_without_a_manifest_loads_without_asking() {
     let dir = std::env::temp_dir().join(format!("forge-perm-none-{}", std::process::id()));
     let path = demo_plugin_file(&dir);
@@ -443,6 +497,89 @@ fn a_plugin_without_a_manifest_loads_without_asking() {
     press(&mut app, "M-x list-plugins RET");
     assert!(text(&app).contains("permissions: none (no files, network or environment)"));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn imports_must_be_declared_before_a_plugin_loads() {
+    let dir = std::env::temp_dir().join(format!(
+        "forge-perm-imports-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let wat = r#"(module
+        (import "wasi:sockets/instance-network@0.2.12" "instance-network" (func $net (result i32)))
+        (memory (export "memory") 1)
+        (global $heap (mut i32) (i32.const 4096))
+        (func (export "cabi_realloc") (param i32 i32 i32 i32) (result i32)
+          (local $p i32)
+          (local.set $p (i32.and
+            (i32.add (global.get $heap) (i32.sub (local.get 2) (i32.const 1)))
+            (i32.xor (i32.sub (local.get 2) (i32.const 1)) (i32.const -1))))
+          (global.set $heap (i32.add (local.get $p) (local.get 3)))
+          (local.get $p))
+        (func (export "init") (result i32) (i32.const 0))
+        (func (export "forge:editor/handler@0.1.0#run-command") (param i32 i32 i32 i64) (result i32)
+          (i32.const 0))
+        (func (export "forge:editor/handler@0.1.0#on-event") (param i32 i32))
+        (func (export "forge:editor/handler@0.1.0#on-answer") (param i32 i32 i32 i32)))"#;
+    let world = "package test:plugin; world t {
+        include forge:editor/plugin@0.1.0;
+        import wasi:sockets/instance-network@0.2.12;
+    }";
+    let path = plugin_file_from_wit(&dir, "sockets", Some(world), wat);
+    std::fs::write(dir.join("sockets.toml"), "description = \"Sockets\"\n").unwrap();
+    let mut app = app_with("");
+    app.grants = forge_core::GrantStore::load(dir.join("plugin-grants.toml")).unwrap();
+
+    crate::plugins::load(&mut app, &path);
+    assert!(
+        app.minibuffer.is_none(),
+        "no grant prompt for an undeclared import"
+    );
+    assert!(
+        app.message
+            .as_deref()
+            .unwrap()
+            .contains("manifest doesn't declare permissions its imports need"),
+        "{:?}",
+        app.message
+    );
+    let t = text(&app);
+    assert!(t.contains("wasi:sockets/instance-network@0.2.12"), "{t}");
+    assert!(t.contains("needs network, not declared"), "{t}");
+
+    // Declaring it and granting it loads.
+    std::fs::write(
+        dir.join("sockets.toml"),
+        "description = \"Sockets\"\n[permissions]\nnetwork = true\n",
+    )
+    .unwrap();
+    app.grants
+        .grant(
+            "sockets",
+            &forge_core::Grants {
+                network: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    app.message = None;
+    crate::plugins::load(&mut app, &path);
+    if app.minibuffer.is_some() {
+        press(&mut app, "y");
+    }
+    assert!(
+        app.message
+            .as_deref()
+            .unwrap()
+            .starts_with("Loaded plugin sockets"),
+        "{:?}",
+        app.message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

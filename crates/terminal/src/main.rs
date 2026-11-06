@@ -213,6 +213,7 @@ fn main() -> anyhow::Result<()> {
             column as usize,
         ));
     }
+    app.unattended = opts.batch;
     let actions_ok = cli::run_actions(&mut app, &opts.actions, opts.batch);
     if opts.batch || opts.kill {
         let ok = actions_ok && !app.startup_budget_exceeded;

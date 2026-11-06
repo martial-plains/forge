@@ -22,6 +22,7 @@ use crate::minibuffer::{ConfirmAction, Purpose};
 use forge_core::package::{self, BuildPlan, Installed, InstalledDb, VcSource};
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use forge_core::process::{ProcessEvent, ProcessId, Processes, Program, shell_quote};
+use forge_core::{CapabilityDiff, LockFile};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -108,7 +109,14 @@ pub struct Vc {
     /// That question, until the minibuffer is free to ask it.
     ask: Option<(String, VcQuestion)>,
     reviewing: Option<VcJob>,
+    capability: Option<PendingCapability>,
     git: Box<dyn GitRemote>,
+}
+
+struct PendingCapability {
+    job: VcJob,
+    bytes: Vec<u8>,
+    diff: CapabilityDiff,
 }
 
 impl Default for Vc {
@@ -120,6 +128,7 @@ impl Default for Vc {
             confirming: None,
             ask: None,
             reviewing: None,
+            capability: None,
             git: Box::new(SystemGit),
         }
     }
@@ -137,6 +146,7 @@ impl Vc {
     /// Drop jobs that have not started yet (a failed batch update).
     pub(crate) fn cancel_queued(&mut self) {
         self.queue.clear();
+        self.capability = None;
     }
 
     /// Replace remote Git access (tests use a fixture implementation).
@@ -165,6 +175,13 @@ pub fn status(app: &App, name: &str) -> Option<&'static str> {
     }
     if vc.reviewing.as_ref().is_some_and(|job| job.name == name) {
         return Some("awaiting upgrade approval");
+    }
+    if vc
+        .capability
+        .as_ref()
+        .is_some_and(|pending| pending.job.name == name)
+    {
+        return Some("awaiting capability approval");
     }
     vc.queue
         .iter()
@@ -899,7 +916,8 @@ fn checkout_complete(app: &mut App, mut job: VcJob) {
     // Upgrading a declared plugin: review the commits since the
     // locked one before building (a changed permission set asks
     // again when it loads).
-    if job.upgrade
+    if !app.unattended
+        && job.upgrade
         && let Some(old) = installed
             .as_ref()
             .and_then(|record| record.commit.clone())
@@ -933,14 +951,44 @@ fn locked_commit(name: &str) -> Option<String> {
 /// commits first.
 fn choose_build(app: &mut App, job: VcJob, installed: Option<Installed>) {
     let command = job.plan.as_ref().and_then(|p| p.command.clone());
+    let new_recipe = command.as_deref().map(|command| {
+        forge_core::package::BuildRecipe::for_checkout(command, &job.features, &job.root())
+    });
+    let old_recipe = installed
+        .as_ref()
+        .and_then(|installed| installed.recipe.clone())
+        .or_else(|| locked_recipe(&job.name));
+    let mut recipe_changes = match (&old_recipe, &new_recipe) {
+        (Some(old), Some(new)) => old.diff(new),
+        _ => Vec::new(),
+    };
+    let hash_changed = new_recipe
+        .as_ref()
+        .is_some_and(|new| locked_recipe_hash(&job.name).is_some_and(|old| old != new.hash()));
+    if recipe_changes.is_empty() && hash_changed {
+        recipe_changes
+            .push("build recipe changed (command, toolchain, features or target)".to_string());
+    }
+    let same_command = installed
+        .as_ref()
+        .and_then(|installed| installed.build.as_deref())
+        == command.as_deref();
     match command {
-        None => install_output(app, job),
-        // Already agreed to this very command for this package, and this
+        None => {
+            if !recipe_changes.is_empty() {
+                append(
+                    app,
+                    &format!(
+                        "\nBuild recipe changed (no build command now):\n  {}\n",
+                        recipe_changes.join("\n  ")
+                    ),
+                );
+            }
+            install_output(app, job);
+        }
+        // Already agreed to this very recipe for this package, and this
         // isn't a reviewed upgrade.
-        Some(c)
-            if job.review.is_none()
-                && installed.and_then(|i| i.build).as_deref() == Some(c.as_str()) =>
-        {
+        Some(_) if job.review.is_none() && same_command && recipe_changes.is_empty() => {
             build(app, job)
         }
         Some(c) => {
@@ -948,6 +996,15 @@ fn choose_build(app: &mut App, job: VcJob, installed: Option<Installed>) {
                 append(
                     app,
                     &format!("\nChanges in this upgrade ({}):\n{log}", short(&job.commit)),
+                );
+            }
+            if !recipe_changes.is_empty() {
+                append(
+                    app,
+                    &format!(
+                        "\nBuild recipe changed:\n  {}\n",
+                        recipe_changes.join("\n  ")
+                    ),
                 );
             }
             append(
@@ -963,6 +1020,24 @@ fn choose_build(app: &mut App, job: VcJob, installed: Option<Installed>) {
             ask(app);
         }
     }
+}
+
+fn locked_recipe(name: &str) -> Option<forge_core::package::BuildRecipe> {
+    let dir = forge_core::config::config_dir()?;
+    forge_core::LockFile::load(&dir)
+        .ok()?
+        .get(name)?
+        .recipe
+        .clone()
+}
+
+fn locked_recipe_hash(name: &str) -> Option<String> {
+    let dir = forge_core::config::config_dir()?;
+    forge_core::LockFile::load(&dir)
+        .ok()?
+        .get(name)?
+        .recipe_hash
+        .clone()
 }
 
 /// Ask "build it?" once no other question is open.
@@ -1048,6 +1123,94 @@ fn build(app: &mut App, mut job: VcJob) {
     step(app, job, Stage::Build, r);
 }
 
+fn capability_diff(
+    name: &str,
+    manifest: Option<&forge_core::Manifest>,
+) -> Result<CapabilityDiff, String> {
+    let Some(dir) = forge_core::config::config_dir() else {
+        return Err("no config directory (set HOME or FORGE_CONFIG_DIR)".into());
+    };
+    let old = LockFile::load(&dir)
+        .map_err(|e| format!("can't read the package lock: {e}"))?
+        .get(name)
+        .map(|entry| entry.capability_grants().clone())
+        .unwrap_or_default();
+    let new = manifest
+        .map(|manifest| manifest.permissions.clone())
+        .unwrap_or_default();
+    Ok(CapabilityDiff::between(&old, &new))
+}
+
+fn capability_gate(
+    app: &mut App,
+    job: &VcJob,
+    bytes: &[u8],
+    manifest: Option<&forge_core::Manifest>,
+) -> Result<bool, String> {
+    let diff = capability_diff(&job.name, manifest)?;
+    if !diff.has_additions() {
+        return Ok(true);
+    }
+    if app.unattended {
+        return Err(format!(
+            "it asks for new capabilities that need confirmation: {}. No changes were made.",
+            diff.describe_additions().join("; ")
+        ));
+    }
+    let mut text = format!("\nNew capabilities in {}:\n", job.name);
+    for line in diff.describe_additions() {
+        text.push_str(&format!("  {line}\n"));
+    }
+    if !diff.removals.is_empty() {
+        text.push_str("\nCapabilities it no longer asks for:\n");
+        for line in diff
+            .removals
+            .iter()
+            .map(forge_core::CapabilityChange::describe)
+        {
+            text.push_str(&format!("  {line}\n"));
+        }
+    }
+    text.push_str("\nThese additions need your approval before the upgrade is applied.\n");
+    append(app, &text);
+    app.packages.vc.capability = Some(PendingCapability {
+        job: job.clone(),
+        bytes: bytes.to_vec(),
+        diff,
+    });
+    app.prompt(
+        format!("Upgrade {} and allow new capabilities? (y or n) ", job.name),
+        Purpose::Confirm(ConfirmAction::GitPackageCapabilities),
+    );
+    Ok(false)
+}
+
+pub fn capabilities_confirmed(app: &mut App, yes: bool) {
+    let Some(pending) = app.packages.vc.capability.take() else {
+        return;
+    };
+    if yes {
+        app.msg(format!("Applying upgrade for {}", pending.job.name));
+        install_ready_output(app, pending.job, pending.bytes);
+    } else {
+        append(
+            app,
+            &format!(
+                "\nNot upgrading {} ({} new capabilit{} not approved).\n",
+                pending.job.name,
+                pending.diff.additions.len(),
+                if pending.diff.additions.len() == 1 {
+                    "y was"
+                } else {
+                    "ies were"
+                }
+            ),
+        );
+        app.msg(format!("Not upgrading {}", pending.job.name));
+        next(app);
+    }
+}
+
 fn install_output(app: &mut App, job: VcJob) {
     app.packages.vc.current = None;
     let plan = job.plan.clone().expect("planned");
@@ -1061,6 +1224,27 @@ fn install_output(app: &mut App, job: VcJob) {
             );
         }
     };
+    let manifest = forge_core::permissions::Manifest::for_component(&plan.output, &bytes)
+        .ok()
+        .flatten();
+    if let Ok(imports) = crate::packages::component_imports(&job.name, &bytes)
+        && let Some(problem) =
+            crate::packages::import_mismatch(&job.name, manifest.as_ref(), &imports)
+    {
+        return fail(app, &job, &problem);
+    }
+    if job.upgrade {
+        match capability_gate(app, &job, &bytes, manifest.as_ref()) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => return fail(app, &job, &error),
+        }
+    }
+    install_ready_output(app, job, bytes);
+}
+
+fn install_ready_output(app: &mut App, job: VcJob, bytes: Vec<u8>) {
+    let plan = job.plan.clone().expect("planned");
     if job.upgrade
         && let Err(error) = crate::packages::smoke_test_component(app, &job.name, &bytes)
     {
@@ -1077,11 +1261,15 @@ fn install_output(app: &mut App, job: VcJob) {
     let version = manifest
         .and_then(|m| m.version)
         .unwrap_or_else(|| "0.0.0".into());
+    let recipe = plan.command.as_deref().map(|command| {
+        forge_core::package::BuildRecipe::for_checkout(command, &job.features, &job.root())
+    });
     let source = VcSource {
         git: job.repo.clone(),
         rev: job.rev.clone(),
         commit: job.commit.clone(),
         build: plan.command.clone(),
+        recipe,
     };
     let started = Timer::start();
     let Some(mut db) = db(app) else {

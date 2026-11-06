@@ -455,8 +455,8 @@ forge.keymap.set("C-c b", "make", #{ project: true });   // the buffer's project
 A project can carry its own `.forge/init.rhai`, which binds with
 `#{ project: true }`, since it can't name itself. That file is code from a
 directory you may have just cloned, so Forge asks before running it. The
-answer is kept in `~/.config/forge/plugin-grants.toml` in a section of its
-own:
+answer is kept in `~/.local/state/forge/plugin-grants.toml` in a section
+of its own (an older file next to `init.rhai` is migrated on first use):
 
 ```toml
 [projects."/home/me/src/forge"]
@@ -500,7 +500,9 @@ manifest, which the Rust SDK builds into the `.wasm` from
 `[package.metadata.forge]` in `Cargo.toml` (a `spell.toml` next to
 `spell.wasm` overrides it); Forge shows what it wants and asks before loading,
 unless `init.rhai` already granted it with `forge.plugin.grant`. Answers are
-kept in `~/.config/forge/plugin-grants.toml`. `M-x list-plugins` shows what
+kept in `~/.local/state/forge/plugin-grants.toml`, bound to the plugin's
+binary (an older config-directory file is migrated on first use).
+`M-x list-plugins` shows what
 each plugin has; `M-x revoke-plugin-permissions` takes it back. A plugin call
 that takes long shows "NAME is busy... (C-g to stop)", and C-g stops it.
 

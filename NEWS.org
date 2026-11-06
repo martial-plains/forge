@@ -1,4 +1,26 @@
 #+title: Forge NEWS
+* 0.1.0
+** Sharing safety and init review
+The manual now documents the configuration-sharing policy and ships a
+=.gitignore= snippet for a config repository: share =init.rhai= and
+=forge-lock.toml=, but keep =plugin-grants.toml=, =session.toml=, the
+=plugins/= directory and authinfo/netrc credentials out. =M-x package-doctor=
+warns when those paths are inside a Git work tree and are not ignored, and
+prints the exact rules to add. Set =forge.opt["init_review"] = true= to
+review an =init.rhai= that changed outside Forge; if it adds a grant,
+process, network request or writable directory, Forge shows the diff before
+evaluating it, and declining starts with the same behavior as =-q=.
+** Interactive plugin approvals are machine-local and binary-bound
+Plugin grants now live in =~/.local/state/forge/plugin-grants.toml=, following
+the platform state-directory convention, instead of beside =init.rhai=. An
+older config-directory =plugin-grants.toml= is migrated once, atomically and
+idempotently, without dropping or widening any decision; it is then ignored so
+a revoked grant cannot come back from a stale copy. Each interactive approval
+records the component's source and SHA-256. If the same plugin name later
+loads different bytes, the old approval is forgotten and Forge asks again
+with "same name, different binary." =forge.plugin.grant= in =init.rhai= stays
+an explicit pre-grant and applies regardless of the binary. Existing grant
+files still load, and unknown root or binding fields survive a rewrite.
 ** Package operation log
 =M-x package-log= shows structured fetch, build, install, upgrade and
 rollback records with timings, source/revision details, commands and errors.
@@ -41,6 +63,14 @@ selection. Rhai gets =forge.minibuffer.on_open=.
 =kill-ring.push= (0.1.29) puts text on the kill ring and the clipboard as
 =M-w= does; Rhai's =forge.kill= is the same call. A list plugin can copy
 the candidate under the cursor without simulating a region.
+** Package upgrades ask about new capabilities
+Before an upgrade is applied, Forge compares the capabilities recorded in
+=forge-lock.toml= with the new manifest. New network, HTTP, environment,
+directory, process or memory access is listed in =*Package Upgrade Review*=
+and needs explicit confirmation; capabilities the plugin no longer asks for
+are listed for information. Unattended upgrades (=--batch= and =--headless=)
+stop with an error instead of applying such an upgrade, leaving the installed
+component and lock entry unchanged.
 ** Safer package upgrades
 Package upgrades can be previewed with =package-upgrade-all-dry-run= or
 =C-u= on upgrade commands, and one installed package can be upgraded with

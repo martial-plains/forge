@@ -35,6 +35,7 @@ pub mod grammar_install;
 pub mod help_faces;
 pub mod http;
 pub mod icons;
+pub mod init_review;
 pub mod keymap;
 pub mod kill_ring;
 pub mod kmacro;
@@ -96,7 +97,10 @@ pub use lockfile::{LockCapabilities, LockEntry, LockFile, Snapshot, SnapshotChan
 pub use messages::MessageLogMax;
 pub use modes::{ModeDef, ModeKind, ModeRegistry};
 pub use package_journal::{Journal, JournalState, Recovery};
-pub use permissions::{GrantStore, Grants, Manifest, Setting, SettingKind};
+pub use permissions::{
+    CapabilityChange, CapabilityDiff, GrantBinding, GrantStore, Grants, ImportMismatch, Manifest,
+    PermissionKind, Setting, SettingKind, format_grant_time, uncovered_imports,
+};
 pub use plugin::host::{Outcome, PluginFile, PluginHost, PluginRequest};
 pub use plugin::registry::PluginRegistry;
 pub use plugin::runtime::{Effect, LoadedPlugin, PluginMonitor, PluginRuntime, Question};

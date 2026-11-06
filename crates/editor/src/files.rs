@@ -274,6 +274,7 @@ pub fn revert_buffer(app: &mut App) {
 /// control catch up.
 pub fn after_save(app: &mut App) {
     let id = app.active_id();
+    crate::init_review::record_saved(app);
     crate::vc::after_save(app, id);
     let excess = app.buf().take_excess_backups();
     if !excess.is_empty() && app.minibuffer.is_none() {

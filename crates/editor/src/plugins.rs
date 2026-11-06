@@ -8,7 +8,8 @@ use crate::minibuffer::Purpose;
 use forge_core::plugin::runtime::Level;
 use forge_core::plugin::runtime::is_supported_import;
 use forge_core::{
-    Effect, Grants, Manifest, Outcome, PluginFile, PluginHost, PluginRequest, Question,
+    Effect, GrantBinding, Grants, Manifest, Outcome, PluginFile, PluginHost, PluginRequest,
+    Question,
 };
 use std::path::{Path, PathBuf};
 
@@ -34,6 +35,11 @@ pub struct PendingGrant {
     pub request: PluginRequest,
     /// What it asks for that isn't granted yet.
     pub missing: Grants,
+    /// The binary the answer is being given for.
+    pub binding: GrantBinding,
+    /// The name was approved for a different binary, so it is being asked
+    /// again even when it would otherwise have enough permissions.
+    pub different_binary: bool,
 }
 
 pub(crate) fn ensure_host(app: &mut App) -> bool {
@@ -113,7 +119,14 @@ pub fn load_at_startup(app: &mut App, path: &Path) {
     if let Err(e) = check_settings(app, &file.name, file.manifest.as_ref()) {
         return app.error(e);
     }
-    let granted = effective_grants(app, &file.name);
+    let binding = file.binding();
+    if app.grants.binding_mismatch(&file.name, &binding) {
+        // Ask again, with the explanation, rather than starting from a
+        // stale approval for another binary.
+        return load(app, path);
+    }
+    bind_legacy(app, &file.name, &binding);
+    let granted = effective_grants_for(app, &file.name, &binding);
     let mut host = app.plugin_host.take().expect("just made");
     let r = host.load_dormant(&mut app.editor, file, &granted);
     app.plugin_host = Some(host);
@@ -143,7 +156,12 @@ pub fn load_lazy(
     if let Err(e) = check_settings(app, &file.name, file.manifest.as_ref()) {
         return app.error(e);
     }
-    let granted = effective_grants(app, &file.name);
+    let binding = file.binding();
+    if app.grants.binding_mismatch(&file.name, &binding) {
+        return load(app, path);
+    }
+    bind_legacy(app, &file.name, &binding);
+    let granted = effective_grants_for(app, &file.name, &binding);
     let mut host = app.plugin_host.take().expect("just made");
     let r = host.load_lazy(&mut app.editor, file, &granted, commands, modes, extensions);
     app.plugin_host = Some(host);
@@ -166,7 +184,9 @@ pub fn reload_for_bisect(
     }
     let file = PluginFile::read(path).map_err(|error| format!("{error:#}"))?;
     check_settings(app, &file.name, file.manifest.as_ref())?;
-    let granted = effective_grants(app, &file.name);
+    let binding = file.binding();
+    bind_legacy(app, &file.name, &binding);
+    let granted = effective_grants_for(app, &file.name, &binding);
     let mut host = app.plugin_host.take().expect("just made");
     let mut out = forge_core::Outcome::default();
     let result = if dormant {
@@ -265,37 +285,82 @@ pub fn load(app: &mut App, path: &Path) {
     if let Err(e) = check_settings(app, request.name(), request.manifest.as_ref()) {
         return app.error(e);
     }
-    let granted = effective_grants(app, request.name());
+    let mismatches =
+        forge_core::uncovered_imports(request.manifest.as_ref(), &request.inspection.imports);
+    if !mismatches.is_empty() {
+        show_import_mismatch(app, &request, &mismatches);
+        let details = mismatches
+            .iter()
+            .map(forge_core::ImportMismatch::describe)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return app.error(format!(
+            "Plugin {} not loaded: its manifest doesn't declare permissions its imports need: {details}",
+            request.name()
+        ));
+    }
+    let name = request.name().to_string();
+    // A request read from bytes alone has no binary identity; one from a
+    // file always does.
+    let binding = request.binding().unwrap_or_default();
+    let different_binary = app.grants.binding_mismatch(&name, &binding);
+    if different_binary {
+        // The old approval belongs to another binary. Forget it before
+        // asking, so a declined prompt can't leave it usable.
+        if let Err(e) = app.grants.revoke(&name) {
+            app.error(format!("Couldn't invalidate the old grant: {e}"));
+        }
+    } else {
+        bind_legacy(app, &name, &binding);
+    }
+    let granted = effective_grants_for(app, &name, &binding);
     let missing = granted.missing(&request.requested());
     if missing.is_empty() {
         return finish_load(app, request, &granted, None);
     }
-    show_permissions(app, &request, &missing, &granted);
-    let name = request.name().to_string();
-    app.pending_grant = Some(PendingGrant { request, missing });
-    app.prompt(
-        format!("Grant these permissions to {name}? (y or n) "),
-        Purpose::PluginGrant,
-    );
+    show_permissions(app, &request, &missing, &granted, different_binary);
+    app.pending_grant = Some(PendingGrant {
+        request,
+        missing,
+        binding,
+        different_binary,
+    });
+    let prompt = if different_binary {
+        format!("same name, different binary. Grant these permissions to {name}? (y or n) ")
+    } else {
+        format!("Grant these permissions to {name}? (y or n) ")
+    };
+    app.prompt(prompt, Purpose::PluginGrant);
 }
 
 /// The user answered the permission question: Some(true) grant and load,
 /// Some(false) load without, None don't load.
 pub fn answer_grant(app: &mut App, answer: Option<bool>) {
-    let Some(PendingGrant { request, missing }) = app.pending_grant.take() else {
+    let Some(PendingGrant {
+        request,
+        missing,
+        binding,
+        ..
+    }) = app.pending_grant.take()
+    else {
         return;
     };
     let name = request.name().to_string();
     match answer {
         Some(true) => {
-            if let Err(e) = app.grants.grant(&name, &missing) {
+            let saved = if binding.is_empty() {
+                app.grants.grant(&name, &missing)
+            } else {
+                app.grants.grant_for(&name, &missing, &binding)
+            };
+            if let Err(e) = saved {
                 app.error(format!("Couldn't save the grant: {e}"));
             }
-            let granted = effective_grants(app, &name);
+            let granted = effective(app, &name, &binding);
             finish_load(app, request, &granted, None);
         }
         Some(false) => {
-            let granted = effective_grants(app, &name);
+            let granted = effective(app, &name, &binding);
             finish_load(app, request, &granted, Some(&missing));
         }
         None => app.msg(format!("Plugin {name} not loaded")),
@@ -303,10 +368,41 @@ pub fn answer_grant(app: &mut App, answer: Option<bool>) {
     process_pending_loads(app);
 }
 
+/// Remember the binary that first used a migrated, unbound approval.
+fn bind_legacy(app: &mut App, name: &str, binding: &GrantBinding) {
+    if binding.is_empty() {
+        return;
+    }
+    if let Err(e) = app.grants.bind_if_unbound(name, binding) {
+        app.error(format!("Couldn't save the grant: {e}"));
+    }
+}
+
+fn effective(app: &App, name: &str, binding: &GrantBinding) -> Grants {
+    if binding.is_empty() {
+        effective_grants(app, name)
+    } else {
+        effective_grants_for(app, name, binding)
+    }
+}
+
 /// What a plugin may do: granted interactively (plugin-grants.toml) plus
 /// pre-granted in init.rhai (forge.plugin.grant).
 pub fn effective_grants(app: &App, name: &str) -> Grants {
     let mut g = app.grants.get(name);
+    merge_pre_grants(app, name, &mut g);
+    g
+}
+
+/// What a particular binary of a plugin may do. A migrated, unbound
+/// approval still applies; `forge.plugin.grant` always applies.
+pub fn effective_grants_for(app: &App, name: &str, binding: &GrantBinding) -> Grants {
+    let mut g = app.grants.get_for(name, binding);
+    merge_pre_grants(app, name, &mut g);
+    g
+}
+
+fn merge_pre_grants(app: &App, name: &str, g: &mut Grants) {
     if let Some(pre) = app
         .rhai
         .as_ref()
@@ -314,7 +410,6 @@ pub fn effective_grants(app: &App, name: &str) -> Grants {
     {
         g.merge(&pre);
     }
-    g
 }
 
 /// Load plugins that waited for a permission question to be answered.
@@ -446,8 +541,13 @@ pub fn describe(app: &mut App, name: &str) {
     if grants.describe().is_empty() {
         t.push_str("  none (no files, network or environment)\n");
     } else {
-        for line in grants.describe() {
-            t.push_str(&format!("  - {line}\n"));
+        for (key, line) in grants.describe_keyed() {
+            let changed = app
+                .grants
+                .grant_time(name, &key)
+                .map(|time| format!(" (last changed {})", forge_core::format_grant_time(time)))
+                .unwrap_or_default();
+            t.push_str(&format!("  - {line}{changed}\n"));
         }
     }
 
@@ -487,11 +587,52 @@ fn report_error(app: &mut App, e: anyhow::Error) {
     app.error(text);
 }
 
+/// A plugin whose imports need a permission its manifest doesn't declare:
+/// show the mismatch instead of treating the import as an implicit grant.
+fn show_import_mismatch(
+    app: &mut App,
+    request: &PluginRequest,
+    mismatches: &[forge_core::ImportMismatch],
+) {
+    let name = request.name();
+    let mut t = format!(
+        "Plugin {name} can't load: its manifest doesn't declare every permission its imports need\n\n"
+    );
+    t.push_str("Manifest mismatch:\n");
+    for mismatch in mismatches {
+        t.push_str(&format!("  - {}\n", mismatch.describe()));
+    }
+    t.push_str("\nWhat its code can call (component imports):\n");
+    for import in &request.inspection.imports {
+        let note = mismatches
+            .iter()
+            .find(|m| m.import == *import)
+            .map(|m| format!("  (needs {}, not declared)", m.permission.describe()))
+            .unwrap_or_default();
+        t.push_str(&format!("  {import}{note}\n"));
+    }
+    t.push_str("\nAdd the missing permissions to the plugin's manifest, then load it again.\n");
+    app.show_special_buffer("*Plugin Permissions*", "special-mode", &t);
+}
+
 /// The *Plugin Permissions* buffer: what a plugin asks for and what its
 /// code can call.
-fn show_permissions(app: &mut App, request: &PluginRequest, missing: &Grants, granted: &Grants) {
+fn show_permissions(
+    app: &mut App,
+    request: &PluginRequest,
+    missing: &Grants,
+    granted: &Grants,
+    different_binary: bool,
+) {
     let name = request.name();
     let mut t = format!("Plugin {name} asks for permission\n\n");
+    if different_binary {
+        t.push_str(
+            "same name, different binary.\n\
+             The approval on disk was for a different build of this plugin, so it was \
+             forgotten.\n\n",
+        );
+    }
     if let Some(m) = &request.manifest {
         let version = m
             .version
@@ -530,7 +671,7 @@ fn show_permissions(app: &mut App, request: &PluginRequest, missing: &Grants, gr
     }
     t.push_str(
         "\ny: grant and load    n: load without these permissions    C-g: don't load\n\
-         Grants are kept in plugin-grants.toml; M-x revoke-plugin-permissions forgets them.\n",
+         Grants are kept in the state directory; M-x revoke-plugin-permissions forgets them.\n",
     );
     app.show_special_buffer("*Plugin Permissions*", "special-mode", &t);
 }
@@ -655,8 +796,13 @@ pub fn list(app: &mut App) {
         for line in pre.describe() {
             t.push_str(&format!("  {line}  [init.rhai]\n"));
         }
-        for line in app.grants.get(name).describe() {
-            t.push_str(&format!("  {line}  [granted when asked]\n"));
+        for (key, line) in app.grants.get(name).describe_keyed() {
+            let changed = app
+                .grants
+                .grant_time(name, &key)
+                .map(|time| format!(", last changed {}", forge_core::format_grant_time(time)))
+                .unwrap_or_default();
+            t.push_str(&format!("  {line}  [granted when asked{changed}]\n"));
         }
         t.push_str(&format!("  memory limit: {} MB\n", grants.memory_mb()));
         if let Some(p) = host.get(name).filter(|p| !p.unsupported.is_empty()) {

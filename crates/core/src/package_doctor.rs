@@ -13,6 +13,7 @@ use crate::plugin::runtime::{WIT_VERSION, is_supported_import};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// How much attention a finding needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -48,6 +49,7 @@ pub enum CheckId {
     DependencyCycle,
     Cache,
     Size,
+    Sharing,
 }
 
 impl CheckId {
@@ -64,6 +66,7 @@ impl CheckId {
             Self::DependencyCycle => "dependency-cycle",
             Self::Cache => "cache",
             Self::Size => "size",
+            Self::Sharing => "sharing",
         }
     }
 }
@@ -165,6 +168,8 @@ pub struct DoctorContext {
     pub config_dir: Option<PathBuf>,
     pub data_dir: Option<PathBuf>,
     pub cache_dir: Option<PathBuf>,
+    pub state_dir: Option<PathBuf>,
+    pub auth_files: Vec<PathBuf>,
 }
 
 type Check = fn(&DoctorContext) -> Vec<Finding>;
@@ -183,6 +188,7 @@ pub const CHECKS: &[(&str, Check)] = &[
     ("dependency-cycle", check_dependency_cycle),
     ("cache", check_cache),
     ("size", check_size),
+    ("sharing", check_sharing),
 ];
 
 /// Run every check and return one deterministic list.
@@ -204,6 +210,144 @@ pub fn has_errors(findings: &[Finding]) -> bool {
     findings
         .iter()
         .any(|finding| finding.severity == Severity::Error)
+}
+
+/// The small part of Git the sharing check needs.
+pub trait Git {
+    fn work_tree(&self, path: &Path) -> Option<PathBuf>;
+    fn is_ignored(&self, path: &Path) -> bool;
+}
+
+/// Git as installed on this machine.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemGit;
+
+impl Git for SystemGit {
+    fn work_tree(&self, path: &Path) -> Option<PathBuf> {
+        let dir = nearest_existing_directory(path)?;
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!root.is_empty()).then(|| PathBuf::from(root))
+    }
+
+    fn is_ignored(&self, path: &Path) -> bool {
+        let Some(root) = self.work_tree(path) else {
+            return false;
+        };
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["check-ignore", "-q", "--"])
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+}
+
+fn nearest_existing_directory(path: &Path) -> Option<&Path> {
+    let mut current = if path.is_dir() {
+        Some(path)
+    } else {
+        path.parent()
+    };
+    while let Some(dir) = current {
+        if dir.is_dir() {
+            return Some(dir);
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+/// Warn about secrets and machine-local files that Git would commit.
+pub fn check_sharing(ctx: &DoctorContext) -> Vec<Finding> {
+    check_sharing_with(ctx, &SystemGit)
+}
+
+/// Like [`check_sharing`], but with a caller-supplied Git implementation.
+pub fn check_sharing_with(ctx: &DoctorContext, git: &dyn Git) -> Vec<Finding> {
+    let mut paths: BTreeMap<PathBuf, bool> = BTreeMap::new();
+    for dir in [ctx.config_dir.as_deref(), ctx.state_dir.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        paths.insert(dir.join("plugin-grants.toml"), false);
+    }
+    if let Some(dir) = ctx.state_dir.as_deref() {
+        paths.insert(dir.join("session.toml"), false);
+    }
+    if let Some(dir) = ctx.config_dir.as_deref() {
+        paths.insert(dir.join("plugins"), true);
+    }
+    for path in &ctx.auth_files {
+        paths.insert(path.clone(), false);
+    }
+
+    let mut findings = Vec::new();
+    for (path, directory) in paths {
+        let Some(root) = git.work_tree(&path) else {
+            continue;
+        };
+        let ignored = git.is_ignored(&path)
+            || (directory && !path.exists() && git.is_ignored(&path.join(".forge-ignore-probe")));
+        if ignored {
+            continue;
+        }
+        let relative = relative_to(&root, &path);
+        let mut line = relative.display().to_string();
+        if directory {
+            line.push('/');
+        }
+        findings.push(Finding::warning(
+            CheckId::Sharing,
+            None,
+            None,
+            format!(
+                "{} is inside the Git work tree at {} but is not ignored",
+                relative.display(),
+                root.display()
+            ),
+            format!("Add this line to {}/.gitignore:\n{line}", root.display()),
+        ));
+    }
+    findings
+}
+
+fn relative_to(root: &Path, path: &Path) -> PathBuf {
+    if let Ok(relative) = path.strip_prefix(root) {
+        return relative.to_path_buf();
+    }
+    let canonical_root = root.canonicalize().ok();
+    let canonical_path = canonicalize_missing(path);
+    if let (Some(root), Some(path)) = (canonical_root, canonical_path)
+        && let Ok(relative) = path.strip_prefix(&root)
+    {
+        return relative.to_path_buf();
+    }
+    path.to_path_buf()
+}
+
+fn canonicalize_missing(path: &Path) -> Option<PathBuf> {
+    let mut suffix = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(mut base) = current.canonicalize() {
+            for part in suffix.iter().rev() {
+                base.push(part);
+            }
+            return Some(base);
+        }
+        suffix.push(current.file_name()?.to_os_string());
+        current = current.parent()?;
+    }
 }
 
 fn split_report(line: &str) -> Option<(&str, &str)> {
@@ -1142,6 +1286,115 @@ mod tests {
         let found = check_size(&ctx);
         assert_eq!(found.len(), 1);
         assert!(found[0].message.contains("2.0 KiB"));
+    }
+
+    fn git_repo(name: &str) -> Option<PathBuf> {
+        Command::new("git").arg("--version").output().ok()?;
+        let dir = temp(name);
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["init", "-q"])
+            .status()
+            .ok()?;
+        status.success().then_some(dir)
+    }
+
+    fn fix_lines(found: &[Finding]) -> Vec<String> {
+        found
+            .iter()
+            .filter_map(|finding| finding.fix.as_deref())
+            .filter_map(|fix| fix.rsplit('\n').next())
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn sharing_warns_for_secrets_in_a_git_work_tree() {
+        let Some(dir) = git_repo("sharing-open") else {
+            return;
+        };
+        let config = dir.join("config");
+        let state = dir.join("state");
+        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        let ctx = DoctorContext {
+            config_dir: Some(config.clone()),
+            state_dir: Some(state.clone()),
+            auth_files: vec![dir.join(".netrc")],
+            ..Default::default()
+        };
+        let found = check_sharing(&ctx);
+        let _ = fs::remove_dir_all(&dir);
+        let lines = fix_lines(&found);
+        assert!(
+            lines.contains(&"config/plugin-grants.toml".into()),
+            "{lines:?}"
+        );
+        assert!(lines.contains(&"config/plugins/".into()), "{lines:?}");
+        assert!(
+            lines.contains(&"state/plugin-grants.toml".into()),
+            "{lines:?}"
+        );
+        assert!(lines.contains(&"state/session.toml".into()), "{lines:?}");
+        assert!(lines.contains(&".netrc".into()), "{lines:?}");
+    }
+
+    #[test]
+    fn sharing_is_quiet_when_the_paths_are_ignored() {
+        let Some(dir) = git_repo("sharing-ignored") else {
+            return;
+        };
+        fs::write(
+            dir.join(".gitignore"),
+            "config/plugin-grants.toml\nconfig/plugins/\nstate/plugin-grants.toml\nstate/session.toml\n.netrc\n",
+        )
+        .unwrap();
+        let config = dir.join("config");
+        let state = dir.join("state");
+        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(&state).unwrap();
+        let ctx = DoctorContext {
+            config_dir: Some(config),
+            state_dir: Some(state),
+            auth_files: vec![dir.join(".netrc")],
+            ..Default::default()
+        };
+        let found = check_sharing(&ctx);
+        let _ = fs::remove_dir_all(&dir);
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    struct FakeGit {
+        root: PathBuf,
+        ignored: BTreeSet<PathBuf>,
+    }
+
+    impl Git for FakeGit {
+        fn work_tree(&self, path: &Path) -> Option<PathBuf> {
+            path.starts_with(&self.root).then(|| self.root.clone())
+        }
+
+        fn is_ignored(&self, path: &Path) -> bool {
+            self.ignored.contains(path)
+        }
+    }
+
+    #[test]
+    fn sharing_uses_the_git_trait() {
+        let root = PathBuf::from("/repo");
+        let state = root.join("state");
+        let git = FakeGit {
+            root: root.clone(),
+            ignored: [state.join("session.toml")].into_iter().collect(),
+        };
+        let ctx = DoctorContext {
+            state_dir: Some(state.clone()),
+            ..Default::default()
+        };
+        let found = check_sharing_with(&ctx, &git);
+        let lines = fix_lines(&found);
+        assert_eq!(lines, vec!["state/plugin-grants.toml"]);
     }
 
     #[test]

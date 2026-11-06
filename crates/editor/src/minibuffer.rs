@@ -458,8 +458,12 @@ pub enum ConfirmAction {
     BuildPackage,
     /// Apply a reviewed package-index update.
     IndexPackageUpgrade,
+    /// Allow new capabilities in a package-index update.
+    IndexPackageCapabilities,
     /// Apply a reviewed Git package update.
     GitPackageUpgrade,
+    /// Allow new capabilities in a Git package update.
+    GitPackageCapabilities,
     /// Dired: delete these files.
     DiredDelete(Vec<PathBuf>),
     /// A grep about to run: save this buffer, then the ones in `rest`.
@@ -475,6 +479,8 @@ pub enum ConfirmAction {
     Vc(crate::vc::Confirm),
     /// Does the problem happen with these plugins enabled? (plugin-bisect).
     PluginBisect,
+    /// Evaluate an init.rhai that changed outside Forge.
+    InitReview,
 }
 
 pub struct Isearch {
@@ -1250,10 +1256,17 @@ fn cancel(app: &mut App, mut mb: Minibuffer) {
         Purpose::Confirm(ConfirmAction::IndexPackageUpgrade) => {
             crate::packages::package_upgrade_confirmed(app, false);
         }
+        Purpose::Confirm(ConfirmAction::IndexPackageCapabilities) => {
+            crate::packages::package_capabilities_confirmed(app, false);
+        }
         Purpose::Confirm(ConfirmAction::GitPackageUpgrade) => {
             crate::package_vc::upgrade_review_declined(app);
         }
+        Purpose::Confirm(ConfirmAction::GitPackageCapabilities) => {
+            crate::package_vc::capabilities_confirmed(app, false);
+        }
         Purpose::Confirm(ConfirmAction::PluginBisect) => crate::plugin_bisect::abort(app),
+        Purpose::Confirm(ConfirmAction::InitReview) => crate::init_review::declined(app),
         _ => {}
     }
 }
@@ -1265,7 +1278,13 @@ fn confirm(app: &mut App, action: ConfirmAction) {
         ConfirmAction::IndexPackageUpgrade => {
             crate::packages::package_upgrade_confirmed(app, true);
         }
+        ConfirmAction::IndexPackageCapabilities => {
+            crate::packages::package_capabilities_confirmed(app, true);
+        }
         ConfirmAction::GitPackageUpgrade => crate::package_vc::reviewed_upgrade(app),
+        ConfirmAction::GitPackageCapabilities => {
+            crate::package_vc::capabilities_confirmed(app, true)
+        }
         ConfirmAction::DiredDelete(paths) => crate::dired::delete_confirmed(app, paths),
         ConfirmAction::KillBuffer(id) => app.kill_buffer(id),
         ConfirmAction::DeleteBackups(paths) => {
@@ -1282,6 +1301,7 @@ fn confirm(app: &mut App, action: ConfirmAction) {
         }
         ConfirmAction::OrgCryptDecrypt => crate::org_crypt::decrypt_after_confirm(app),
         ConfirmAction::PluginBisect => crate::plugin_bisect::answer(app, true),
+        ConfirmAction::InitReview => crate::init_review::accepted(app),
         ConfirmAction::Save(id) if id == app.active_id() => commands::save(app),
         ConfirmAction::TetherSave(id) if id == app.active_id() => {
             crate::tether::save(app, true);
@@ -3342,14 +3362,21 @@ pub fn cmd_no(app: &mut App) {
         Purpose::Confirm(ConfirmAction::IndexPackageUpgrade) => {
             crate::packages::package_upgrade_confirmed(app, false);
         }
+        Purpose::Confirm(ConfirmAction::IndexPackageCapabilities) => {
+            crate::packages::package_capabilities_confirmed(app, false);
+        }
         Purpose::Confirm(ConfirmAction::GitPackageUpgrade) => {
             crate::package_vc::upgrade_review_declined(app);
+        }
+        Purpose::Confirm(ConfirmAction::GitPackageCapabilities) => {
+            crate::package_vc::capabilities_confirmed(app, false);
         }
         Purpose::Confirm(ConfirmAction::Vc(c)) => crate::vc::declined(app, c),
         Purpose::Confirm(ConfirmAction::GrepSave { buffer, rest }) => {
             crate::grep::save_confirmed(app, buffer, rest, false);
         }
         Purpose::Confirm(ConfirmAction::PluginBisect) => crate::plugin_bisect::answer(app, false),
+        Purpose::Confirm(ConfirmAction::InitReview) => crate::init_review::declined(app),
         Purpose::Confirm(_) => {}
         _ => app.minibuffer = Some(mb),
     }

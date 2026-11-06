@@ -18,7 +18,7 @@
 use crate::app::{BufferId, Editor};
 use crate::events::EventTracker;
 use crate::keymap::Scope;
-use crate::permissions::{Grants, Manifest};
+use crate::permissions::{GrantBinding, Grants, Manifest};
 use crate::plugin::profile::{Clock, Part, ProfileReport, Profiler, SystemClock};
 use crate::plugin::runtime::{
     CallResult, EVENT_KINDS, Effect, Inspection, LoadedPlugin, LogLine, PluginEvent, PluginMonitor,
@@ -118,6 +118,11 @@ impl PluginFile {
             .map(|m| m.permissions.clone())
             .unwrap_or_default()
     }
+
+    /// The name and binary this file would be approved as.
+    pub fn binding(&self) -> GrantBinding {
+        GrantBinding::for_file(&self.path, &self.bytes)
+    }
 }
 
 /// A plugin file, compiled and looked at but not yet running.
@@ -139,6 +144,16 @@ impl PluginRequest {
             .as_ref()
             .map(|m| m.permissions.clone())
             .unwrap_or_default()
+    }
+
+    /// The name and binary this request would be approved as. A request
+    /// loaded from bytes alone (tests and tools) has no binding.
+    pub fn binding(&self) -> Option<GrantBinding> {
+        self.source.as_ref().map(|(path, digest)| GrantBinding {
+            source: Some(path.display().to_string()),
+            sha256: Some(digest.clone()),
+            extra: BTreeMap::new(),
+        })
     }
 }
 
@@ -579,6 +594,24 @@ impl PluginHost {
     ) -> (Result<()>, Outcome) {
         let mut out = Outcome::default();
         let name = request.inspection.name.clone();
+        if let Some(manifest) = &request.manifest {
+            let mismatches =
+                crate::permissions::uncovered_imports(Some(manifest), &request.inspection.imports);
+            if !mismatches.is_empty() {
+                let details = mismatches
+                    .iter()
+                    .map(|m| m.describe())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return (
+                    Err(anyhow::anyhow!(
+                        "{name}: the component imports permissions its manifest doesn't declare: \
+                         {details}. Add them to [permissions] or fix the plugin."
+                    )),
+                    out,
+                );
+            }
+        }
         self.unload(editor, &name);
         // Remember the file even if loading fails: a fixed rebuild then
         // loads by itself (see changed_files).
@@ -1767,6 +1800,25 @@ mod tests {
         let (r, out) = host.load_with(&mut ed, "env", &component_0_1_19(wat), &grants);
         r.unwrap();
         assert_eq!(messages(&out), ["allowed", "system-ok"]);
+
+        // A manifest that doesn't declare the environment permission is
+        // refused even if a grant exists: an import is not a grant.
+        let mut ed = editor();
+        let mut host = PluginHost::new().unwrap();
+        let file = PluginFile {
+            path: PathBuf::from("env.wasm"),
+            name: "env".into(),
+            manifest: Some(Manifest::parse("description = \"Env\"").unwrap()),
+            bytes: component_0_1_19(wat),
+        };
+        let request = host.inspect(file).unwrap();
+        let (r, _) = host.load_request(&mut ed, request, &grants);
+        let error = format!("{:#}", r.unwrap_err());
+        assert!(
+            error.contains("manifest doesn't declare")
+                && error.contains("forge:editor/environment@0.1.19"),
+            "{error}"
+        );
     }
 
     /// "demo": registers demo-greet (asks for a name, then inserts

@@ -157,6 +157,8 @@ pub struct App {
     pub prefix_help_delay: Duration,
     /// init.rhai; None when started with -q.
     pub init_path: Option<PathBuf>,
+    /// Plugin loading and mode hooks held back for an init review.
+    pub(crate) pending_startup: Option<crate::init_review::PendingStartup>,
     /// The Rhai state init.rhai ran in (its commands live here).
     pub rhai: Option<RhaiConfig>,
     /// Errors from the last init.rhai/theme load (used by the package doctor).
@@ -301,6 +303,8 @@ pub struct App {
     pub startup_budget: Option<Duration>,
     /// Plugin startup took longer than `startup_budget`.
     pub startup_budget_exceeded: bool,
+    /// No person is present to answer prompts (--batch, --headless).
+    pub unattended: bool,
     /// Plugin questions waiting for the minibuffer.
     pub pending_questions: VecDeque<PendingQuestion>,
     /// Plugin commands currently running each other (loop guard).
@@ -775,6 +779,7 @@ impl App {
             show_prefix_hints: false,
             prefix_help_delay: DEFAULT_PREFIX_HELP_DELAY,
             init_path: None,
+            pending_startup: None,
             rhai: None,
             init_errors: Vec::new(),
             meta_pending: false,
@@ -846,6 +851,7 @@ impl App {
             plugin_cache: None,
             startup_budget: None,
             startup_budget_exceeded: false,
+            unattended: false,
             pending_questions: VecDeque::new(),
             plugin_depth: 0,
             grants: GrantStore::in_memory(),
@@ -2419,6 +2425,7 @@ impl App {
         // init.rhai is where a project's own init.rhai binds, so now that
         // there is a Rhai state the file on screen can be asked about.
         crate::project::load_if_granted(self);
+        forge_core::init_review::record(&path);
     }
 
     /// The compiled `sentence-end` regexp, or `None` when it is unset.

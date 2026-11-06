@@ -46,6 +46,8 @@ fn context(app: &App) -> (DoctorContext, Option<String>) {
         .clone()
         .or_else(forge_core::config::plugin_dir);
     let data_dir = forge_core::config::data_dir();
+    let state_dir = forge_core::config::state_dir();
+    let auth_files = crate::authinfo::files();
     let cache_dir = app
         .plugin_cache
         .clone()
@@ -102,6 +104,8 @@ fn context(app: &App) -> (DoctorContext, Option<String>) {
             config_dir,
             data_dir,
             cache_dir,
+            state_dir,
+            auth_files,
         },
         lock_error,
     )
@@ -285,12 +289,10 @@ fn headless_app() -> anyhow::Result<App> {
     let mut app = App::new(editor);
     crate::messages::messages_buffer(&mut app);
     app.plugin_cache = forge_core::config::cache_dir();
-    if let Some(dir) = forge_core::config::config_dir() {
-        match GrantStore::load(dir.join("plugin-grants.toml")) {
-            Ok(grants) => app.grants = grants,
-            Err(error) => {
-                return Err(anyhow::anyhow!("plugin grants not loaded: {error}"));
-            }
+    match GrantStore::load_default() {
+        Ok(grants) => app.grants = grants,
+        Err(error) => {
+            return Err(anyhow::anyhow!("plugin grants not loaded: {error}"));
         }
     }
     app.init_path = forge_core::config::init_file();

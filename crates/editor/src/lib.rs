@@ -33,6 +33,7 @@ pub mod help;
 pub mod icon;
 pub mod image_mode;
 pub mod info;
+pub mod init_review;
 pub mod input_method;
 pub mod iso_transl;
 pub mod keymap;
@@ -159,13 +160,12 @@ pub fn start(opts: &StartOptions) -> anyhow::Result<App> {
         crate::dired::open(&mut app, std::path::Path::new(dir));
     }
     app.msg("Welcome to Forge.  C-x C-c quits, C-h b lists key bindings.");
-    // Grants live next to init.rhai; with -q nothing is read or saved.
+    // Interactive approvals live in the state directory (the config-dir
+    // file is migrated on first use); with -q nothing is read or saved.
     if !opts.no_config {
-        if let Some(dir) = forge_core::config::config_dir() {
-            match forge_core::GrantStore::load(dir.join("plugin-grants.toml")) {
-                Ok(g) => app.grants = g,
-                Err(e) => app.error(format!("Plugin grants not loaded: {e}")),
-            }
+        match forge_core::GrantStore::load_default() {
+            Ok(g) => app.grants = g,
+            Err(e) => app.error(format!("Plugin grants not loaded: {e}")),
         }
         // Grammars installed with M-x treesit-install-language-grammar:
         // their modes are owned by the installer, so reloading init.rhai
@@ -179,46 +179,72 @@ pub fn start(opts: &StartOptions) -> anyhow::Result<App> {
         }
         // init.rhai first: it can pre-grant plugins their permissions.
         app.init_path = forge_core::config::init_file();
+        // A file changed outside Forge is reviewed before it runs; plugin
+        // loading waits for the answer too.
+        if let Some(review) = crate::init_review::pending() {
+            app.pending_startup = Some(crate::init_review::PendingStartup {
+                plugin_files: opts.plugin_files.clone(),
+                profile_startup: opts.profile_startup,
+                config: true,
+            });
+            crate::init_review::ask(&mut app, review);
+            return Ok(app);
+        }
         app.load_init_file();
     }
+    app.pending_startup = Some(crate::init_review::PendingStartup {
+        plugin_files: opts.plugin_files.clone(),
+        profile_startup: opts.profile_startup,
+        config: !opts.no_config,
+    });
+    finish_startup(&mut app);
+    Ok(app)
+}
+
+/// Load plugins and run the startup hooks after init.rhai was evaluated
+/// (or declined). Shared with the init review, which defers this until its
+/// answer comes.
+pub(crate) fn finish_startup(app: &mut App) {
+    let Some(pending) = app.pending_startup.take() else {
+        return;
+    };
     // Then plugins: the plugins directory, then --plugin files. One that
     // needs permission asks once the editor is up; others wait their turn.
-    if !opts.no_config {
+    if pending.config {
         app.plugin_cache = forge_core::config::cache_dir();
     }
     // Startup profiling covers plugin loading and starting, not init.rhai.
     // A budget set in init.rhai turns it on too, so a slow start warns.
     let mut profiling_startup = false;
-    if opts.profile_startup || app.startup_budget.is_some() {
-        profiling_startup = plugins::begin_startup_profile(&mut app);
+    if pending.profile_startup || app.startup_budget.is_some() {
+        profiling_startup = plugins::begin_startup_profile(app);
     }
-    if !opts.no_config {
+    if pending.config {
         // Plugins declared in init.rhai first, in `after` order: installed
         // ones load (or wait lazily), missing ones start installing.
-        crate::declare::resolve(&mut app);
-        let declared = crate::declare::declared_order(&app);
+        crate::declare::resolve(app);
+        let declared = crate::declare::declared_order(app);
         for p in plugins::discover() {
             let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if declared.iter().any(|n| n == stem) {
                 continue; // resolve() already loaded it
             }
-            plugins::load_at_startup(&mut app, &p);
+            plugins::load_at_startup(app, &p);
         }
     }
-    for p in &opts.plugin_files {
-        plugins::load(&mut app, std::path::Path::new(p));
+    for p in &pending.plugin_files {
+        plugins::load(app, std::path::Path::new(p));
     }
     if profiling_startup {
-        plugins::finish_startup_profile(&mut app);
+        plugins::finish_startup_profile(app);
     }
     app.report_unknown_bindings();
     // init.rhai's forge.mode.hook and its forge.command.run of plugin
     // commands, now that the plugins are here.
     app.run_mode_hooks();
-    crate::vc::ensure_state(&mut app);
+    crate::vc::ensure_state(app);
     // Like after-find-file for the files on the command line.
     if app.minibuffer.is_none() {
-        crate::files::warn_about_auto_save_data(&mut app);
+        crate::files::warn_about_auto_save_data(app);
     }
-    Ok(app)
 }

@@ -207,7 +207,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 
 // -------------------------------------------------------------- installed
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Installed {
     pub version: String,
     pub sha256: String,
@@ -226,6 +226,9 @@ pub struct Installed {
     /// The build command you agreed to run (asked again if it changes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<String>,
+    /// The full recipe the command was run with, for an upgrade diff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<BuildRecipe>,
 }
 
 /// `packages.toml` in the plugins directory: what was installed from an
@@ -291,6 +294,7 @@ impl InstalledDb {
                 rev: None,
                 commit: None,
                 build: None,
+                recipe: None,
             },
         );
         self.save().map_err(|e| e.to_string())?;
@@ -324,6 +328,7 @@ impl InstalledDb {
                 rev: source.rev.clone(),
                 commit: Some(source.commit.clone()),
                 build: source.build.clone(),
+                recipe: source.recipe.clone(),
             },
         );
         self.save().map_err(|e| e.to_string())?;
@@ -628,12 +633,14 @@ mod tests {
 // ------------------------------------------------------ version control
 
 /// Where a package built from version control came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VcSource {
     pub git: String,
     pub rev: Option<String>,
     pub commit: String,
     pub build: Option<String>,
+    /// The full recipe used for the build, for a later upgrade diff.
+    pub recipe: Option<BuildRecipe>,
 }
 
 /// `URL[@REV]` as typed for package-vc-install: the repository and the
@@ -692,6 +699,105 @@ pub struct BuildPlan {
     pub output: PathBuf,
     /// How this was decided, for the confirmation prompt.
     pub how: String,
+}
+
+/// Everything that decides how a source plugin is built: the command, the
+/// toolchain file, cargo features and the target. Stored with an install so
+/// an upgrade can show a full diff, not just whether the command changed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct BuildRecipe {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub command: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub toolchain: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub target: String,
+    /// Fields introduced by later Forge versions survive a read/write cycle.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+pub const BUILD_TARGET: &str = "wasm32-wasip2";
+
+impl BuildRecipe {
+    /// Read the recipe from a checked-out source tree.
+    pub fn for_checkout(command: &str, features: &[String], root: &Path) -> Self {
+        let toolchain = ["rust-toolchain.toml", "rust-toolchain"]
+            .iter()
+            .find_map(|file| std::fs::read_to_string(root.join(file)).ok())
+            .unwrap_or_default();
+        Self {
+            command: command.to_string(),
+            toolchain,
+            features: features.to_vec(),
+            target: BUILD_TARGET.to_string(),
+            extra: BTreeMap::new(),
+        }
+    }
+
+    /// The same hash older lockfiles recorded in `recipe_hash`.
+    pub fn hash(&self) -> String {
+        let recipe = serde_json::json!({
+            "command": self.command,
+            "toolchain": self.toolchain,
+            "features": self.features,
+            "target": self.target,
+        });
+        serde_json::to_vec(&recipe)
+            .map(|bytes| sha256_hex(&bytes))
+            .unwrap_or_default()
+    }
+
+    /// Lines describing what changed between this recipe and `new`.
+    pub fn diff(&self, new: &Self) -> Vec<String> {
+        let mut out = Vec::new();
+        let show = |s: &str| {
+            if s.is_empty() {
+                "(none)".to_string()
+            } else {
+                s.to_string()
+            }
+        };
+        if self.command != new.command {
+            out.push(format!(
+                "build command: {} -> {}",
+                show(&self.command),
+                show(&new.command)
+            ));
+        }
+        if self.toolchain != new.toolchain {
+            out.push(format!(
+                "toolchain: {} -> {}",
+                show(&self.toolchain),
+                show(&new.toolchain)
+            ));
+        }
+        if self.features != new.features {
+            let list = |features: &[String]| {
+                if features.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    features.join(", ")
+                }
+            };
+            out.push(format!(
+                "features: {} -> {}",
+                list(&self.features),
+                list(&new.features)
+            ));
+        }
+        if self.target != new.target {
+            out.push(format!(
+                "target: {} -> {}",
+                show(&self.target),
+                show(&new.target)
+            ));
+        }
+        out
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -858,6 +964,46 @@ mod vc_tests {
             );
             assert_eq!(vc_name(r"C:\src\forge-demo\\"), "demo");
         }
+    }
+
+    #[test]
+    fn build_recipes_diff_every_part() {
+        let dir = std::env::temp_dir().join(format!("forge-recipe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"stable\"\n",
+        )
+        .unwrap();
+        let old = BuildRecipe::for_checkout("cargo build", &["a".into()], &dir);
+        assert!(old.toolchain.contains("stable"));
+        let same = BuildRecipe::for_checkout("cargo build", &["a".into()], &dir);
+        assert_eq!(old.hash(), same.hash());
+        assert!(old.diff(&same).is_empty());
+
+        std::fs::write(
+            dir.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"nightly\"\n",
+        )
+        .unwrap();
+        let new =
+            BuildRecipe::for_checkout("cargo build --release", &["a".into(), "b".into()], &dir);
+        let diff = old.diff(&new);
+        assert!(
+            diff.iter().any(|line| line.starts_with("build command:")),
+            "{diff:?}"
+        );
+        assert!(
+            diff.iter().any(|line| line.starts_with("toolchain:")),
+            "{diff:?}"
+        );
+        assert!(
+            diff.iter().any(|line| line == "features: a -> a, b"),
+            "{diff:?}"
+        );
+        assert_ne!(old.hash(), new.hash());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -13,7 +13,8 @@
 //! asked for, so `M-x package-vc-upgrade` can show what changed before
 //! applying it.
 
-use crate::permissions::{Grants, Setting};
+use crate::package::BuildRecipe;
+use crate::permissions::{CapabilityDiff, Grants, Setting};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -68,6 +69,9 @@ pub struct LockEntry {
     /// Accepted source build command, when one was recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<String>,
+    /// The full build recipe (command, toolchain, features, target).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<BuildRecipe>,
     /// What its manifest asked for when it was locked (for the upgrade
     /// review: a changed permission set always asks again).
     #[serde(default, skip_serializing_if = "Grants::is_empty")]
@@ -104,6 +108,23 @@ pub struct LockCapabilities {
 impl LockCapabilities {
     fn is_empty(&self) -> bool {
         self.permissions.is_empty() && self.imports.is_empty() && self.extra.is_empty()
+    }
+
+    /// What changed between the capabilities recorded here and `new`.
+    pub fn diff(&self, new: &LockCapabilities) -> CapabilityDiff {
+        CapabilityDiff::between(&self.permissions, &new.permissions)
+    }
+}
+
+impl LockEntry {
+    /// The permissions recorded for this entry: the newer capabilities
+    /// table when present, else the older `permissions` field.
+    pub fn capability_grants(&self) -> &Grants {
+        if self.capabilities.is_empty() {
+            &self.permissions
+        } else {
+            &self.capabilities.permissions
+        }
     }
 }
 
@@ -684,6 +705,7 @@ future-entry = 42
                 rev: None,
                 commit: None,
                 build: None,
+                recipe: None,
             },
         );
         installed.save().unwrap();
@@ -755,6 +777,7 @@ future-entry = 42
                 rev: None,
                 commit: None,
                 build: None,
+                recipe: None,
             },
         );
         installed.save().unwrap();
@@ -890,5 +913,51 @@ future-entry = 42
         std::fs::remove_dir_all(&config).unwrap();
         std::fs::remove_dir_all(&plugins).unwrap();
         std::fs::remove_dir_all(&custom).unwrap();
+    }
+
+    #[test]
+    fn capability_grants_fall_back_to_the_old_permissions_field() {
+        let old = LockEntry {
+            permissions: Grants {
+                network: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(old.capability_grants().network);
+        let newer = LockEntry {
+            permissions: Grants {
+                network: true,
+                ..Default::default()
+            },
+            capabilities: LockCapabilities {
+                permissions: Grants {
+                    environment: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(newer.capability_grants().environment);
+        assert!(
+            !newer.capability_grants().network,
+            "the capabilities table wins when it has permissions"
+        );
+        let imports_only = LockEntry {
+            permissions: Grants {
+                network: true,
+                ..Default::default()
+            },
+            capabilities: LockCapabilities {
+                imports: vec!["wasi:http".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(
+            imports_only.capability_grants().is_empty(),
+            "a capabilities table with no permissions doesn't resurrect the old field"
+        );
     }
 }

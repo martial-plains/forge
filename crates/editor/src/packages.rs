@@ -11,9 +11,9 @@
 
 use crate::app::App;
 use crate::minibuffer::{Choice, Purpose};
-use forge_core::LockFile;
 use forge_core::package::{self, Index, InstalledDb, Package};
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
+use forge_core::{CapabilityDiff, LockFile, Manifest};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -30,6 +30,12 @@ pub enum Then {
     UpgradeAll,
     UpgradeDryRun,
     UpgradeOne(String),
+}
+
+struct PendingCapability {
+    package: Package,
+    bytes: Vec<u8>,
+    diff: CapabilityDiff,
 }
 
 enum Fetch {
@@ -256,6 +262,7 @@ pub(crate) fn abort_update_message(app: &mut App, error: String) -> String {
     let rollback = rollback_update(app);
     app.packages.upgrade_queue.clear();
     app.packages.pending_upgrade = None;
+    app.packages.pending_capability = None;
     app.packages.upgrade_git_after_index = false;
     app.packages.vc.cancel_queued();
     match rollback {
@@ -303,6 +310,7 @@ pub struct Packages {
     fetches: BTreeMap<u64, Fetch>,
     upgrade_queue: VecDeque<Package>,
     pending_upgrade: Option<Package>,
+    pending_capability: Option<PendingCapability>,
     upgrade_git_after_index: bool,
     /// Indexes read so far in a refresh, and what to do after.
     refreshing: Option<(Index, Vec<String>, Then)>,
@@ -819,6 +827,10 @@ fn write_locked_artifacts(
                         .build
                         .clone()
                         .or_else(|| previous.and_then(|p| p.build.clone())),
+                    recipe: entry
+                        .recipe
+                        .clone()
+                        .or_else(|| previous.and_then(|p| p.recipe.clone())),
                 },
             );
             db_changed = true;
@@ -876,6 +888,10 @@ fn sync_installed_metadata(
                         .build
                         .clone()
                         .or_else(|| previous.and_then(|p| p.build.clone())),
+                    recipe: entry
+                        .recipe
+                        .clone()
+                        .or_else(|| previous.and_then(|p| p.recipe.clone())),
                 },
             );
             changed = true;
@@ -1145,7 +1161,6 @@ fn next_upgrade_prompt(app: &mut App) {
     let Some(package) = app.packages.upgrade_queue.pop_front() else {
         if std::mem::take(&mut app.packages.upgrade_git_after_index) {
             if crate::package_vc::upgrade_all(app) == 0 {
-                app.msg("No Git packages need upgrading");
                 finish_update(app);
             }
         } else {
@@ -1153,6 +1168,13 @@ fn next_upgrade_prompt(app: &mut App) {
         }
         return;
     };
+    if app.unattended {
+        app.msg(format!("Applying upgrade for {}", package.name));
+        if !install(app, package.clone(), false) && app.packages.pending_capability.is_none() {
+            next_upgrade_prompt(app);
+        }
+        return;
+    }
     let old = db(app)
         .and_then(|db| db.packages.get(&package.name).cloned())
         .map(|installed| installed.version)
@@ -1187,11 +1209,34 @@ pub fn package_upgrade_confirmed(app: &mut App, yes: bool) {
     };
     if yes {
         app.msg(format!("Applying upgrade for {}", package.name));
-        if !install(app, package.clone(), false) {
+        if !install(app, package.clone(), false) && app.packages.pending_capability.is_none() {
             next_upgrade_prompt(app);
         }
     } else {
         app.msg(format!("Skipped upgrade for {}", package.name));
+        next_upgrade_prompt(app);
+    }
+}
+
+pub fn package_capabilities_confirmed(app: &mut App, yes: bool) {
+    let Some(pending) = app.packages.pending_capability.take() else {
+        return;
+    };
+    if yes {
+        app.msg(format!("Applying upgrade for {}", pending.package.name));
+        install_ready(app, pending.package, pending.bytes, true);
+        next_upgrade_prompt(app);
+    } else {
+        app.msg(format!(
+            "Skipped upgrade for {}: {} new capabilit{} not approved",
+            pending.package.name,
+            pending.diff.additions.len(),
+            if pending.diff.additions.len() == 1 {
+                "y was"
+            } else {
+                "ies were"
+            }
+        ));
         next_upgrade_prompt(app);
     }
 }
@@ -1564,6 +1609,38 @@ fn component_compatibility(app: &App, name: &str, bytes: &[u8]) -> Option<String
     runtime.compatibility_problem(&inspection)
 }
 
+/// The interfaces a component imports, without running it.
+pub(crate) fn component_imports(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
+    let runtime = forge_core::PluginRuntime::new()
+        .map_err(|error| format!("starting component inspection: {error:#}"))?;
+    runtime
+        .inspect(name, bytes)
+        .map(|inspection| inspection.imports)
+        .map_err(|error| format!("inspecting component imports: {error:#}"))
+}
+
+/// Refuse a component that imports a permission its manifest doesn't
+/// declare: an import is not an implicit grant.
+pub(crate) fn import_mismatch(
+    name: &str,
+    manifest: Option<&Manifest>,
+    imports: &[String],
+) -> Option<String> {
+    let mismatches = forge_core::uncovered_imports(manifest, imports);
+    if mismatches.is_empty() {
+        return None;
+    }
+    let details = mismatches
+        .iter()
+        .map(forge_core::ImportMismatch::describe)
+        .collect::<Vec<_>>()
+        .join("; ");
+    Some(format!(
+        "{name}: the component imports permissions its manifest doesn't declare: {details}. \
+         Add them to [permissions] or fix the plugin."
+    ))
+}
+
 /// The *Packages* buffer.
 pub fn list(app: &mut App) {
     let Some(index) = app.packages.index.clone() else {
@@ -1726,6 +1803,106 @@ fn install(app: &mut App, p: Package, force: bool) -> bool {
     }
 }
 
+fn append_package_text(app: &mut App, name: &str, text: &str) {
+    let id = match app.editor.find_buffer(name) {
+        Some(id) => {
+            let old = app
+                .editor
+                .state
+                .get_buffer(id)
+                .map(|b| b.get_contents())
+                .unwrap_or_default();
+            if let Some(buffer) = app.editor.state.get_buffer_mut(id) {
+                buffer.set_contents(&format!("{old}{text}"));
+            }
+            id
+        }
+        None => {
+            let id = app.editor.create_buffer(name);
+            if let Some(buffer) = app.editor.state.get_buffer_mut(id) {
+                buffer.set_contents(text);
+            }
+            id
+        }
+    };
+    crate::compile::display_buffer(app, id);
+}
+
+fn candidate_manifest(package: &Package, bytes: &[u8]) -> Result<Option<Manifest>, String> {
+    match package::local_path(&package.url) {
+        Some(path) => Manifest::for_component(&path, bytes),
+        None => Manifest::embedded(bytes),
+    }
+}
+
+fn candidate_capability_diff(
+    app: &App,
+    package: &Package,
+    bytes: &[u8],
+) -> Result<CapabilityDiff, String> {
+    let (_, config, _) = update_paths(app)?;
+    let old = LockFile::load(&config)
+        .map_err(|e| format!("can't read the package lock: {e}"))?
+        .get(&package.name)
+        .map(|entry| entry.capability_grants().clone())
+        .unwrap_or_default();
+    let new = candidate_manifest(package, bytes)?
+        .map(|manifest| manifest.permissions)
+        .unwrap_or_default();
+    Ok(CapabilityDiff::between(&old, &new))
+}
+
+fn unattended_capability_error(diff: &CapabilityDiff) -> String {
+    format!(
+        "it asks for new capabilities that need confirmation: {}. No changes were made.",
+        diff.describe_additions().join("; ")
+    )
+}
+
+/// Ask about new capabilities (or stop an unattended upgrade). Returns
+/// true when installation may proceed now.
+fn capability_gate(app: &mut App, package: &Package, bytes: &[u8]) -> Result<bool, String> {
+    let diff = candidate_capability_diff(app, package, bytes)?;
+    if !diff.has_additions() {
+        return Ok(true);
+    }
+    if app.unattended {
+        return Err(unattended_capability_error(&diff));
+    }
+    let mut text = format!(
+        "\nNew capabilities in {} {}:\n",
+        package.name, package.version
+    );
+    for line in diff.describe_additions() {
+        text.push_str(&format!("  {line}\n"));
+    }
+    if !diff.removals.is_empty() {
+        text.push_str("\nCapabilities it no longer asks for:\n");
+        for line in diff
+            .removals
+            .iter()
+            .map(forge_core::CapabilityChange::describe)
+        {
+            text.push_str(&format!("  {line}\n"));
+        }
+    }
+    text.push_str("\nThese additions need your approval before the upgrade is applied.\n");
+    append_package_text(app, "*Package Upgrade Review*", &text);
+    app.packages.pending_capability = Some(PendingCapability {
+        package: package.clone(),
+        bytes: bytes.to_vec(),
+        diff,
+    });
+    app.prompt(
+        format!(
+            "Upgrade {} and allow new capabilities? (y or n) ",
+            package.name
+        ),
+        Purpose::Confirm(crate::minibuffer::ConfirmAction::IndexPackageCapabilities),
+    );
+    Ok(false)
+}
+
 /// A download finished (or a local file was read): check, install, load.
 fn installed(
     app: &mut App,
@@ -1734,9 +1911,6 @@ fn installed(
     upgrade: bool,
     force: bool,
 ) {
-    let Some(mut db) = db(app) else {
-        return app.error("No plugins directory (set HOME or FORGE_CONFIG_DIR)");
-    };
     let bytes = match bytes {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -1761,6 +1935,34 @@ fn installed(
         }
         return app.error(message);
     }
+    let manifest = candidate_manifest(&p, &bytes).ok().flatten();
+    if let Ok(imports) = component_imports(&p.name, &bytes)
+        && let Some(problem) = import_mismatch(&p.name, manifest.as_ref(), &imports)
+    {
+        let message = if upgrade {
+            format!("Can't upgrade {}: {problem}", p.name)
+        } else {
+            format!("Can't install {}: {problem}", p.name)
+        };
+        if upgrade {
+            return abort_update(app, message);
+        }
+        return app.error(message);
+    }
+    if upgrade {
+        match capability_gate(app, &p, &bytes) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => return abort_update(app, format!("Can't upgrade {}: {error}", p.name)),
+        }
+    }
+    install_ready(app, p, bytes, upgrade);
+}
+
+fn install_ready(app: &mut App, p: Package, bytes: Vec<u8>, upgrade: bool) {
+    let Some(mut db) = db(app) else {
+        return app.error("No plugins directory (set HOME or FORGE_CONFIG_DIR)");
+    };
     if upgrade {
         if let Err(error) = smoke_test_component(app, &p.name, &bytes) {
             return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
@@ -2053,7 +2255,7 @@ pub fn poll(app: &mut App) {
                         log_package_fetch(started, &package, &r);
                         let _ = std::fs::remove_file(&file);
                         installed(app, package, r, upgrade, force);
-                        if upgrade {
+                        if upgrade && app.packages.pending_capability.is_none() {
                             next_upgrade_prompt(app);
                         }
                     }

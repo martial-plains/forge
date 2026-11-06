@@ -69,6 +69,7 @@ pub fn run(opts: Options) -> bool {
             return false;
         }
     };
+    app.unattended = true;
     app.message = None;
     // Compiled plugins are cached as usual, so repeated runs are quick.
     app.plugin_cache = forge_core::config::cache_dir();

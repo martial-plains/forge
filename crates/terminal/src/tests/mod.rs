@@ -404,6 +404,17 @@ pub(crate) fn plugin_file_from_wat(
     name: &str,
     source: &str,
 ) -> std::path::PathBuf {
+    plugin_file_from_wit(dir, name, None, source)
+}
+
+/// Build a plugin from WAT against a custom world, for imports the usual
+/// test world doesn't have (WASI sockets, filesystem, ...).
+pub(crate) fn plugin_file_from_wit(
+    dir: &std::path::Path,
+    name: &str,
+    world_wit: Option<&str>,
+    source: &str,
+) -> std::path::PathBuf {
     use wit_component::{ComponentEncoder, StringEncoding};
     let mut resolve = wit_parser::Resolve::default();
     let pkg = resolve
@@ -412,7 +423,24 @@ pub(crate) fn plugin_file_from_wat(
             "/../../tests/fixtures/wit-0.1.0/forge-editor.wit"
         ))
         .unwrap();
-    let world = resolve.select_world(&[pkg], Some("plugin")).unwrap();
+    let world = match world_wit {
+        None => resolve.select_world(&[pkg], Some("plugin")).unwrap(),
+        Some(wit) => {
+            for (i, dep) in [
+                include_str!("../../../../tests/fixtures/wasi-0.2/io.wit"),
+                include_str!("../../../../tests/fixtures/wasi-0.2/clocks.wit"),
+                include_str!("../../../../tests/fixtures/wasi-0.2/filesystem.wit"),
+                include_str!("../../../../tests/fixtures/wasi-0.2/sockets.wit"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                resolve.push_str(format!("dep{i}.wit"), dep).unwrap();
+            }
+            let world_pkg = resolve.push_str("test.wit", wit).unwrap();
+            resolve.select_world(&[world_pkg], None).unwrap()
+        }
+    };
     let mut module = wat::parse_str(source).unwrap();
     wit_component::embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
         .unwrap();

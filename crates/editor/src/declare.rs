@@ -16,6 +16,7 @@
 use crate::app::App;
 use crate::plugins;
 use forge_core::declare::order;
+use forge_core::package::BuildRecipe;
 use forge_core::{LockCapabilities, LockEntry, LockFile, Manifest, PluginUse};
 use std::path::{Path, PathBuf};
 
@@ -152,6 +153,7 @@ pub fn lock_entry(app: &App, u: &PluginUse, path: &Path) -> Result<LockEntry, St
         .map_err(|error| error.to_string())?
         .get(&u.name)
         .cloned();
+    let recipe = recipe_for(u, u.build.as_deref().unwrap_or(""))?;
     let mut e = LockEntry {
         git: u.git.clone(),
         rev: u.rev.clone(),
@@ -167,7 +169,8 @@ pub fn lock_entry(app: &App, u: &PluginUse, path: &Path) -> Result<LockEntry, St
             }
             .into(),
         ),
-        recipe_hash: Some(recipe_hash(u)?),
+        recipe_hash: Some(recipe.hash()),
+        recipe: Some(recipe),
         capabilities: LockCapabilities::default(),
         ..Default::default()
     };
@@ -194,12 +197,9 @@ pub fn lock_entry(app: &App, u: &PluginUse, path: &Path) -> Result<LockEntry, St
         }
         e.build = i.build.clone();
         if let Some(build) = i.build {
-            e.recipe_hash = Some(recipe_hash_for(
-                &build,
-                &u.features,
-                &u.name,
-                u.git_dir.as_deref(),
-            )?);
+            let recipe = recipe_for(u, &build)?;
+            e.recipe_hash = Some(recipe.hash());
+            e.recipe = Some(recipe);
         }
         e.version = Some(i.version);
     }
@@ -264,34 +264,22 @@ fn static_spec_hash(u: &PluginUse) -> Result<String, String> {
         .map_err(|e| format!("serializing static declaration: {e}"))
 }
 
-fn recipe_hash(u: &PluginUse) -> Result<String, String> {
-    let command = u.build.as_deref().unwrap_or("");
-    recipe_hash_for(command, &u.features, &u.name, u.git_dir.as_deref())
-}
-
-fn recipe_hash_for(
-    command: &str,
-    features: &[String],
-    name: &str,
-    source_subdir: Option<&str>,
-) -> Result<String, String> {
-    let toolchain = forge_core::package::vc_dir(name)
-        .map(|root| source_subdir.map_or(root.clone(), |subdir| root.join(subdir)))
-        .and_then(|root| {
-            ["rust-toolchain.toml", "rust-toolchain"]
-                .iter()
-                .find_map(|file| std::fs::read_to_string(root.join(file)).ok())
-        })
-        .unwrap_or_default();
-    let recipe = serde_json::json!({
-        "command": command,
-        "toolchain": toolchain,
-        "features": features,
-        "target": "wasm32-wasip2",
+fn recipe_for(u: &PluginUse, command: &str) -> Result<BuildRecipe, String> {
+    let root = forge_core::package::vc_dir(&u.name).map(|root| {
+        u.git_dir
+            .as_deref()
+            .map_or(root.clone(), |subdir| root.join(subdir))
     });
-    serde_json::to_vec(&recipe)
-        .map(|bytes| forge_core::package::sha256_hex(&bytes))
-        .map_err(|e| format!("serializing build recipe: {e}"))
+    let recipe = match root {
+        Some(root) => BuildRecipe::for_checkout(command, &u.features, &root),
+        None => BuildRecipe {
+            command: command.to_string(),
+            features: u.features.clone(),
+            target: forge_core::package::BUILD_TARGET.to_string(),
+            ..Default::default()
+        },
+    };
+    Ok(recipe)
 }
 
 /// Start installing a declared plugin that isn't installed yet.
