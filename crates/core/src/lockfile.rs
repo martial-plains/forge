@@ -185,6 +185,15 @@ impl LockFile {
         })
     }
 
+    fn read_lockfile(path: &Path) -> std::io::Result<LockData> {
+        Self::read_data(path)?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no lockfile at {}", path.display()),
+            )
+        })
+    }
+
     fn read_data(path: &Path) -> std::io::Result<Option<LockData>> {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -290,6 +299,16 @@ impl LockFile {
     }
 
     pub fn save_snapshot(&self, name: &str, plugins_dir: &Path) -> std::io::Result<()> {
+        self.save_snapshot_with(name, |plugin| plugins_dir.join(format!("{plugin}.wasm")))
+    }
+
+    /// Save a snapshot, reading each component from the path `path_for`
+    /// returns. `package-snapshot-save` uses this to include plugins loaded
+    /// from a custom `load_path`.
+    pub fn save_snapshot_with<F>(&self, name: &str, path_for: F) -> std::io::Result<()>
+    where
+        F: Fn(&str) -> PathBuf,
+    {
         Self::validate_snapshot_name(name)?;
         let dir = self
             .dir
@@ -297,8 +316,13 @@ impl LockFile {
             .ok_or_else(|| std::io::Error::other("no config directory for snapshots"))?;
         for (plugin, entry) in &self.shared_packages {
             Self::validate_plugin_name(plugin)?;
-            let path = plugins_dir.join(format!("{plugin}.wasm"));
-            let bytes = std::fs::read(&path)?;
+            let path = path_for(plugin);
+            let bytes = std::fs::read(&path).map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!("{plugin}: reading {}: {error}", path.display()),
+                )
+            })?;
             let expected = Self::locked_hash(entry);
             Self::save_artifact(dir, expected, &bytes)?;
         }
@@ -344,6 +368,14 @@ impl LockFile {
     ) -> std::io::Result<Vec<SnapshotChange>> {
         let before = Self::read_snapshot(dir, before)?;
         let after = Self::read_snapshot(dir, after)?;
+        Ok(Self::diff(&before.packages, &after.packages))
+    }
+
+    /// Compare two lockfiles by path. Machine-local overlays are not
+    /// applied: this compares exactly the files named.
+    pub fn diff_lockfiles(before: &Path, after: &Path) -> std::io::Result<Vec<SnapshotChange>> {
+        let before = Self::read_lockfile(before)?;
+        let after = Self::read_lockfile(after)?;
         Ok(Self::diff(&before.packages, &after.packages))
     }
 
@@ -682,5 +714,181 @@ future-entry = 42
         );
         std::fs::remove_dir_all(&config).unwrap();
         std::fs::remove_dir_all(&plugins).unwrap();
+    }
+
+    #[test]
+    fn interrupted_snapshot_restore_converges() {
+        let config = temp_dir("interrupted-config");
+        let plugins = temp_dir("interrupted-plugins");
+        let _ = std::fs::remove_dir_all(&config);
+        let _ = std::fs::remove_dir_all(&plugins);
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(&plugins).unwrap();
+        let original = b"\0asm\x0d\0\x01\0original".to_vec();
+        let changed = b"\0asm\x0d\0\x01\0changed".to_vec();
+        let original_hash = crate::package::sha256_hex(&original);
+        let changed_hash = crate::package::sha256_hex(&changed);
+        std::fs::write(plugins.join("demo.wasm"), &original).unwrap();
+        let mut lock = LockFile::load(&config).unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: original_hash.clone(),
+                artifact_sha256: Some(original_hash.clone()),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+        lock.save_snapshot("good", &plugins).unwrap();
+
+        std::fs::write(plugins.join("demo.wasm"), &changed).unwrap();
+        std::fs::write(plugins.join("stale.wasm"), &changed).unwrap();
+        std::fs::write(plugins.join("stale.toml"), "name = \"stale\"\n").unwrap();
+        let mut installed = crate::package::InstalledDb::load(&plugins);
+        installed.packages.insert(
+            "stale".into(),
+            crate::package::Installed {
+                version: "1.0.0".into(),
+                sha256: changed_hash.clone(),
+                url: "stale.wasm".into(),
+                git: None,
+                rev: None,
+                commit: None,
+                build: None,
+            },
+        );
+        installed.save().unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: changed_hash.clone(),
+                artifact_sha256: Some(changed_hash),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+
+        // An interrupted restore replaced demo but did not prune stale entries
+        // or update the lockfile yet.
+        std::fs::write(plugins.join("demo.wasm"), &original).unwrap();
+        LockFile::restore_snapshot(&config, &plugins, "good").unwrap();
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
+        assert!(!plugins.join("stale.wasm").exists());
+        assert!(!plugins.join("stale.toml").exists());
+        assert!(
+            !crate::package::InstalledDb::load(&plugins)
+                .packages
+                .contains_key("stale")
+        );
+        assert_eq!(
+            LockFile::load(&config).unwrap().get("demo").unwrap().sha256,
+            original_hash
+        );
+
+        let lock_bytes = std::fs::read(LockFile::path(&config)).unwrap();
+        LockFile::restore_snapshot(&config, &plugins, "good").unwrap();
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
+        assert_eq!(std::fs::read(LockFile::path(&config)).unwrap(), lock_bytes);
+
+        std::fs::remove_dir_all(&config).unwrap();
+        std::fs::remove_dir_all(&plugins).unwrap();
+    }
+
+    #[test]
+    fn diff_lockfiles_compares_named_files() {
+        let before_dir = temp_dir("diff-before");
+        let after_dir = temp_dir("diff-after");
+        let _ = std::fs::remove_dir_all(&before_dir);
+        let _ = std::fs::remove_dir_all(&after_dir);
+        std::fs::create_dir_all(&before_dir).unwrap();
+        std::fs::create_dir_all(&after_dir).unwrap();
+        let mut before = LockFile::load(&before_dir).unwrap();
+        before.set(
+            "demo",
+            LockEntry {
+                sha256: "old".into(),
+                ..Default::default()
+            },
+        );
+        before.set(
+            "old",
+            LockEntry {
+                sha256: "gone".into(),
+                ..Default::default()
+            },
+        );
+        before.save().unwrap();
+        let mut after = LockFile::load(&after_dir).unwrap();
+        after.set(
+            "demo",
+            LockEntry {
+                sha256: "new".into(),
+                ..Default::default()
+            },
+        );
+        after.set(
+            "new",
+            LockEntry {
+                sha256: "added".into(),
+                ..Default::default()
+            },
+        );
+        after.save().unwrap();
+
+        let changes =
+            LockFile::diff_lockfiles(&LockFile::path(&before_dir), &LockFile::path(&after_dir))
+                .unwrap();
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| (change.name.as_str(), change.change.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("demo", "changed"), ("new", "added"), ("old", "removed")]
+        );
+        let missing = LockFile::diff_lockfiles(
+            &before_dir.join("missing.toml"),
+            &LockFile::path(&after_dir),
+        )
+        .unwrap_err();
+        assert!(missing.to_string().contains("no lockfile at"), "{missing}");
+
+        std::fs::remove_dir_all(&before_dir).unwrap();
+        std::fs::remove_dir_all(&after_dir).unwrap();
+    }
+
+    #[test]
+    fn snapshot_saves_components_from_custom_paths() {
+        let config = temp_dir("custom-config");
+        let plugins = temp_dir("custom-plugins");
+        let custom = temp_dir("custom-load-path");
+        let _ = std::fs::remove_dir_all(&config);
+        let _ = std::fs::remove_dir_all(&plugins);
+        let _ = std::fs::remove_dir_all(&custom);
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(&custom).unwrap();
+        let bytes = b"\0asm\x0d\0\x01\0custom".to_vec();
+        let hash = crate::package::sha256_hex(&bytes);
+        std::fs::write(custom.join("demo.wasm"), &bytes).unwrap();
+
+        let mut lock = LockFile::load(&config).unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: hash.clone(),
+                artifact_sha256: Some(hash.clone()),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+        lock.save_snapshot_with("custom", |plugin| custom.join(format!("{plugin}.wasm")))
+            .unwrap();
+        assert_eq!(LockFile::artifact(&config, &hash).unwrap(), bytes);
+        assert!(!plugins.join("demo.wasm").exists());
+
+        LockFile::restore_snapshot(&config, &plugins, "custom").unwrap();
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), bytes);
+        std::fs::remove_dir_all(&config).unwrap();
+        std::fs::remove_dir_all(&plugins).unwrap();
+        std::fs::remove_dir_all(&custom).unwrap();
     }
 }

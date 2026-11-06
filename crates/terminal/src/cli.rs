@@ -55,6 +55,8 @@ Forge's own:
                     docs/plugin-api.md, \"Sharing plugins\")
   --package-snapshot-diff BEFORE AFTER [--json]
                     compare two saved package snapshots
+  --package-lockfile-diff BEFORE AFTER [--json]
+                    compare two lockfiles
   -h, --help        show this help
   -V, --version     show the version
 
@@ -92,6 +94,7 @@ pub struct CliOptions {
     pub init_directory: Option<std::path::PathBuf>,
     pub user: Option<String>,
     pub package_snapshot_diff: Option<(String, String)>,
+    pub package_lockfile_diff: Option<(std::path::PathBuf, std::path::PathBuf)>,
     pub json: bool,
 }
 
@@ -150,6 +153,11 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
                 let after = value("the second snapshot name")?;
                 opts.package_snapshot_diff = Some((before, after));
             }
+            "--package-lockfile-diff" => {
+                let before = value("the first lockfile")?;
+                let after = value("the second lockfile")?;
+                opts.package_lockfile_diff = Some((before.into(), after.into()));
+            }
             "--json" => opts.json = true,
             "--kill" => opts.kill = true,
             "--batch" => opts.batch = true,
@@ -192,8 +200,15 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
     if next_position.is_some() {
         anyhow::bail!("a +LINE[:COLUMN] location must be followed by a file\n{USAGE}");
     }
-    if opts.json && opts.package_snapshot_diff.is_none() {
-        anyhow::bail!("--json is only used with --package-snapshot-diff\n{USAGE}");
+    if opts.package_snapshot_diff.is_some() && opts.package_lockfile_diff.is_some() {
+        anyhow::bail!(
+            "--package-snapshot-diff and --package-lockfile-diff cannot be used together\n{USAGE}"
+        );
+    }
+    if opts.json && opts.package_snapshot_diff.is_none() && opts.package_lockfile_diff.is_none() {
+        anyhow::bail!(
+            "--json is only used with --package-snapshot-diff or --package-lockfile-diff\n{USAGE}"
+        );
     }
     Ok(opts)
 }
@@ -316,6 +331,33 @@ mod tests {
         );
         assert!(options.json);
         assert!(p(&["--json"]).is_err());
+    }
+
+    #[test]
+    fn package_lockfile_diff_cli_accepts_json_and_rejects_conflicts() {
+        let options = p(&[
+            "--package-lockfile-diff",
+            "before.toml",
+            "after.toml",
+            "--json",
+        ])
+        .unwrap();
+        assert_eq!(
+            options.package_lockfile_diff,
+            Some(("before.toml".into(), "after.toml".into()))
+        );
+        assert!(options.json);
+        assert!(
+            p(&[
+                "--package-snapshot-diff",
+                "before",
+                "after",
+                "--package-lockfile-diff",
+                "before.toml",
+                "after.toml"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

@@ -318,7 +318,11 @@ fn save_snapshot(app: &mut App, name: &str) {
         Ok(lock) => lock,
         Err(error) => return app.error(format!("Couldn't save package snapshot {name}: {error}")),
     };
-    match lock.save_snapshot(name, &plugins) {
+    let saved = lock.save_snapshot_with(name, |plugin| {
+        crate::declare::declared_component_path(app, plugin)
+            .unwrap_or_else(|| plugins.join(format!("{plugin}.wasm")))
+    });
+    match saved {
         Ok(()) => app.msg(format!("Saved package snapshot {name}")),
         Err(e) => app.error(format!("Couldn't save package snapshot {name}: {e}")),
     }

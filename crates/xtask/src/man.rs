@@ -142,6 +142,11 @@ const OPTIONS: &[Opt] = &[
                \\-\\-json",
     },
     Opt {
+        flags: "\\-\\-package-lockfile-diff",
+        arg: Some("BEFORE AFTER [\\-\\-json]"),
+        desc: "compare two lockfiles without starting the editor; emit JSON with \\-\\-json",
+    },
+    Opt {
         flags: "\\-h, \\-\\-help",
         arg: None,
         desc: "show the help",
@@ -244,6 +249,8 @@ mod tests {
             "\\-\\-check-plugin",
             "\\-\\-headless",
             "\\-\\-package-entry",
+            "\\-\\-package-snapshot-diff",
+            "\\-\\-package-lockfile-diff",
             "\\-\\-help",
             "\\-\\-version",
         ] {

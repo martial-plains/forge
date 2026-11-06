@@ -40,9 +40,12 @@ loading existing lockfiles. Machine-local lock overrides stay out of the
 shared lockfile. A malformed lock file is now an error naming the file and
 parse problem instead of loading as an empty lock, and Forge does not rewrite
 it. Save, list, diff and restore named package snapshots, restore locked
-artifacts from the local content store, and compare snapshots from the command
-line with optional JSON output. Restoring the lock or a snapshot now removes
-package-managed plugins that it does not list, so the installed set matches it.
+artifacts from the local content store, and compare snapshots or arbitrary
+lockfiles from the command line with optional JSON output. Snapshot saves
+include plugins loaded from a custom =load_path=. Restoring the lock or a
+snapshot now removes package-managed plugins that it does not list, so the
+installed set matches it. Repeated restores after interruption converge to the
+same files and lockfile.
 ** Package-manager extension audit
 Added the Phase 0 source audit and the phased package-manager extension
 specification. The audit records current implementation and differences from

@@ -147,35 +147,30 @@ fn main() -> anyhow::Result<()> {
         let config = forge_core::config::config_dir()
             .ok_or_else(|| anyhow::anyhow!("no config directory for package snapshots"))?;
         let changes = forge_core::LockFile::diff_snapshots(&config, before, after)?;
-        if opts.json {
-            println!("{}", serde_json::to_string_pretty(&changes)?);
-        } else if changes.is_empty() {
-            println!("No changes between package snapshots {before} and {after}");
-        } else {
-            println!("Package snapshot diff: {before} -> {after}");
-            for change in changes {
-                let revision = |entry: Option<&forge_core::LockEntry>| {
-                    entry
-                        .and_then(|e| {
-                            e.commit
-                                .as_deref()
-                                .or(e.artifact_sha256.as_deref())
-                                .or(Some(e.sha256.as_str()))
-                        })
-                        .unwrap_or("-")
-                        .chars()
-                        .take(12)
-                        .collect::<String>()
-                };
-                println!(
-                    "{} {}: {} -> {}",
-                    change.change,
-                    change.name,
-                    revision(change.before.as_ref()),
-                    revision(change.after.as_ref())
-                );
-            }
-        }
+        print_package_changes(
+            &changes,
+            opts.json,
+            &format!("No changes between package snapshots {before} and {after}"),
+            &format!("Package snapshot diff: {before} -> {after}"),
+        )?;
+        return Ok(());
+    }
+    if let Some((before, after)) = &opts.package_lockfile_diff {
+        let changes = forge_core::LockFile::diff_lockfiles(before, after)?;
+        print_package_changes(
+            &changes,
+            opts.json,
+            &format!(
+                "No changes between package lockfiles {} and {}",
+                before.display(),
+                after.display()
+            ),
+            &format!(
+                "Package lockfile diff: {} -> {}",
+                before.display(),
+                after.display()
+            ),
+        )?;
         return Ok(());
     }
     if let Some(Daemon::Background(name)) = &opts.daemon {
@@ -246,6 +241,44 @@ fn main() -> anyhow::Result<()> {
     restore_terminal()?;
     terminal.show_cursor()?;
     result
+}
+
+fn print_package_changes(
+    changes: &[forge_core::SnapshotChange],
+    json: bool,
+    empty: &str,
+    heading: &str,
+) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(changes)?);
+    } else if changes.is_empty() {
+        println!("{empty}");
+    } else {
+        println!("{heading}");
+        for change in changes {
+            let revision = |entry: Option<&forge_core::LockEntry>| {
+                entry
+                    .and_then(|e| {
+                        e.commit
+                            .as_deref()
+                            .or(e.artifact_sha256.as_deref())
+                            .or(Some(e.sha256.as_str()))
+                    })
+                    .unwrap_or("-")
+                    .chars()
+                    .take(12)
+                    .collect::<String>()
+            };
+            println!(
+                "{} {}: {} -> {}",
+                change.change,
+                change.name,
+                revision(change.before.as_ref()),
+                revision(change.after.as_ref())
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The keyboard protocol Forge asks for, if the terminal has it: with

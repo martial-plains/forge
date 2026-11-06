@@ -920,7 +920,8 @@ shared entries by plugin name. Keep machine-specific changes there rather
 than changing the shared lockfile.
 
 - `M-x package-snapshot-save` saves the shared lock and its verified
-  installed artifacts under a name.
+  installed artifacts under a name, including components loaded from a
+  custom `load_path`.
 - `M-x package-snapshot-list`, `package-snapshot-diff` and
   `package-snapshot-restore` list, compare and restore saved snapshots.
   Restoring a snapshot also removes package-managed plugins installed
@@ -930,9 +931,12 @@ than changing the shared lockfile.
   artifact hash differs. If an artifact is not available locally, restore
   stops with an error rather than resolving a different version. It also
   removes package-managed plugins that `forge-lock.toml` does not list;
-  hand-copied plugins are left alone.
+  hand-copied plugins are left alone. A rerun after an interrupted restore
+  converges to the same files and lockfile.
 - `forge --package-snapshot-diff BEFORE AFTER --json` compares snapshots
   without starting the editor and emits JSON.
+- `forge --package-lockfile-diff BEFORE AFTER --json` compares two
+  lockfiles by path, without local overlays, and emits JSON.
 
 ## Limits
 

@@ -74,6 +74,12 @@ run the editor without a terminal and print the screen (for testing plugins end 
 .B \-\-package-entry \fIFILE.wasm\fR
 print a package index entry for a plugin (see docs/plugin-api.md, "Sharing plugins")
 .TP
+.B \-\-package-snapshot-diff \fIBEFORE AFTER [\-\-json]\fR
+compare saved package snapshots without starting the editor; emit JSON with \-\-json
+.TP
+.B \-\-package-lockfile-diff \fIBEFORE AFTER [\-\-json]\fR
+compare two lockfiles without starting the editor; emit JSON with \-\-json
+.TP
 .B \-h, \-\-help
 show the help
 .TP

@@ -40,6 +40,159 @@ fn malformed_lock_is_reported_and_not_rewritten() {
 }
 
 #[test]
+fn snapshot_save_reads_components_from_load_path() {
+    let config = temp_dir("snapshot-load-path");
+    let custom = temp_dir("snapshot-load-dir");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::create_dir_all(&custom).unwrap();
+    let bytes = b"\0asm\x0d\0\x01\0custom".to_vec();
+    let hash = forge_core::package::sha256_hex(&bytes);
+    std::fs::write(custom.join("demo.wasm"), &bytes).unwrap();
+    let init = config.join("init.rhai");
+    std::fs::write(
+        &init,
+        format!(
+            "use_package(\"demo\", #{{ load_path: {:?} }});\n",
+            custom.display().to_string()
+        ),
+    )
+    .unwrap();
+    let mut lock = LockFile::load(&config).unwrap();
+    lock.set(
+        "demo",
+        LockEntry {
+            sha256: hash.clone(),
+            artifact_sha256: Some(hash.clone()),
+            ..Default::default()
+        },
+    );
+    lock.save().unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .arg("--headless")
+        .arg("--init")
+        .arg(&init)
+        .args([
+            "--keys",
+            "M-x",
+            "--type",
+            "package-snapshot-save",
+            "--keys",
+            "RET",
+            "--type",
+            "custom",
+            "--keys",
+            "RET",
+        ])
+        .env("FORGE_CONFIG_DIR", &config)
+        .env("FORGE_CACHE_DIR", config.join("cache"))
+        .env("FORGE_STATE_DIR", config.join("state"))
+        .env("FORGE_DATA_DIR", config.join("data"))
+        .output()
+        .unwrap();
+    let output_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{output_text}");
+    assert!(
+        config.join("package-snapshots/custom.toml").exists(),
+        "{output_text}"
+    );
+    assert_eq!(LockFile::artifact(&config, &hash).unwrap(), bytes);
+
+    std::fs::remove_dir_all(&config).unwrap();
+    std::fs::remove_dir_all(&custom).unwrap();
+}
+
+#[test]
+fn lockfile_diff_reports_changes_and_json() {
+    let before_dir = temp_dir("lockfile-diff-before");
+    let after_dir = temp_dir("lockfile-diff-after");
+    std::fs::create_dir_all(&before_dir).unwrap();
+    std::fs::create_dir_all(&after_dir).unwrap();
+    let mut before = LockFile::load(&before_dir).unwrap();
+    before.set(
+        "demo",
+        LockEntry {
+            commit: Some("aaaaaaaaaaaaaaaa".into()),
+            sha256: "before".into(),
+            ..Default::default()
+        },
+    );
+    before.set(
+        "old",
+        LockEntry {
+            commit: Some("dddddddddddddddd".into()),
+            sha256: "old".into(),
+            ..Default::default()
+        },
+    );
+    before.save().unwrap();
+    let mut after = LockFile::load(&after_dir).unwrap();
+    after.set(
+        "demo",
+        LockEntry {
+            commit: Some("bbbbbbbbbbbbbbbb".into()),
+            sha256: "after".into(),
+            ..Default::default()
+        },
+    );
+    after.set(
+        "new",
+        LockEntry {
+            commit: Some("cccccccccccccccc".into()),
+            sha256: "new".into(),
+            ..Default::default()
+        },
+    );
+    after.save().unwrap();
+    let before_path = LockFile::path(&before_dir);
+    let after_path = LockFile::path(&after_dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .arg("--package-lockfile-diff")
+        .arg(&before_path)
+        .arg(&after_path)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(stdout.contains("Package lockfile diff:"), "{stdout}");
+    assert!(
+        stdout.contains("changed demo: aaaaaaaaaaaa -> bbbbbbbbbbbb"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("added new: - -> cccccccccccc"), "{stdout}");
+    assert!(
+        stdout.contains("removed old: dddddddddddd -> -"),
+        "{stdout}"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .arg("--package-lockfile-diff")
+        .arg(&before_path)
+        .arg(&after_path)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let changes: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let changes = changes.as_array().unwrap();
+    assert_eq!(changes.len(), 3);
+    let demo = changes
+        .iter()
+        .find(|change| change["name"] == "demo")
+        .unwrap();
+    assert_eq!(demo["change"], "changed");
+    assert_eq!(demo["after"]["commit"], "bbbbbbbbbbbbbbbb");
+
+    std::fs::remove_dir_all(&before_dir).unwrap();
+    std::fs::remove_dir_all(&after_dir).unwrap();
+}
+
+#[test]
 fn package_restore_removes_installed_packages_absent_from_lock() {
     let dir = temp_dir("restore-prune");
     let plugins = dir.join("plugins");
@@ -100,6 +253,29 @@ fn package_restore_removes_installed_packages_absent_from_lock() {
     let installed = InstalledDb::load(&plugins);
     assert!(installed.packages.contains_key("keep"));
     assert!(!installed.packages.contains_key("stale"));
+
+    // A second run, as after an interrupted restore, changes nothing.
+    let packages = std::fs::read(plugins.join("packages.toml")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_forge"))
+        .arg("--batch")
+        .arg("-q")
+        .arg("--init-directory")
+        .arg(&dir)
+        .args(["-f", "package-restore"])
+        .env("FORGE_DATA_DIR", dir.join("data"))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("all resolved commits and artifact hashes already matched"),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read(plugins.join("keep.wasm")).unwrap(), kept);
+    assert_eq!(
+        std::fs::read(plugins.join("packages.toml")).unwrap(),
+        packages
+    );
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

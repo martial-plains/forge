@@ -17,7 +17,7 @@ use crate::app::App;
 use crate::plugins;
 use forge_core::declare::order;
 use forge_core::{LockCapabilities, LockEntry, LockFile, Manifest, PluginUse};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The plugin names init.rhai declared, in load order (`after` first).
 pub fn declared_order(app: &App) -> Vec<String> {
@@ -63,15 +63,9 @@ pub fn resolve(app: &mut App) {
         let Some(u) = by_name.get(name.as_str()) else {
             continue;
         };
-        let Some(dir) = forge_core::config::plugin_dir() else {
+        let Some(path) = component_path(u) else {
             break;
         };
-        let from_load_path = u.load_path.iter().find_map(|d| {
-            let d = forge_core::fileops::expand_file_name(d, None);
-            let p = std::path::PathBuf::from(d).join(format!("{name}.wasm"));
-            p.exists().then_some(p)
-        });
-        let path = from_load_path.unwrap_or_else(|| dir.join(format!("{name}.wasm")));
         if path.exists() {
             load_declared(app, u, &path);
             // Recorded one at a time: an install calls `record` itself, so
@@ -81,6 +75,23 @@ pub fn resolve(app: &mut App) {
             install(app, u);
         }
     }
+}
+
+/// Where a declaration's component lives: a matching `load_path`, else
+/// `NAME.wasm` in the plugins directory.
+fn component_path(u: &PluginUse) -> Option<PathBuf> {
+    let from_load_path = u.load_path.iter().find_map(|dir| {
+        let dir = forge_core::fileops::expand_file_name(dir, None);
+        let path = PathBuf::from(dir).join(format!("{}.wasm", u.name));
+        path.exists().then_some(path)
+    });
+    let dir = forge_core::config::plugin_dir()?;
+    Some(from_load_path.unwrap_or_else(|| dir.join(format!("{}.wasm", u.name))))
+}
+
+/// Where a declared plugin's component lives, if `init.rhai` declares it.
+pub(crate) fn declared_component_path(app: &App, name: &str) -> Option<PathBuf> {
+    declared(app, name).and_then(|u| component_path(&u))
 }
 
 /// After installing a declared plugin, record it in the lock file so the
