@@ -271,6 +271,11 @@ forge.command.create("two-space-indent", || {
 
 // Plugins in ~/.config/forge/plugins/ load at startup. Permissions granted
 // here aren't asked for; a plugin gets these plus any you grant when asked.
+// M-x plugin-profile shows how long each plugin spent in the cache, compiling,
+// initializing, starting lazily and in each call; forge --profile-startup
+// prints the same report from the command line (--json for JSON). This warns
+// in *Messages* when plugin startup takes longer than the budget:
+// forge.opt["startup_budget_ms"] = 250;
 // forge.plugin.grant("spell", #{
 //   directories: ["~/dict", #{ path: "~/.cache/spell", write: true }],
 //   network: false,
@@ -295,7 +300,9 @@ forge.command.create("two-space-indent", || {
 // M-x package-snapshot-save/list/diff/restore manage named lock snapshots,
 // including plugins loaded from a custom load_path; M-x package-restore
 // reinstalls locked bytes from Forge's local artifact store and removes
-// package-managed plugins that the lock does not list.
+// package-managed plugins that the lock does not list. M-x package-log shows
+// package fetch/build/install/upgrade/rollback timings, and
+// package-log-export writes them as JSON lines.
 //
 // use_package is forge.plugin.declare plus `bind` and `init`: `bind` binds
 // keys (a command no one has defined yet makes its key load the plugin),

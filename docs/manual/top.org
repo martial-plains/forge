@@ -77,3 +77,29 @@ build commands without modifying plugin or data files. A failed build,
 smoke test, or lock update restores the previous installed artifact. Mark a
 declaration with =freeze: true= to exclude it from automatic upgrades; =pin=
 also freezes it and selects the pinned Git revision.
+
+~M-x package-log~ shows structured fetch, build, install, upgrade, and
+rollback records with timings, source and revision details, and errors.
+~M-x package-log-export~ writes the same records as JSON lines. The log is
+rotated in the state directory, and credentials in URLs, query strings, and
+authentication headers are redacted. Environment values are never recorded.
+
+** Plugin startup profiling
+   :PROPERTIES:
+   :ID:       plugin-profiling
+   :CUSTOM_ID: plugin-profiling
+   :SUMMARY:  Find slow plugins and enforce a startup budget
+   :END:
+
+~M-x plugin-profile~ shows where plugin startup and later calls spent their
+time: per plugin, the cache lookup, a compile on a cache miss, =init=, lazy
+start, and each command, event, answer, completion and process/HTTP callback
+(count, total and longest). =forge --profile-startup= prints the same report
+from the command line and exits, and =--json= makes it machine-readable.
+
+Set ~forge.opt["startup_budget_ms"]~ in =init.rhai= to be warned in
+=*Messages*= when plugin startup takes longer. Batch and headless runs fail
+with a nonzero exit status when the budget is exceeded; so does
+=forge --profile-startup= for a report over budget. Profiling is off by
+default, and while it is off the cost is one atomic flag check per call: no
+clock read, lock or label allocation.

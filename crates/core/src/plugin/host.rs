@@ -19,6 +19,7 @@ use crate::app::{BufferId, Editor};
 use crate::events::EventTracker;
 use crate::keymap::Scope;
 use crate::permissions::{Grants, Manifest};
+use crate::plugin::profile::{Clock, Part, ProfileReport, Profiler, SystemClock};
 use crate::plugin::runtime::{
     CallResult, EVENT_KINDS, Effect, Inspection, LoadedPlugin, LogLine, PluginEvent, PluginMonitor,
     PluginRuntime, event_kind, wit_selection,
@@ -27,7 +28,7 @@ use crate::plugin::summary::{self, Summary};
 use anyhow::Result;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::SystemTime;
 
 /// A call waiting for a plugin that is busy in the background.
@@ -251,6 +252,7 @@ fn cleanup_plugin(
 
 pub struct PluginHost {
     runtime: PluginRuntime,
+    profiler: Profiler,
     plugins: BTreeMap<String, LoadedPlugin>,
     dormant: BTreeMap<String, Dormant>,
     sources: BTreeMap<String, Source>,
@@ -272,8 +274,14 @@ impl PluginHost {
     /// and summaries in `DIR/plugins`, so unchanged plugins start fast or
     /// lazily. The directory is only a cache: deleting it is always safe.
     pub fn with_cache_dir(dir: Option<&Path>) -> Result<Self> {
+        Self::with_cache_dir_and_clock(dir, Arc::new(SystemClock::new()))
+    }
+
+    /// A host whose profile timings use `clock`, for deterministic tests.
+    pub fn with_cache_dir_and_clock(dir: Option<&Path>, clock: Arc<dyn Clock>) -> Result<Self> {
         Ok(Self {
             runtime: PluginRuntime::with_cache(dir.map(|d| d.join("wasmtime")).as_deref())?,
+            profiler: Profiler::with_clock(clock),
             plugins: BTreeMap::new(),
             dormant: BTreeMap::new(),
             sources: BTreeMap::new(),
@@ -282,6 +290,34 @@ impl PluginHost {
             summaries: dir.map(|d| d.join("plugins")),
             away: BTreeMap::new(),
         })
+    }
+
+    /// Start collecting per-plugin timings.
+    pub fn enable_profiling(&self) {
+        self.profiler.enable();
+    }
+
+    pub fn profiling_enabled(&self) -> bool {
+        self.profiler.is_enabled()
+    }
+
+    /// Start the plugin-startup stopwatch.
+    pub fn begin_startup_profile(&self) {
+        self.profiler.begin_startup();
+    }
+
+    /// Stop the plugin-startup stopwatch.
+    pub fn finish_startup_profile(&self) {
+        self.profiler.finish_startup();
+    }
+
+    pub fn startup_profile_total(&self) -> Option<std::time::Duration> {
+        self.profiler.startup_total()
+    }
+
+    /// All timings so far, with an optional startup budget.
+    pub fn profile_report(&self, budget: Option<std::time::Duration>) -> ProfileReport {
+        self.profiler.report(budget)
     }
 
     /// Every plugin, started or not.
@@ -351,10 +387,24 @@ impl PluginHost {
     /// loading, so the frontend can show what the plugin wants and ask.
     pub fn inspect(&self, file: PluginFile) -> Result<PluginRequest> {
         let path = file.path.clone();
-        let inspection = self
-            .runtime
-            .inspect(&file.name, &file.bytes)
-            .map_err(|e| e.context(format!("loading {}", path.display())))?;
+        let mut timer = self.profiler.timer(&file.name, Part::Compile, "inspect");
+        // Only ask the cache for its counters when someone is listening.
+        let before = timer.as_ref().and_then(|_| self.runtime.cache_counts());
+        let inspected = self.runtime.inspect(&file.name, &file.bytes);
+        if let Some(timer) = timer.as_mut() {
+            let after = self.runtime.cache_counts();
+            let hit = match (before, after) {
+                (Some((hits, misses)), Some((hits2, misses2))) => {
+                    hits2 == hits && misses2 == misses
+                }
+                _ => false,
+            };
+            if hit {
+                timer.set_part(Part::CacheLookup);
+            }
+        }
+        drop(timer);
+        let inspection = inspected.map_err(|e| e.context(format!("loading {}", path.display())))?;
         let digest = summary::digest(&file.bytes);
         Ok(PluginRequest {
             inspection,
@@ -372,6 +422,7 @@ impl PluginHost {
     /// not have? The component is compiled and type-checked against the
     /// linker; no plugin code runs.
     pub fn compatibility_problem(&self, name: &str, bytes: &[u8]) -> Result<Option<String>> {
+        let _timer = self.profiler.timer(name, Part::Compile, "compatibility");
         let inspection = self.runtime.inspect(name, bytes)?;
         Ok(self.runtime.compatibility_problem(&inspection))
     }
@@ -495,6 +546,7 @@ impl PluginHost {
         let Some(d) = self.dormant.remove(name) else {
             return self.plugins.contains_key(name);
         };
+        let _timer = self.profiler.timer(name, Part::LazyStart, "activate");
         d.summary.uninstall(editor, name);
         let Some(path) = self.sources.get(name).map(|s| s.path.clone()) else {
             return false;
@@ -548,7 +600,7 @@ impl PluginHost {
         self.start_tracking(editor);
         self.plugins.insert(name.clone(), plugin);
         let buffers = editor.buffer_ids().len();
-        let r = self.call(editor, &name, &mut out, |p| p.call_init());
+        let r = self.call(editor, &name, &mut out, Part::Init, "", |p| p.call_init());
         if let (Some(Ok(())), Some((_, digest))) = (&r, &request.source) {
             // Only registering things: next time it can start lazily.
             let quiet = out.effects.is_empty()
@@ -680,9 +732,12 @@ impl PluginHost {
         editor: &mut Editor,
         name: &str,
         out: &mut Outcome,
+        part: Part,
+        label: &str,
         f: impl FnOnce(&mut LoadedPlugin) -> CallResult,
     ) -> Option<std::result::Result<(), String>> {
         let p = self.plugins.get_mut(name)?;
+        let _timer = self.profiler.timer(name, part, label);
         p.store.data_mut().editor = Some(std::mem::take(editor));
         let r = f(p);
         let st = p.store.data_mut();
@@ -775,11 +830,24 @@ impl PluginHost {
         }
         match call {
             Queued::Command(c, prefix) => {
-                self.call(editor, name, out, |p| p.call_run_command(&c, prefix))
+                let label = self.profiler.label("command", &c);
+                self.call(editor, name, out, Part::Call, &label, |p| {
+                    p.call_run_command(&c, prefix)
+                })
             }
-            Queued::Event(e) => self.call(editor, name, out, |p| p.call_on_event(e)),
+            Queued::Event(e) => {
+                let label = self
+                    .profiler
+                    .label("event", crate::events::event_name(&e).0);
+                self.call(editor, name, out, Part::Call, &label, |p| {
+                    p.call_on_event(e)
+                })
+            }
             Queued::Answer(r, a) => {
-                self.call(editor, name, out, |p| p.call_on_answer(r, a.as_deref()))
+                let label = self.profiler.label("answer", &r.to_string());
+                self.call(editor, name, out, Part::Call, &label, |p| {
+                    p.call_on_answer(r, a.as_deref())
+                })
             }
         };
     }
@@ -800,6 +868,13 @@ impl PluginHost {
         let remaps = plugin.store.data().remaps.clone();
         let snapshot = editor.clone();
         let base = crate::background::base_of(&snapshot);
+        let profiler = self.profiler.clone();
+        let profiled_name = name.to_string();
+        let label = match &call {
+            Queued::Command(c, _) => profiler.label("command", c),
+            Queued::Event(e) => profiler.label("event", crate::events::event_name(e).0),
+            Queued::Answer(r, _) => profiler.label("answer", &r.to_string()),
+        };
         let (tx, rx) = mpsc::channel();
         // The plugin goes into the thread through a slot, so a thread that
         // never starts leaves it here to be put back.
@@ -818,6 +893,7 @@ impl PluginHost {
                     return;
                 };
                 plugin.store.data_mut().editor = Some(snapshot);
+                let _timer = profiler.timer(&profiled_name, Part::Call, &label);
                 let result = match call {
                     Queued::Command(c, prefix) => plugin.call_run_command(&c, prefix),
                     Queued::Event(e) => plugin.call_on_event(e),
@@ -1069,8 +1145,15 @@ impl PluginHost {
             let logs: Vec<LogLine> = std::mem::take(&mut p.store.data_mut().logs);
             out.logs.extend(logs.into_iter().map(|l| (name.clone(), l)));
             for ev in events {
+                let label = match ev {
+                    crate::process::ProcessEvent::Output(..) => "process:output",
+                    crate::process::ProcessEvent::Stderr(..) => "process:stderr",
+                    crate::process::ProcessEvent::Exited(..) => "process:exited",
+                };
                 if self
-                    .call(editor, &name, &mut out, |p| p.call_process_event(ev))
+                    .call(editor, &name, &mut out, Part::Call, label, |p| {
+                        p.call_process_event(ev)
+                    })
                     .is_none()
                 {
                     break; // crashed and unloaded
@@ -1102,7 +1185,9 @@ impl PluginHost {
             let events = p.poll_http_events();
             for ev in events {
                 if self
-                    .call(editor, &name, &mut out, |p| p.call_http_event(ev))
+                    .call(editor, &name, &mut out, Part::Call, "http:response", |p| {
+                        p.call_http_event(ev)
+                    })
                     .is_none()
                 {
                     break; // crashed and unloaded
@@ -1128,11 +1213,18 @@ impl PluginHost {
             return (Vec::new(), out);
         }
         let mut notes = Vec::new();
-        self.call(editor, &plugin, &mut out, |p| {
-            let (r, n) = p.call_annotate(category, candidates);
-            notes = n;
-            r
-        });
+        self.call(
+            editor,
+            &plugin,
+            &mut out,
+            Part::Call,
+            "completion:annotate",
+            |p| {
+                let (r, n) = p.call_annotate(category, candidates);
+                notes = n;
+                r
+            },
+        );
         notes.resize(candidates.len(), String::new());
         (notes, out)
     }
@@ -1153,11 +1245,18 @@ impl PluginHost {
             return (Vec::new(), out);
         }
         let mut groups = Vec::new();
-        self.call(editor, &plugin, &mut out, |p| {
-            let (r, g) = p.call_group(category, candidates);
-            groups = g;
-            r
-        });
+        self.call(
+            editor,
+            &plugin,
+            &mut out,
+            Part::Call,
+            "completion:group",
+            |p| {
+                let (r, g) = p.call_group(category, candidates);
+                groups = g;
+                r
+            },
+        );
         groups.resize(candidates.len(), String::new());
         (groups, out)
     }
@@ -1185,9 +1284,14 @@ impl PluginHost {
         if self.away.contains_key(&plugin) || !self.activate(editor, &plugin, &mut out) {
             return out;
         }
-        self.call(editor, &plugin, &mut out, |p| {
-            p.call_complete(request, source, buffer.0, point)
-        });
+        self.call(
+            editor,
+            &plugin,
+            &mut out,
+            Part::Call,
+            "completion:complete",
+            |p| p.call_complete(request, source, buffer.0, point),
+        );
         out
     }
 
@@ -1205,10 +1309,17 @@ impl PluginHost {
             if self.away.contains_key(&name) || !self.activate(editor, &name, &mut out) {
                 continue;
             }
-            self.call(editor, &name, &mut out, |p| {
-                p.call_commit(candidate, status);
-                Ok(Ok(()))
-            });
+            self.call(
+                editor,
+                &name,
+                &mut out,
+                Part::Call,
+                "completion:commit",
+                |p| {
+                    p.call_commit(candidate, status);
+                    Ok(Ok(()))
+                },
+            );
         }
         out
     }
@@ -1232,10 +1343,17 @@ impl PluginHost {
                 continue;
             }
             let selection = selection.clone();
-            self.call(editor, &name, &mut out, |p| {
-                p.call_resolve_location(selection);
-                Ok(Ok(()))
-            });
+            self.call(
+                editor,
+                &name,
+                &mut out,
+                Part::Call,
+                "completion:resolve-location",
+                |p| {
+                    p.call_resolve_location(selection);
+                    Ok(Ok(()))
+                },
+            );
         }
         out
     }
@@ -2184,6 +2302,71 @@ mod tests {
             .expect("found");
         assert_eq!(m.name.as_deref(), Some("inner"));
         assert!(Manifest::embedded(&component(DEMO)).unwrap().is_none());
+    }
+
+    #[test]
+    fn profiling_counts_init_lazy_starts_and_calls() {
+        let dir = tempdir("profile");
+        let wasm = dir.join("demo.wasm");
+        std::fs::write(&wasm, component(DEMO)).unwrap();
+        let clock = Arc::new(crate::plugin::profile::ManualClock::new());
+
+        // A normal load runs init, then each command call is counted by name.
+        let mut ed = editor();
+        let mut host =
+            PluginHost::with_cache_dir_and_clock(Some(&dir.join("cache")), clock.clone()).unwrap();
+        host.enable_profiling();
+        host.begin_startup_profile();
+        host.load_file(&mut ed, &wasm, &Grants::default())
+            .0
+            .unwrap();
+        host.finish_startup_profile();
+        for _ in 0..2 {
+            host.run_command(&mut ed, "demo-greet", None);
+        }
+        let report = host.profile_report(None);
+        let demo = report
+            .plugins
+            .iter()
+            .find(|p| p.plugin == "demo")
+            .expect("demo was profiled");
+        assert_eq!(demo.init.count, 1);
+        let greet = &demo.calls["command:demo-greet"];
+        assert_eq!(greet.count, 2);
+        assert_eq!(report.startup_ns, Some(0), "the manual clock did not move");
+
+        // A lazy plugin records its activation and the call that woke it.
+        let mut ed = editor();
+        let mut host =
+            PluginHost::with_cache_dir_and_clock(Some(&dir.join("lazy-cache")), clock).unwrap();
+        host.enable_profiling();
+        host.load_lazy(
+            &mut ed,
+            PluginFile::read(&wasm).unwrap(),
+            &Grants::default(),
+            &["demo-greet".to_string()],
+            &[],
+            &[],
+        )
+        .unwrap();
+        host.run_command(&mut ed, "demo-greet", None);
+        let report = host.profile_report(None);
+        let demo = report
+            .plugins
+            .iter()
+            .find(|p| p.plugin == "demo")
+            .expect("demo was profiled");
+        assert_eq!(demo.lazy_start.count, 1);
+        assert_eq!(demo.init.count, 1);
+        assert_eq!(demo.calls["command:demo-greet"].count, 1);
+
+        // Off is really off: no plugin enters the map.
+        let mut host = PluginHost::with_cache_dir(Some(&dir.join("off-cache"))).unwrap();
+        host.load_file(&mut ed, &wasm, &Grants::default())
+            .0
+            .unwrap();
+        assert!(host.profile_report(None).plugins.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

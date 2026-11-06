@@ -60,6 +60,7 @@ pub fn run(opts: Options) -> bool {
         files: Vec::new(),
         plugin_files: Vec::new(),
         graphical: false,
+        profile_startup: false,
     };
     let mut app = match crate::start(&start) {
         Ok(a) => a,
@@ -72,6 +73,7 @@ pub fn run(opts: Options) -> bool {
     // Compiled plugins are cached as usual, so repeated runs are quick.
     app.plugin_cache = forge_core::config::cache_dir();
     let mut ok = true;
+    let mut profiling_startup = false;
     for step in opts.steps {
         match step {
             Step::Init(path) => {
@@ -79,6 +81,9 @@ pub fn run(opts: Options) -> bool {
                 // Its hooks and commands wait for the plugins, as at startup:
                 // they run after a --plugin step or a key.
                 app.load_init_file();
+                if app.startup_budget.is_some() && !profiling_startup {
+                    profiling_startup = plugins::begin_startup_profile(&mut app);
+                }
             }
             Step::Plugin(path) => {
                 ok &= load(&mut app, &path);
@@ -142,11 +147,14 @@ pub fn run(opts: Options) -> bool {
             Step::Screen => print_screen(&mut app, opts.width, opts.height),
         }
     }
+    if profiling_startup {
+        plugins::finish_startup_profile(&mut app);
+    }
     println!("echo: {}", forge_editor::ui::echo_line(&app).0);
     let b = app.buf_ref();
     let p = b.point();
     println!("buffer: {} at {}:{}", b.name(), p.line + 1, p.col);
-    ok
+    ok && !app.startup_budget_exceeded
 }
 
 fn load(app: &mut App, path: &str) -> bool {

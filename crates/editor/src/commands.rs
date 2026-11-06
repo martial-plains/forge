@@ -955,6 +955,14 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     forge_docs::CommandDoc::new("package-install", "Install a plugin from the package index (checked against its sha256),").body("then load it."),
     forge_docs::CommandDoc::line("package-list-packages", "Same as list-packages."),
     forge_docs::CommandDoc::line(
+        "package-log",
+        "Show timings for package fetches, builds, installs, upgrades, and rollbacks.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-log-export",
+        "Export the package operation log as JSON lines, then choose a file.",
+    ),
+    forge_docs::CommandDoc::line(
         "package-manager",
         "Browse declared, installed, and indexed plugins interactively.",
     ),
@@ -1044,6 +1052,8 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
         "Rebuild changed Git packages (C-u: show plan).",
     ),
     forge_docs::CommandDoc::new("plugin-bisect", "Find the plugin that causes a problem by disabling halves of the loaded plugins,").body("asking after each step whether the problem still happens. Dependencies stay with the plugins that require them, and the original set is restored when the search ends, is aborted (C-g), or Forge is restarted."),
+    forge_docs::CommandDoc::new("plugin-profile", "Show how long each plugin took to look up in the cache, compile, initialize,").body("start lazily, and run each command or callback. Also available as `forge --profile-startup` (with `--json`); `forge.opt[\"startup_budget_ms\"]` warns in *Messages* when plugin startup takes longer."),
+    forge_docs::CommandDoc::new("plugin-repro", "Write a directory with a minimal init.rhai, lockfile, components and manifests,").body("the Forge and system versions, and a README. It includes the named plugin and its transitive `requires` dependencies, but not grants, credentials, sessions, or the rest of init.rhai. Secret-looking config values and URL credentials are redacted."),
     forge_docs::CommandDoc::line(
         "point-to-register",
         "Save point in a register, for C-x r j. It follows later edits.",
@@ -2929,6 +2939,7 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         }
         "list-plugins" => plugins::list(app),
         "plugin-bisect" => crate::plugin_bisect::start(app),
+        "plugin-profile" => crate::startup_profile::show(app),
         "list-projects" => crate::project::list(app),
         "eval-expression" => app.prompt("Eval: ", Purpose::EvalRhai),
         "eval-rhai-last-sexp" => plugins::eval_rhai_sexp_before(app, false),

@@ -22,7 +22,10 @@ windows and keymaps, configured with Rhai and extended by WebAssembly plugins,
 with SDKs for Rust, JavaScript/TypeScript, Python, C and Lua.
 Everything you can do at the keyboard is a named *command*, so commands can
 be bound to keys, run by name, documented, and remapped without touching the
-code that implements them.
+code that implements them. Plugins can be profiled while they start and run;
+see [[*Plugin startup profiling][Plugin startup profiling]]. Package fetches,
+builds, installs, upgrades and rollbacks are recorded in a structured log; see
+[[*Package operation log][Package operation log]].
 
 This manual is the long-form documentation. It explains concepts and shows
 complete workflows; the built-in help answers narrower questions, and every

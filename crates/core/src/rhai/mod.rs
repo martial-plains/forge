@@ -134,6 +134,7 @@ pub const NUMBERS: &[&str] = &[
     "uniquify_min_dir_components",
     "left_margin_width",
     "right_margin_width",
+    "startup_budget_ms",
 ];
 
 /// Text options (a string, or a list of them): numbered backups, and the
@@ -378,6 +379,7 @@ pub const OPTIONS: &[&str] = &[
     "paragraph_separate",
     "paragraph_start",
     "plugin_auto_reload",
+    "startup_budget_ms",
     "prefix_help_delay",
     "recentf",
     "save_interprogram_paste_before_kill",

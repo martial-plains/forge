@@ -13,6 +13,7 @@ use crate::app::App;
 use crate::minibuffer::{Choice, Purpose};
 use forge_core::LockFile;
 use forge_core::package::{self, Index, InstalledDb, Package};
+use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -35,12 +36,14 @@ enum Fetch {
     Index {
         location: String,
         file: PathBuf,
+        started: Timer,
     },
     Package {
         package: Package,
         file: PathBuf,
         upgrade: bool,
         force: bool,
+        started: Timer,
     },
 }
 
@@ -50,6 +53,7 @@ pub(crate) struct UpdateTransaction {
     batch: bool,
     journal: Option<forge_core::package_journal::Journal>,
     blocked: Option<String>,
+    started: Option<Timer>,
 }
 
 fn update_paths(app: &App) -> Result<(PathBuf, PathBuf, PathBuf), String> {
@@ -92,6 +96,9 @@ pub(crate) fn begin_update(app: &mut App, operation: &str, batch: bool) -> Resul
     if app.packages.update.operation.is_none() {
         app.packages.update.operation = Some(operation.to_string());
     }
+    if app.packages.update.started.is_none() {
+        app.packages.update.started = Some(Timer::start());
+    }
     app.packages.update.batch |= batch;
     Ok(())
 }
@@ -104,6 +111,9 @@ pub(crate) fn prepare_update(app: &mut App, name: &str) -> Result<(), String> {
     }
     if app.packages.update.operation.is_none() {
         app.packages.update.operation = Some("upgrade".to_string());
+    }
+    if app.packages.update.started.is_none() {
+        app.packages.update.started = Some(Timer::start());
     }
     if app.packages.update.journal.is_none() {
         let (data, config, plugins) = update_paths(app)?;
@@ -127,28 +137,101 @@ pub(crate) fn prepare_update(app: &mut App, name: &str) -> Result<(), String> {
 }
 
 pub(crate) fn commit_update(app: &mut App) -> Result<(), String> {
+    let names = app
+        .packages
+        .update
+        .journal
+        .as_ref()
+        .map(forge_core::package_journal::Journal::names)
+        .unwrap_or_default();
     if let Some(mut journal) = app.packages.update.journal.take()
         && let Err(error) = journal.commit()
     {
         app.packages.update.journal = Some(journal);
         return Err(error);
     }
+    let status = if names.is_empty() {
+        Status::Unchanged
+    } else {
+        Status::Ok
+    };
+    log_update_outcome(app, status, None, &names);
     app.packages.update.operation = None;
     app.packages.update.batch = false;
     Ok(())
 }
 
 pub(crate) fn rollback_update(app: &mut App) -> Result<(), String> {
-    if let Some(mut journal) = app.packages.update.journal.take()
-        && let Err(error) = journal.rollback()
-    {
-        app.packages.update.journal = Some(journal);
-        app.packages.update.blocked = Some(error.clone());
-        return Err(error);
+    let names = app
+        .packages
+        .update
+        .journal
+        .as_ref()
+        .map(forge_core::package_journal::Journal::names)
+        .unwrap_or_default();
+    if app.packages.update.journal.is_none() {
+        app.packages.update.operation = None;
+        app.packages.update.batch = false;
+        app.packages.update.started = None;
+        return Ok(());
     }
-    app.packages.update.operation = None;
-    app.packages.update.batch = false;
-    Ok(())
+    let timer = Timer::start();
+    let result = match app.packages.update.journal.take() {
+        Some(mut journal) => match journal.rollback() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                app.packages.update.journal = Some(journal);
+                app.packages.update.blocked = Some(error.clone());
+                Err(error)
+            }
+        },
+        None => Ok(()),
+    };
+    let status = if result.is_ok() {
+        Status::Ok
+    } else {
+        Status::Failed
+    };
+    let mut event = timer
+        .finish(Operation::Rollback, status, None)
+        .detail("packages", names.join(", "));
+    if let Err(error) = &result {
+        event = event.error(error.clone());
+    }
+    crate::package_log::record(event);
+    if result.is_ok() {
+        app.packages.update.operation = None;
+        app.packages.update.batch = false;
+        app.packages.update.started = None;
+    }
+    result
+}
+
+fn log_update_outcome(app: &mut App, status: Status, error: Option<&str>, names: &[String]) {
+    let Some(timer) = app.packages.update.started.take() else {
+        return;
+    };
+    let kind = app
+        .packages
+        .update
+        .operation
+        .clone()
+        .unwrap_or_else(|| "upgrade".to_string());
+    let package = if names.len() == 1 {
+        Some(names[0].as_str())
+    } else {
+        None
+    };
+    let mut event = timer
+        .finish(Operation::Upgrade, status, package)
+        .detail("kind", kind);
+    if names.len() > 1 {
+        event = event.detail("packages", names.join(", "));
+    }
+    if let Some(error) = error {
+        event = event.error(error);
+    }
+    crate::package_log::record(event);
 }
 
 pub(crate) fn update_is_batch(app: &App) -> bool {
@@ -169,6 +252,7 @@ pub(crate) fn abort_update_message(app: &mut App, error: String) -> String {
         .as_ref()
         .map(forge_core::package_journal::Journal::names)
         .unwrap_or_default();
+    log_update_outcome(app, Status::Failed, Some(&error), &reload);
     let rollback = rollback_update(app);
     app.packages.upgrade_queue.clear();
     app.packages.pending_upgrade = None;
@@ -251,6 +335,56 @@ fn db(app: &App) -> Option<InstalledDb> {
     app.packages.dir().map(|d| InstalledDb::load(&d))
 }
 
+fn index_source(location: &str) -> Source {
+    Source::new(SourceKind::Index).location(location)
+}
+
+fn package_source(package: &Package) -> Source {
+    let source = if package::local_path(&package.url).is_some() {
+        Source::new(SourceKind::Path).location(&package.url)
+    } else {
+        Source::new(SourceKind::Url).location(&package.url)
+    };
+    match &package.rev {
+        Some(revision) => source.revision(revision),
+        None => source,
+    }
+}
+
+fn log_fetch<T>(timer: Timer, package: Option<&str>, source: Source, result: &Result<T, String>) {
+    let status = if result.is_ok() {
+        Status::Ok
+    } else {
+        Status::Failed
+    };
+    let mut event = timer
+        .finish(Operation::Fetch, status, package)
+        .source(source);
+    if let Err(error) = result {
+        event = event.error(error.clone());
+    }
+    crate::package_log::record(event);
+}
+
+fn log_package_fetch(timer: Timer, package: &Package, result: &Result<Vec<u8>, String>) {
+    let status = if result.is_ok() {
+        Status::Ok
+    } else {
+        Status::Failed
+    };
+    let mut event = timer
+        .finish(Operation::Fetch, status, Some(&package.name))
+        .source(package_source(package))
+        .detail("version", &package.version);
+    if !package.sha256.is_empty() {
+        event = event.detail("sha256", &package.sha256);
+    }
+    if let Err(error) = result {
+        event = event.error(error.clone());
+    }
+    crate::package_log::record(event);
+}
+
 pub fn execute(app: &mut App, cmd: &str) -> bool {
     match cmd {
         "package-manager" => {
@@ -314,6 +448,22 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         ),
         "package-restore" => restore_locked(app),
         "package-doctor" => crate::package_doctor::show(app),
+        "package-log" => crate::package_log::show(app),
+        "package-log-export" => crate::package_log::export(app),
+        "plugin-repro" => {
+            let names = crate::plugin_repro::candidates(app);
+            if names.is_empty() {
+                app.error("No plugins are declared by use_package");
+            } else {
+                app.prompt(
+                    "Write reproduction for plugin: ",
+                    Purpose::Choose {
+                        what: Choice::ReproPlugin,
+                        candidates: names,
+                    },
+                );
+            }
+        }
         "package-delete" => {
             let names: Vec<String> = db(app)
                 .map(|d| d.packages.keys().cloned().collect())
@@ -757,9 +907,11 @@ pub fn refresh(app: &mut App, then: Then) {
     app.packages.refreshing = Some((Index::default(), Vec::new(), then));
     let mut remote = 0;
     for loc in locations {
+        let started = Timer::start();
         match package::local_path(&loc) {
             Some(path) => {
                 let r = std::fs::read_to_string(&path).map_err(|e| format!("{loc}: {e}"));
+                log_fetch(started, None, index_source(&loc), &r);
                 index_read(app, &loc, r);
             }
             None => {
@@ -771,11 +923,20 @@ pub fn refresh(app: &mut App, then: Then) {
                             Fetch::Index {
                                 location: loc,
                                 file,
+                                started,
                             },
                         );
                         remote += 1;
                     }
-                    Err(e) => index_read(app, &loc, Err(e)),
+                    Err(e) => {
+                        log_fetch(
+                            started,
+                            None,
+                            index_source(&loc),
+                            &Err::<String, String>(e.clone()),
+                        );
+                        index_read(app, &loc, Err(e));
+                    }
                 }
             }
         }
@@ -1525,9 +1686,11 @@ fn install(app: &mut App, p: Package, force: bool) -> bool {
         crate::package_vc::install(app, &p.name, git, p.rev.clone(), upgrading);
         return false;
     }
+    let started = Timer::start();
     match package::local_path(&p.url) {
         Some(path) => {
             let r = std::fs::read(&path).map_err(|e| format!("{}: {e}", p.url));
+            log_package_fetch(started, &p, &r);
             installed(app, p, r, upgrading, force);
             false
         }
@@ -1543,11 +1706,13 @@ fn install(app: &mut App, p: Package, force: bool) -> bool {
                             file,
                             upgrade: upgrading,
                             force,
+                            started,
                         },
                     );
                     true
                 }
                 Err(error) => {
+                    log_package_fetch(started, &p, &Err(error.clone()));
                     let message = format!("Can't install {}: {error}", p.name);
                     if upgrading {
                         abort_update(app, message);
@@ -1604,8 +1769,17 @@ fn installed(
             return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
         }
     }
+    let started = Timer::start();
     match db.install(&p, &bytes) {
         Ok(path) => {
+            let mut event = started
+                .finish(Operation::Install, Status::Ok, Some(&p.name))
+                .source(package_source(&p))
+                .detail("version", &p.version);
+            if upgrade {
+                event = event.detail("upgrade", "true");
+            }
+            crate::package_log::record(event);
             if let Err(error) = crate::declare::record_checked(app, &p.name, &path) {
                 return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
             }
@@ -1629,6 +1803,12 @@ fn installed(
             }
         }
         Err(e) => {
+            let event = started
+                .finish(Operation::Install, Status::Failed, Some(&p.name))
+                .source(package_source(&p))
+                .detail("version", &p.version)
+                .error(&e);
+            crate::package_log::record(event);
             let message = format!("Can't install {}: {e}", p.name);
             if upgrade {
                 abort_update(app, message);
@@ -1837,12 +2017,17 @@ pub fn poll(app: &mut App) {
                 };
                 let failed = result.err();
                 match fetch {
-                    Fetch::Index { location, file } => {
+                    Fetch::Index {
+                        location,
+                        file,
+                        started,
+                    } => {
                         let r = match failed {
                             Some(e) => Err(format!("{location}: {e}")),
                             None => std::fs::read_to_string(&file)
                                 .map_err(|e| format!("{location}: {e}")),
                         };
+                        log_fetch(started, None, index_source(&location), &r);
                         let _ = std::fs::remove_file(&file);
                         index_read(app, &location, r);
                         if !app
@@ -1859,11 +2044,13 @@ pub fn poll(app: &mut App) {
                         file,
                         upgrade,
                         force,
+                        started,
                     } => {
                         let r = match failed {
                             Some(e) => Err(e),
                             None => std::fs::read(&file).map_err(|e| e.to_string()),
                         };
+                        log_package_fetch(started, &package, &r);
                         let _ = std::fs::remove_file(&file);
                         installed(app, package, r, upgrade, force);
                         if upgrade {

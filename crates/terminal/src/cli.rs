@@ -62,6 +62,10 @@ Forge's own:
   --package-doctor [--json]
                     check declared and installed plugins without starting
                     the editor; exit status is 1 on an error finding
+  --profile-startup [--json]
+                    start the plugins, print how long each took to look up,
+                    compile, initialize, start lazily and run, then exit;
+                    nonzero if forge.opt.startup_budget_ms was exceeded
   -h, --help        show this help
   -V, --version     show the version
 
@@ -101,6 +105,7 @@ pub struct CliOptions {
     pub package_snapshot_diff: Option<(String, String)>,
     pub package_lockfile_diff: Option<(std::path::PathBuf, std::path::PathBuf)>,
     pub package_doctor: bool,
+    pub profile_startup: bool,
     pub json: bool,
 }
 
@@ -165,6 +170,7 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
                 opts.package_lockfile_diff = Some((before.into(), after.into()));
             }
             "--package-doctor" => opts.package_doctor = true,
+            "--profile-startup" => opts.profile_startup = true,
             "--json" => opts.json = true,
             "--kill" => opts.kill = true,
             "--batch" => opts.batch = true,
@@ -216,9 +222,10 @@ pub fn parse(args: &[String]) -> anyhow::Result<CliOptions> {
         && opts.package_snapshot_diff.is_none()
         && opts.package_lockfile_diff.is_none()
         && !opts.package_doctor
+        && !opts.profile_startup
     {
         anyhow::bail!(
-            "--json is only used with --package-snapshot-diff, --package-lockfile-diff, or --package-doctor\n{USAGE}"
+            "--json is only used with --package-snapshot-diff, --package-lockfile-diff, --package-doctor, or --profile-startup\n{USAGE}"
         );
     }
     Ok(opts)
@@ -350,6 +357,15 @@ mod tests {
         assert!(options.package_doctor);
         assert!(options.json);
         assert!(p(&["--package-doctor"]).is_ok());
+    }
+
+    #[test]
+    fn profile_startup_cli_accepts_json() {
+        let options = p(&["--profile-startup", "--json"]).unwrap();
+        assert!(options.profile_startup);
+        assert!(options.json);
+        assert!(p(&["--profile-startup"]).is_ok());
+        assert!(p(&["--json"]).is_err());
     }
 
     #[test]

@@ -20,6 +20,7 @@
 use crate::app::App;
 use crate::minibuffer::{ConfirmAction, Purpose};
 use forge_core::package::{self, BuildPlan, Installed, InstalledDb, VcSource};
+use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use forge_core::process::{ProcessEvent, ProcessId, Processes, Program, shell_quote};
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -44,6 +45,8 @@ pub struct VcJob {
     /// The commits an upgrade brings (git log since the locked commit),
     /// shown before building it (see `forge-lock.toml`).
     review: Option<String>,
+    fetch_started: Option<Timer>,
+    build_started: Option<Timer>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -268,6 +271,8 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
         commit: String::new(),
         plan: None,
         review: None,
+        fetch_started: None,
+        build_started: None,
     };
     app.packages.vc.queue.push_back(job);
     next(app);
@@ -520,7 +525,7 @@ fn next(app: &mut App) {
     if vc.current.is_some() || vc.confirming.is_some() {
         return;
     }
-    let Some(job) = vc.queue.pop_front() else {
+    let Some(mut job) = vc.queue.pop_front() else {
         crate::packages::finish_update(app);
         return;
     };
@@ -529,6 +534,7 @@ fn next(app: &mut App) {
     append(app, &format!("{} from {}\n\n", job.name, job.repo));
     let verb = if job.upgrade { "Updating" } else { "Getting" };
     app.msg(format!("{verb} {} from {}...", job.name, job.repo));
+    let fetch_started = Timer::start();
     let fresh = !job.src.join(".git").exists();
     let r = if fresh {
         let _ = job.src.parent().map(std::fs::create_dir_all);
@@ -551,6 +557,7 @@ fn next(app: &mut App) {
             .collect();
         spawn(app, Program::Argv("git", &args), job.src.clone())
     };
+    job.fetch_started = Some(fetch_started);
     step(app, job, Stage::Fetch, r);
 }
 
@@ -579,8 +586,63 @@ fn spawn_with_env(
 fn step(app: &mut App, job: VcJob, stage: Stage, r: Result<ProcessId, String>) {
     match r {
         Ok(id) => app.packages.vc.current = Some((job, stage, id, String::new())),
-        Err(e) => fail(app, &job, &e),
+        Err(e) => {
+            log_stage(&job, stage, Status::Failed, Some(&e));
+            fail(app, &job, &e)
+        }
     }
+}
+
+fn log_stage(job: &VcJob, stage: Stage, status: Status, error: Option<&str>) {
+    let (operation, timer) = match stage {
+        Stage::Fetch => (Operation::Fetch, job.fetch_started),
+        Stage::Build => (Operation::Build, job.build_started),
+        _ => return,
+    };
+    let Some(timer) = timer else {
+        return;
+    };
+    let mut event = timer
+        .finish(operation, status, Some(&job.name))
+        .source(job_source(job));
+    if !job.commit.is_empty() {
+        event = event.detail("commit", &job.commit);
+    }
+    if operation == Operation::Build
+        && let Some(command) = job.plan.as_ref().and_then(|plan| plan.command.as_ref())
+    {
+        event = event.detail("command", command);
+    }
+    if let Some(error) = error {
+        event = event.error(error);
+    }
+    crate::package_log::record(event);
+}
+
+fn job_source(job: &VcJob) -> Source {
+    match &job.rev {
+        Some(revision) => Source::new(SourceKind::Git)
+            .location(&job.repo)
+            .revision(revision),
+        None => Source::new(SourceKind::Git).location(&job.repo),
+    }
+}
+
+fn log_install(job: &VcJob, version: &str, timer: Timer, status: Status, error: Option<&str>) {
+    let mut event = timer
+        .finish(Operation::Install, status, Some(&job.name))
+        .source(job_source(job))
+        .detail("version", version);
+    if !job.commit.is_empty() {
+        event = event.detail("commit", &job.commit);
+    }
+    if job.upgrade {
+        event = event.detail("upgrade", "true");
+    }
+    if let Some(error) = error {
+        event = event.error(error);
+    }
+    crate::package_log::record(event);
 }
 
 fn fail(app: &mut App, job: &VcJob, why: &str) {
@@ -634,7 +696,9 @@ pub fn poll(app: &mut App) {
                         Stage::Review => "git couldn't list the changes",
                         Stage::Build => "the build failed",
                     };
-                    fail(app, &job, &format!("{what} (see {BUFFER})"));
+                    let message = format!("{what} (see {BUFFER})");
+                    log_stage(&job, stage, Status::Failed, Some(&message));
+                    fail(app, &job, &message);
                     continue;
                 }
                 finished(app, job, stage, out);
@@ -646,6 +710,7 @@ pub fn poll(app: &mut App) {
 fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
     match stage {
         Stage::Fetch => {
+            log_stage(&job, Stage::Fetch, Status::Ok, None);
             #[cfg(windows)]
             {
                 let target = job.rev.clone().unwrap_or_else(|| "origin/HEAD".into());
@@ -708,7 +773,10 @@ fn finished(app: &mut App, mut job: VcJob, stage: Stage, out: String) {
         Stage::Review => {
             request_upgrade_review(app, job, out);
         }
-        Stage::Build => install_output(app, job),
+        Stage::Build => {
+            log_stage(&job, Stage::Build, Status::Ok, None);
+            install_output(app, job)
+        }
     }
 }
 
@@ -950,7 +1018,7 @@ pub fn confirming(app: &App) -> bool {
     app.packages.vc.confirming.is_some()
 }
 
-fn build(app: &mut App, job: VcJob) {
+fn build(app: &mut App, mut job: VcJob) {
     let plan = job.plan.clone().expect("planned");
     let command = plan.command.clone().expect("a build command");
     if let Some(parent) = plan.output.parent() {
@@ -960,6 +1028,7 @@ fn build(app: &mut App, job: VcJob) {
     if let Some(id) = app.editor.find_buffer(BUFFER) {
         crate::compile::display_buffer(app, id);
     }
+    let build_started = Timer::start();
     #[cfg(windows)]
     let r = spawn_with_env(
         app,
@@ -975,6 +1044,7 @@ fn build(app: &mut App, job: VcJob) {
         );
         spawn(app, Program::Shell(&script), job.root())
     };
+    job.build_started = Some(build_started);
     step(app, job, Stage::Build, r);
 }
 
@@ -1013,11 +1083,20 @@ fn install_output(app: &mut App, job: VcJob) {
         commit: job.commit.clone(),
         build: plan.command.clone(),
     };
+    let started = Timer::start();
     let Some(mut db) = db(app) else {
+        log_install(
+            &job,
+            &version,
+            started,
+            Status::Failed,
+            Some("no plugins directory"),
+        );
         return fail(app, &job, "no plugins directory");
     };
     match db.install_built(&job.name, &version, &source, &bytes) {
         Ok(path) => {
+            log_install(&job, &version, started, Status::Ok, None);
             if let Err(error) = crate::declare::record_checked(app, &job.name, &path) {
                 return fail(app, &job, &error);
             }
@@ -1044,6 +1123,7 @@ fn install_output(app: &mut App, job: VcJob) {
             crate::plugins::load(app, &path);
         }
         Err(e) => {
+            log_install(&job, &version, started, Status::Failed, Some(&e));
             return fail(app, &job, &e);
         }
     }

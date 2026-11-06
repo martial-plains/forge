@@ -534,6 +534,11 @@ impl Manifest {
     /// wherever it is in the component (the Rust SDK puts it in the core
     /// module, which the component contains).
     pub fn embedded(bytes: &[u8]) -> Result<Option<Self>, String> {
+        Self::embedded_text(bytes)?.map(Self::parse).transpose()
+    }
+
+    /// The raw TOML of the `forge-manifest` custom section, if it has one.
+    pub fn embedded_text(bytes: &[u8]) -> Result<Option<&str>, String> {
         for payload in wasmparser::Parser::new(0).parse_all(bytes) {
             let Ok(payload) = payload else {
                 return Ok(None);
@@ -541,9 +546,9 @@ impl Manifest {
             if let wasmparser::Payload::CustomSection(c) = payload
                 && c.name() == MANIFEST_SECTION
             {
-                let text = std::str::from_utf8(c.data())
-                    .map_err(|_| "the manifest isn't UTF-8".to_string())?;
-                return Self::parse(text).map(Some);
+                return std::str::from_utf8(c.data())
+                    .map(Some)
+                    .map_err(|_| "the manifest isn't UTF-8".to_string());
             }
         }
         Ok(None)

@@ -63,14 +63,17 @@ pub mod org_publish;
 pub mod org_rich;
 pub mod org_table_cmds;
 pub mod package_doctor;
+pub mod package_log;
 pub mod package_vc;
 pub mod packages;
 pub mod plugin_bisect;
+pub mod plugin_repro;
 pub mod plugins;
 pub mod project;
 pub mod query;
 pub mod registers;
 pub mod search;
+pub mod startup_profile;
 pub mod tabs;
 pub mod tether;
 pub mod toolbar;
@@ -94,6 +97,8 @@ pub struct StartOptions {
     pub files: Vec<String>,
     /// --plugin files to load.
     pub plugin_files: Vec<String>,
+    /// --profile-startup: time plugin loading and starting.
+    pub profile_startup: bool,
     /// The frontend has a GUI: it can show the tool bar and modifier bar.
     /// The terminal frontend leaves this false has no tool bar
     /// in a text frame.
@@ -180,6 +185,14 @@ pub fn start(opts: &StartOptions) -> anyhow::Result<App> {
     // needs permission asks once the editor is up; others wait their turn.
     if !opts.no_config {
         app.plugin_cache = forge_core::config::cache_dir();
+    }
+    // Startup profiling covers plugin loading and starting, not init.rhai.
+    // A budget set in init.rhai turns it on too, so a slow start warns.
+    let mut profiling_startup = false;
+    if opts.profile_startup || app.startup_budget.is_some() {
+        profiling_startup = plugins::begin_startup_profile(&mut app);
+    }
+    if !opts.no_config {
         // Plugins declared in init.rhai first, in `after` order: installed
         // ones load (or wait lazily), missing ones start installing.
         crate::declare::resolve(&mut app);
@@ -194,6 +207,9 @@ pub fn start(opts: &StartOptions) -> anyhow::Result<App> {
     }
     for p in &opts.plugin_files {
         plugins::load(&mut app, std::path::Path::new(p));
+    }
+    if profiling_startup {
+        plugins::finish_startup_profile(&mut app);
     }
     app.report_unknown_bindings();
     // init.rhai's forge.mode.hook and its forge.command.run of plugin

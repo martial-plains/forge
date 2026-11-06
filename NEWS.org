@@ -1,4 +1,21 @@
 #+title: Forge NEWS
+** Package operation log
+=M-x package-log= shows structured fetch, build, install, upgrade and
+rollback records with timings, source/revision details, commands and errors.
+=M-x package-log-export= writes the same records as JSON lines. Records use
+the additive versioned =forge.package.operation= schema, live in the state
+directory, rotate at 1 MiB, and survive a killed append. URL credentials,
+sensitive query values, authentication headers and tokens are redacted;
+environment values are never recorded.
+** Plugin startup profiling
+=M-x plugin-profile= shows how long each plugin spent looking in the cache,
+compiling on a cache miss, running =init=, starting lazily, and in every
+command, event, answer, completion and process/HTTP call (count, total and
+longest). =forge --profile-startup= prints the same report without a terminal
+and accepts =--json=. Set =forge.opt["startup_budget_ms"]= in =init.rhai= to
+warn in =*Messages*= when plugin startup is too slow; batch and headless runs
+exit nonzero, and =--profile-startup= does too when the report is over budget.
+Profiling is off by default, where each hot path only checks one atomic flag.
 ** Plugins can replace the text in an open prompt
 The plugin API's =minibuffer.set-input= (0.1.31) replaces what is typed in
 the prompt that is open, leaving the cursor at the end. Rhai gets the same

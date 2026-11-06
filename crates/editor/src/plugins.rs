@@ -36,7 +36,7 @@ pub struct PendingGrant {
     pub missing: Grants,
 }
 
-fn ensure_host(app: &mut App) -> bool {
+pub(crate) fn ensure_host(app: &mut App) -> bool {
     if app.plugin_host.is_none() {
         match PluginHost::with_cache_dir(app.plugin_cache.as_deref()) {
             Ok(h) => {
@@ -50,6 +50,46 @@ fn ensure_host(app: &mut App) -> bool {
         }
     }
     true
+}
+
+/// Start the plugin-startup stopwatch, if it can be started.
+pub fn begin_startup_profile(app: &mut App) -> bool {
+    if !ensure_host(app) {
+        return false;
+    }
+    if let Some(host) = app.plugin_host.as_ref() {
+        host.enable_profiling();
+        host.begin_startup_profile();
+    }
+    true
+}
+
+/// Stop the plugin-startup stopwatch and warn if it went over the budget.
+pub fn finish_startup_profile(app: &mut App) {
+    let Some(host) = app.plugin_host.as_ref() else {
+        return;
+    };
+    host.finish_startup_profile();
+    let Some(total) = host.startup_profile_total() else {
+        return;
+    };
+    let Some(budget) = app.startup_budget else {
+        return;
+    };
+    if total <= budget {
+        return;
+    }
+    app.startup_budget_exceeded = true;
+    let total_ms = total.as_secs_f64() * 1000.0;
+    let budget_ms = budget.as_secs_f64() * 1000.0;
+    crate::messages::log(
+        app,
+        "startup",
+        Level::Warn,
+        &format!(
+            "Plugin startup took {total_ms:.3} ms, over the {budget_ms:.3} ms startup_budget_ms"
+        ),
+    );
 }
 
 /// Plugin files in the plugins directory (~/.config/forge/plugins).

@@ -24,6 +24,7 @@ mod messages;
 mod mouse;
 mod packaging;
 mod plugin_bisect;
+mod plugin_repro;
 mod plugins;
 mod rhai;
 mod term;

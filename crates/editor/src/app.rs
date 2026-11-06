@@ -297,6 +297,10 @@ pub struct App {
     pub plugin_bisect: Option<crate::plugin_bisect::Session>,
     /// Where compiled plugins and their summaries are cached (None: no cache).
     pub plugin_cache: Option<std::path::PathBuf>,
+    /// forge.opt.startup_budget_ms: warn when plugin startup takes longer.
+    pub startup_budget: Option<Duration>,
+    /// Plugin startup took longer than `startup_budget`.
+    pub startup_budget_exceeded: bool,
     /// Plugin questions waiting for the minibuffer.
     pub pending_questions: VecDeque<PendingQuestion>,
     /// Plugin commands currently running each other (loop guard).
@@ -840,6 +844,8 @@ impl App {
             plugin_host: None,
             plugin_bisect: None,
             plugin_cache: None,
+            startup_budget: None,
+            startup_budget_exceeded: false,
             pending_questions: VecDeque::new(),
             plugin_depth: 0,
             grants: GrantStore::in_memory(),
@@ -2326,6 +2332,8 @@ impl App {
         self.horizontal_scroll_bar = false;
         self.scroll_bar_drag = None;
         self.plugin_auto_reload = true;
+        self.startup_budget = None;
+        self.startup_budget_exceeded = false;
         self.line_numbers = Default::default();
         self.electric_indent = true;
         self.wrap = Default::default();
@@ -2452,6 +2460,10 @@ impl App {
         if let Some(r) = settings.plugin_auto_reload {
             self.plugin_auto_reload = r;
         }
+        self.startup_budget = settings
+            .numbers
+            .get("startup_budget_ms")
+            .map(|ms| Duration::from_secs_f64(ms / 1000.0));
         if let Some(l) = settings.line_numbers {
             self.line_numbers = l;
         }

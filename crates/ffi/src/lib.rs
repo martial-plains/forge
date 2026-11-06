@@ -1048,6 +1048,7 @@ impl Forge {
             plugin_files: Vec::new(),
             // The macOS app draws the tool bar, unlike the terminal.
             graphical,
+            profile_startup: false,
         };
         let (tx, rx) = mpsc::channel::<Request>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<Watch, String>>();

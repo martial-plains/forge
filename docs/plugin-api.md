@@ -914,6 +914,25 @@ An index entry can include a `release_notes` string; Forge displays it in
 the review buffer before asking to apply an update. Semver requirements use
 standard Rust semver syntax (`^1.2`, `~1.2.3`, or an exact comparator).
 
+### Package operation log
+
+`M-x package-log` shows one line per completed package operation: fetch,
+build, install, upgrade, and rollback, with its duration and any recorded
+source, revision, commit, version, command or error. `M-x package-log-export`
+shows the same records as JSON lines and asks where to write them.
+
+Records use the additive schema `forge.package.operation`, version `1`.
+Readers should ignore unknown fields. Environment values are never recorded.
+URL credentials, sensitive query values, authentication headers, and known
+token shapes are redacted before a line is written.
+
+The log lives in the state directory as `package-operations.jsonl`
+(`$XDG_STATE_HOME/forge` or `~/.local/state/forge` by default). When it
+reaches 1 MiB, it rotates to `package-operations.jsonl.1`; both files are
+read for the buffer and export. Each record is appended as one JSON line.
+A partial final line left by a killed process is dropped before the next
+append.
+
 ### Lockfiles and snapshots
 
 `forge-lock.toml` next to `init.rhai` records each declared plugin's
@@ -1007,6 +1026,25 @@ plugin lazily if its init did nothing but register things. One that shows
 a message, asks a question, runs a command, creates a buffer or binds keys
 in a single buffer always starts at startup. So does one whose manifest
 says `startup = true`. Deleting `~/.cache/forge` is always safe.
+
+### Profiling plugin startup
+
+`M-x plugin-profile` shows where the time went: for each plugin, the cache
+lookup, a compile on a cache miss, `init`, lazy start, and every command,
+event, answer, completion and process/HTTP callback it handled (count, total
+and longest). The same report is printed by `forge --profile-startup`, which
+exits without opening a terminal; add `--json` for the machine-readable
+report. Profiling starts with the plugin-loading phase, after init.rhai.
+
+Set `forge.opt["startup_budget_ms"] = 250` in init.rhai to warn in
+`*Messages*` when plugin startup exceeds that many milliseconds. Batch and
+headless runs exit nonzero when the budget is exceeded, and
+`forge --profile-startup` exits nonzero for a report over budget.
+
+Profiling is off by default, including when a budget is not set. While it is
+off the hot paths only read one atomic boolean: no clock is read, no lock is
+taken and no label is allocated. Tests use a manual clock, so a fixture's
+report is deterministic.
 
 **Reloading.** `M-x reload-plugin` loads a plugin again from its file.
 Forge also watches the files of loaded plugins and reloads one when it's

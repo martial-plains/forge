@@ -341,6 +341,8 @@ pub enum Choice {
     GrammarInstall,
     /// describe-plugin: nothing extra (the answer names the plugin).
     DescribePlugin,
+    /// plugin-repro: write a bundle for the named declared plugin.
+    ReproPlugin,
     /// select-frame-by-name: the answer is the name of a frame.
     SelectFrame,
     /// tab-switch: the answer is the name of a tab.
@@ -412,7 +414,7 @@ fn history_kind(p: &Purpose) -> Option<&'static str> {
         } => "project-file",
         Purpose::PluginAsk { .. } => "plugin",
         Purpose::Choose {
-            what: Choice::DescribePlugin,
+            what: Choice::DescribePlugin | Choice::ReproPlugin,
             ..
         } => "plugin",
         Purpose::Choose {
@@ -1823,6 +1825,16 @@ fn submit(app: &mut App, mut mb: Minibuffer) {
                     crate::plugins::describe(app, &input);
                 }
             }
+            Choice::ReproPlugin => {
+                if candidates.contains(&input) {
+                    match crate::plugin_repro::write(app, &input) {
+                        Ok(dir) => app.msg(format!("Wrote reproduction bundle {}", dir.display())),
+                        Err(error) => app.error(format!("Cannot write plugin repro: {error}")),
+                    }
+                } else if !input.is_empty() {
+                    app.error(format!("{input} isn't declared by use_package"));
+                }
+            }
             Choice::DeletePackage => {
                 if candidates.contains(&input) {
                     crate::packages::delete(app, &input);
@@ -2184,7 +2196,7 @@ fn source(
                 | Choice::UpgradePackage
                 | Choice::UpgradeVcPackage => "package",
                 Choice::GrammarInstall => "grammar",
-                Choice::DescribePlugin => "plugin",
+                Choice::DescribePlugin | Choice::ReproPlugin => "plugin",
                 Choice::SelectFrame => "frame",
                 Choice::SelectTab => "tab",
                 Choice::GotoNode | Choice::InfoMenu | Choice::InfoSearch | Choice::InfoIndex => {

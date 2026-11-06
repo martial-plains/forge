@@ -183,13 +183,21 @@ fn main() -> anyhow::Result<()> {
         )?;
         return Ok(());
     }
-    if let Some(Daemon::Background(name)) = &opts.daemon {
-        return spawn_daemon(&args, name);
-    }
-
     let mut plugin_files = opts.plugin_files.clone();
     for dir in &opts.plugin_dirs {
         plugin_files.extend(cli::plugins_in(dir));
+    }
+    if opts.profile_startup {
+        let ok = forge_editor::startup_profile::run(forge_editor::startup_profile::Options {
+            no_config: opts.no_config,
+            files: opts.files.clone(),
+            plugin_files,
+            json: opts.json,
+        })?;
+        std::process::exit(if ok { 0 } else { 1 });
+    }
+    if let Some(Daemon::Background(name)) = &opts.daemon {
+        return spawn_daemon(&args, name);
     }
     // Open files before touching the terminal so errors print normally.
     let mut app = forge_terminal::start(&forge_terminal::StartOptions {
@@ -197,6 +205,7 @@ fn main() -> anyhow::Result<()> {
         files: opts.files.clone(),
         plugin_files,
         graphical: false,
+        profile_startup: false,
     })?;
     if let Some((line, column)) = opts.position {
         app.buf().set_point(forge_core::Pos::new(
@@ -206,7 +215,8 @@ fn main() -> anyhow::Result<()> {
     }
     let actions_ok = cli::run_actions(&mut app, &opts.actions, opts.batch);
     if opts.batch || opts.kill {
-        std::process::exit(if actions_ok { 0 } else { 1 });
+        let ok = actions_ok && !app.startup_budget_exceeded;
+        std::process::exit(if ok { 0 } else { 1 });
     }
     if let Some(Daemon::Foreground(name)) = &opts.daemon {
         forge_editor::server::start(&mut app, name);

@@ -3746,6 +3746,8 @@ pub struct PluginRuntime {
     executor: Arc<tokio::runtime::Runtime>,
     monitor: PluginMonitor,
     call_time_limit: Duration,
+    /// Kept so profiling can tell a cache hit from a compile.
+    cache: Option<wasmtime::Cache>,
 }
 
 /// A compiled component, looked at before anything in it runs.
@@ -4241,11 +4243,13 @@ impl PluginRuntime {
     /// set up is skipped: it's only a speed-up.
     pub fn with_cache(dir: Option<&std::path::Path>) -> Result<Self> {
         let mut config = Config::new();
+        let mut cache = None;
         if let Some(dir) = dir {
             let mut cc = wasmtime::CacheConfig::new();
             cc.with_directory(dir);
-            if let Ok(cache) = wasmtime::Cache::new(cc) {
-                config.cache(Some(cache));
+            if let Ok(c) = wasmtime::Cache::new(cc) {
+                config.cache(Some(c.clone()));
+                cache = Some(c);
             }
         }
         config.wasm_component_model(true);
@@ -4281,6 +4285,7 @@ impl PluginRuntime {
             executor: Arc::new(executor),
             monitor,
             call_time_limit: CALL_TIME_LIMIT,
+            cache,
         })
     }
 
@@ -4291,6 +4296,13 @@ impl PluginRuntime {
     /// Change the per-call time limit (tests use a short one).
     pub fn set_call_time_limit(&mut self, limit: Duration) {
         self.call_time_limit = limit;
+    }
+
+    /// Cache hits and misses so far, if compiled plugins are cached.
+    pub fn cache_counts(&self) -> Option<(usize, usize)> {
+        self.cache
+            .as_ref()
+            .map(|cache| (cache.cache_hits(), cache.cache_misses()))
     }
 
     /// Compile a component and look at what it imports. Nothing runs.
