@@ -62,6 +62,8 @@ pub struct PluginUse {
     pub build_env: Vec<String>,
     /// With `git`: how long the build may run, in seconds.
     pub build_timeout_secs: Option<u64>,
+    /// With `git`: allow an unattended upgrade across a rewritten history.
+    pub allow_rewrite: bool,
 }
 
 impl PluginUse {

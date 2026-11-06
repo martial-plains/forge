@@ -1383,6 +1383,7 @@ const USE_PACKAGE_KEYS: &[&str] = &[
     // Forge extensions.
     "build_env",
     "build_timeout_secs",
+    "allow_history_rewrite",
     "magic",
     "magic_fallback",
     "interpreter",
@@ -1393,7 +1394,18 @@ const USE_PACKAGE_KEYS: &[&str] = &[
 ];
 
 const USE_PACKAGE_DECLARATION_KEYS: &[&str] = &[
-    "git", "rev", "index", "url", "sha256", "grant", "hook", "on", "after", "version", "freeze",
+    "git",
+    "rev",
+    "index",
+    "url",
+    "sha256",
+    "grant",
+    "hook",
+    "on",
+    "after",
+    "version",
+    "freeze",
+    "allow_history_rewrite",
 ];
 
 /// Is a `when`/`if`/`unless` value true? A function is called.
@@ -1709,6 +1721,10 @@ fn use_package_spec(
     };
     if pinned || frozen {
         declaration.insert("freeze".into(), Dynamic::from(true));
+    }
+    if let Some(allow) = spec.get("allow_history_rewrite") {
+        let allow = as_bool(allow, "allow_history_rewrite")?;
+        declaration.insert("allow_history_rewrite".into(), Dynamic::from(allow));
     }
     // vc: a url, or #{ url, rev, make, lisp_dir, features } as :vc.
     let (mut git_dir, mut build, mut features) = (None, None, Vec::new());

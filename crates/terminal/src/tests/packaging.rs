@@ -587,6 +587,169 @@ fn packages_from_version_control() {
 }
 
 #[test]
+fn vc_upgrades_warn_about_history_rewrites_and_moved_tags() {
+    let dir = std::env::temp_dir().join(format!("forge-vc-history-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _env_lock = package_env();
+    let _env = EnvGuard::set(&dir.join("data"), &dir.join("config"));
+    let repo = dir.join("forge-demo");
+    demo_plugin_file(&repo.join("dist"));
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "init.defaultBranch=main",
+                "-c",
+                "tag.gpgSign=false",
+            ])
+            .args(args)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(
+            ok.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
+        String::from_utf8_lossy(&ok.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "one"]);
+    git(&["tag", "v1"]);
+
+    let mut app = app_with("");
+    app.plugin_cache = None;
+    app.packages.plugin_dir = Some(dir.join("plugins"));
+    let wait = |app: &mut App, done: &dyn Fn(&App) -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !done(app) && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            app.on_idle();
+        }
+    };
+    press(&mut app, "M-x package-vc-install RET");
+    answer(&mut app, &format!("{}@v1", repo.display()));
+    wait(&mut app, &|a| {
+        a.message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Installed"))
+    });
+    let first = git(&["rev-parse", "HEAD"]);
+
+    // A normal fast-forward still moves a pinned tag: warn, but don't claim
+    // the history was rewritten.
+    std::fs::write(repo.join("next.txt"), "next\n").unwrap();
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "next"]);
+    git(&["tag", "-f", "v1"]);
+    press(&mut app, "C-u M-x package-vc-upgrade-all RET");
+    let plan = buffer_text(&app, "*Package Upgrade Plan*");
+    assert!(
+        plan.contains("tag v1 now points") && plan.contains("was moved"),
+        "{plan}"
+    );
+    assert!(!plan.contains("not a descendant"), "{plan}");
+
+    // Rewrite the branch with an unrelated root and move the tag there.
+    git(&["checkout", "-q", "--orphan", "rewritten"]);
+    git(&["commit", "-q", "-m", "rewritten"]);
+    git(&["tag", "-f", "v1"]);
+    let rewritten = git(&["rev-parse", "HEAD"]);
+
+    press(&mut app, "C-u M-x package-vc-upgrade-all RET");
+    let plan = buffer_text(&app, "*Package Upgrade Plan*");
+    assert!(
+        plan.contains("not a descendant")
+            && plan.contains("rewritten or force-pushed")
+            && plan.contains("tag v1 now points"),
+        "{plan}"
+    );
+    assert_eq!(
+        git(&["rev-parse", "HEAD"]),
+        rewritten,
+        "the dry run must not move the real checkout"
+    );
+    let installed = forge_core::package::InstalledDb::load(&dir.join("plugins"));
+    assert_eq!(
+        installed.packages["demo"].commit.as_deref(),
+        Some(first.as_str()),
+        "the dry run must not change the installed record"
+    );
+
+    // The interactive upgrade review shows both warnings before asking.
+    press(&mut app, "M-x package-vc-upgrade RET demo RET");
+    wait(&mut app, &|a| a.minibuffer.is_some());
+    assert!(
+        app.minibuffer
+            .as_ref()
+            .is_some_and(|mb| mb.prompt.contains("changelog")),
+        "{:?}",
+        app.message
+    );
+    let review = buffer_text(&app, crate::package_vc::BUFFER);
+    assert!(
+        review.contains("not a descendant") && review.contains("tag v1 now points"),
+        "{review}"
+    );
+    press(&mut app, "n");
+    assert_eq!(app.message.as_deref(), Some("Not upgrading demo"));
+
+    // Unattended upgrades stop on the rewrite, leaving the installed plugin.
+    app.unattended = true;
+    press(&mut app, "M-x package-vc-upgrade RET demo RET");
+    wait(&mut app, &|a| {
+        a.message
+            .as_deref()
+            .is_some_and(|m| m.contains("history was rewritten"))
+    });
+    let message = app.message.as_deref().unwrap_or("");
+    assert!(
+        message.contains("history was rewritten") && message.contains("no changes were made"),
+        "{:?}",
+        app.message
+    );
+    let installed = forge_core::package::InstalledDb::load(&dir.join("plugins"));
+    assert_eq!(
+        installed.packages["demo"].commit.as_deref(),
+        Some(first.as_str())
+    );
+
+    // An explicit declaration opt-in lets unattended mode cross the rewrite.
+    let init = dir.join("init.rhai");
+    std::fs::write(
+        &init,
+        format!(
+            "use_package(\"demo\", #{{ git: \"{}\", allow_history_rewrite: true }});",
+            repo.display()
+        ),
+    )
+    .unwrap();
+    app.init_path = Some(init);
+    app.load_init_file();
+    app.unattended = true;
+    press(&mut app, "M-x package-vc-upgrade RET demo RET");
+    wait(&mut app, &|a| {
+        a.message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("Installed"))
+    });
+    let installed = forge_core::package::InstalledDb::load(&dir.join("plugins"));
+    assert_eq!(
+        installed.packages["demo"].commit.as_deref(),
+        Some(rewritten.as_str()),
+        "{:?}",
+        app.message
+    );
+    drop(app);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn package_upgrade_with_new_capabilities_asks_and_blocks_unattended() {
     let dir = std::env::temp_dir().join(format!("forge-capability-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

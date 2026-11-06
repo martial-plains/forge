@@ -1,5 +1,14 @@
 #+title: Forge NEWS
 * 0.1.0
+** Git upgrades warn about rewritten history and moved tags
+Dry runs and upgrade reviews now warn when a Git package's new commit is
+not a descendant of the locked commit (a force-push or rewritten upstream
+history), and when a pinned tag now points somewhere else. Dry runs check
+ancestry in a scratch repository, so they never fetch into or change the
+real checkout. Warnings do not block interactive upgrades. Unattended
+upgrades (=--batch= and =--headless=) stop before installing a rewritten
+history; set =allow_history_rewrite: true= in the declaration to opt in.
+Moved-tag warnings remain informational.
 ** Package builds get a scrubbed environment and a time limit
 Source builds no longer inherit the whole process environment. Only
 =PATH=, =HOME=, =USER=, =LOGNAME=, =LANG=, =LC_*=, temporary-directory

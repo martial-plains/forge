@@ -1344,7 +1344,7 @@ fn name_or_names(v: &Dynamic, what: &str) -> RhaiResult<Vec<String>> {
 /// `use_package(name, spec)`: record a declared plugin.
 fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
     use crate::declare::PluginUse;
-    const KEYS: [&str; 14] = [
+    const KEYS: [&str; 15] = [
         "git",
         "rev",
         "index",
@@ -1359,6 +1359,7 @@ fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
         "freeze",
         "build_env",
         "build_timeout_secs",
+        "allow_history_rewrite",
     ];
     for k in spec.keys() {
         if !KEYS.contains(&k.as_str()) {
@@ -1394,6 +1395,7 @@ fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
             }
             None => None,
         },
+        allow_rewrite: map_bool(spec, "allow_history_rewrite")?.unwrap_or(false),
         ..Default::default()
     };
     if let Some(config) = map_get(spec, "config") {

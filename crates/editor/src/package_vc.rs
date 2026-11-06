@@ -24,7 +24,7 @@ use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use forge_core::process::{ProcessEvent, ProcessId, Processes, Program, shell_quote};
 use forge_core::{CapabilityDiff, LockFile};
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const BUFFER: &str = "*Package Build*";
@@ -44,11 +44,17 @@ pub struct VcJob {
     src: PathBuf,
     /// Upgrading: stop if the commit is the one installed.
     upgrade: bool,
+    /// The declaration lets an unattended upgrade cross a history rewrite.
+    allow_rewrite: bool,
     commit: String,
     plan: Option<BuildPlan>,
     /// The commits an upgrade brings (git log since the locked commit),
     /// shown before building it (see `forge-lock.toml`).
     review: Option<String>,
+    /// Supply-chain warnings about the upgrade's history or pinned tag.
+    history_warnings: Vec<String>,
+    /// The new commit isn't a descendant of the locked one.
+    rewritten: bool,
     fetch_started: Option<Timer>,
     build_started: Option<Timer>,
 }
@@ -97,6 +103,26 @@ pub trait GitRemote: Send + Sync {
         build: Option<&str>,
         features: &[String],
     ) -> Result<BuildPlan, String>;
+
+    /// Is `old` an ancestor of `new`? A false answer means the upstream
+    /// history was rewritten (or force-pushed). `checkout` may hold objects
+    /// the remote no longer advertises. Fixtures that don't model history
+    /// default to true, so they never produce a false warning.
+    fn is_ancestor(
+        &self,
+        _repository: &str,
+        _checkout: Option<&Path>,
+        _old: &str,
+        _new: &str,
+    ) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    /// The commit a tag now points to, or None when `rev` is a branch or
+    /// isn't a tag. Fixtures that don't model tags default to None.
+    fn tag_commit(&self, _repository: &str, _rev: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -311,9 +337,14 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
         policy,
         src,
         upgrade,
+        allow_rewrite: declared
+            .as_ref()
+            .is_some_and(|use_spec| use_spec.allow_rewrite),
         commit: String::new(),
         plan: None,
         review: None,
+        history_warnings: Vec::new(),
+        rewritten: false,
         fetch_started: None,
         build_started: None,
     };
@@ -385,7 +416,8 @@ pub fn dry_run_lines(app: &App) -> Result<Vec<String>, String> {
             .packages
             .get(&name)
             .ok_or_else(|| format!("{name}: installed record disappeared"))?;
-        let old = package.commit.as_deref().unwrap_or("(unknown commit)");
+        let old_commit = package.commit.as_deref();
+        let old = old_commit.unwrap_or("(unknown commit)");
         let new = app
             .packages
             .vc
@@ -394,6 +426,14 @@ pub fn dry_run_lines(app: &App) -> Result<Vec<String>, String> {
         if new == old {
             continue;
         }
+        let history = history_warnings(
+            app.packages.vc.git.as_ref(),
+            &repository,
+            None,
+            rev.as_deref(),
+            old_commit,
+            &new,
+        );
         let declared = crate::declare::declared(app, &name);
         let dir = declared.as_ref().and_then(|u| u.git_dir.as_deref());
         let build = declared.as_ref().and_then(|u| u.build.as_deref());
@@ -418,6 +458,12 @@ pub fn dry_run_lines(app: &App) -> Result<Vec<String>, String> {
             short(old),
             short(&new)
         ));
+        lines.extend(
+            history
+                .warnings
+                .into_iter()
+                .map(|warning| format!("  {warning}")),
+        );
     }
     Ok(lines)
 }
@@ -482,6 +528,163 @@ impl GitRemote for SystemGit {
         })
     }
 
+    fn is_ancestor(
+        &self,
+        repository: &str,
+        checkout: Option<&Path>,
+        old: &str,
+        new: &str,
+    ) -> Result<bool, String> {
+        if old == new {
+            return Ok(true);
+        }
+        let temp = temp_checkout_dir();
+        let _ = std::fs::remove_dir_all(&temp);
+        let result = (|| {
+            let parent = temp
+                .parent()
+                .ok_or_else(|| "temporary ancestry path has no parent".to_string())?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("creating temporary ancestry directory: {error}"))?;
+            run_git(
+                &[
+                    "init".to_string(),
+                    "--bare".into(),
+                    "--quiet".into(),
+                    temp.display().to_string(),
+                ],
+                parent,
+            )?;
+            let fetch = |source: &str, commit: &str| {
+                git_output(
+                    &[
+                        "fetch".to_string(),
+                        "--quiet".into(),
+                        "--no-tags".into(),
+                        source.to_string(),
+                        commit.to_string(),
+                    ],
+                    &temp,
+                )
+                .is_ok_and(|result| result.code == Some(0))
+            };
+            let fetch_refs = |source: &str| {
+                git_output(
+                    &[
+                        "fetch".to_string(),
+                        "--quiet".into(),
+                        "--force".into(),
+                        source.to_string(),
+                        "+refs/heads/*:refs/heads/*".into(),
+                        "+refs/tags/*:refs/tags/*".into(),
+                    ],
+                    &temp,
+                )
+                .is_ok_and(|result| result.code == Some(0))
+            };
+            let mut have_old = fetch(repository, old);
+            let mut have_new = fetch(repository, new);
+            if !have_old || !have_new {
+                fetch_refs(repository);
+            }
+            if let Some(checkout) = checkout {
+                let checkout = checkout.display().to_string();
+                if !have_old {
+                    have_old = fetch(&checkout, old) || fetch_refs(&checkout);
+                }
+                if !have_new {
+                    have_new = fetch(&checkout, new) || fetch_refs(&checkout);
+                }
+            }
+            let has = |commit: &str| {
+                git_output(
+                    &[
+                        "cat-file".to_string(),
+                        "-e".into(),
+                        format!("{commit}^{{commit}}"),
+                    ],
+                    &temp,
+                )
+                .is_ok_and(|result| result.code == Some(0))
+            };
+            if !have_old && !has(old) {
+                return Err(format!(
+                    "couldn't find locked commit {old} to check whether the upstream history was rewritten"
+                ));
+            }
+            if !have_new && !has(new) {
+                return Err(format!("couldn't find upstream commit {new}"));
+            }
+            let result = git_output(
+                &[
+                    "merge-base".to_string(),
+                    "--is-ancestor".into(),
+                    old.to_string(),
+                    new.to_string(),
+                ],
+                &temp,
+            )?;
+            match result.code {
+                Some(0) => Ok(true),
+                Some(1) => Ok(false),
+                _ => {
+                    let error = String::from_utf8_lossy(&result.stderr).trim().to_string();
+                    Err(format!("git merge-base --is-ancestor failed: {error}"))
+                }
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&temp);
+        result
+    }
+
+    fn tag_commit(&self, repository: &str, rev: &str) -> Result<Option<String>, String> {
+        let rev = rev.strip_prefix("refs/tags/").unwrap_or(rev);
+        if rev.is_empty() || rev.starts_with("refs/") {
+            return Ok(None);
+        }
+        let args = vec![
+            "ls-remote".to_string(),
+            "--heads".into(),
+            "--tags".into(),
+            repository.to_string(),
+            format!("refs/heads/{rev}"),
+            format!("refs/tags/{rev}"),
+            format!("refs/tags/{rev}^{{}}"),
+        ];
+        let current = std::env::current_dir().map_err(|e| e.to_string())?;
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let result = forge_core::process::run_sync(
+            Program::Argv("git", &args),
+            &current,
+            None,
+            std::time::Duration::from_secs(15),
+            &stop,
+        )
+        .map_err(|e| format!("{repository}: couldn't query remote tag: {e}"))?;
+        if result.code != Some(0) {
+            let error = String::from_utf8_lossy(&result.stderr).trim().to_string();
+            return Err(format!("{repository}: git ls-remote failed: {error}"));
+        }
+        let mut hashes = std::collections::BTreeMap::new();
+        for line in String::from_utf8_lossy(&result.stdout).lines() {
+            let mut fields = line.split_whitespace();
+            let Some(first) = fields.next() else { continue };
+            let Some(reference) = fields.next() else {
+                continue;
+            };
+            if reference.starts_with("refs/") {
+                hashes.insert(reference.to_string(), first.to_string());
+            }
+        }
+        if hashes.contains_key(&format!("refs/heads/{rev}")) {
+            return Ok(None);
+        }
+        Ok(hashes
+            .get(&format!("refs/tags/{rev}^{{}}"))
+            .or_else(|| hashes.get(&format!("refs/tags/{rev}")))
+            .cloned())
+    }
+
     fn build_plan_at(
         &self,
         repository: &str,
@@ -535,16 +738,23 @@ impl GitRemote for SystemGit {
     }
 }
 
-fn run_git(args: &[String], dir: &std::path::Path) -> Result<(), String> {
+fn git_output(
+    args: &[String],
+    dir: &std::path::Path,
+) -> Result<forge_core::process::SyncOutput, String> {
     let stop = std::sync::atomic::AtomicBool::new(false);
-    let result = forge_core::process::run_sync(
+    forge_core::process::run_sync(
         Program::Argv("git", args),
         dir,
         None,
         std::time::Duration::from_secs(60),
         &stop,
     )
-    .map_err(|error| format!("running git: {error}"))?;
+    .map_err(|error| format!("running git: {error}"))
+}
+
+fn run_git(args: &[String], dir: &std::path::Path) -> Result<(), String> {
+    let result = git_output(args, dir)?;
     if result.code == Some(0) {
         return Ok(());
     }
@@ -876,11 +1086,9 @@ fn request_upgrade_review(app: &mut App, mut job: VcJob, output: String) {
     if !breaking.is_empty() {
         review.push_str("WARNING: breaking-change marker found in commit subjects.\n");
     }
-    if tag_was_moved(&job) {
-        review.push_str(&format!(
-            "WARNING: tag {} now points to a different commit.\n",
-            job.rev.as_deref().unwrap_or_default()
-        ));
+    for warning in &job.history_warnings {
+        review.push_str(warning);
+        review.push('\n');
     }
     review.push_str(&output);
     append(
@@ -903,29 +1111,59 @@ fn request_upgrade_review(app: &mut App, mut job: VcJob, output: String) {
     ask(app);
 }
 
-fn tag_was_moved(job: &VcJob) -> bool {
-    let Some(rev) = job.rev.as_deref() else {
-        return false;
+#[derive(Debug, Default, PartialEq, Eq)]
+struct HistoryWarnings {
+    /// The new commit is not a descendant of the locked one.
+    rewritten: bool,
+    warnings: Vec<String>,
+}
+
+/// Check an upgrade's commit graph and pinned tag without changing any
+/// checkout. Ancestry needs commit objects, so the Git implementation may
+/// fetch them into a scratch repository.
+fn history_warnings(
+    git: &dyn GitRemote,
+    repository: &str,
+    checkout: Option<&Path>,
+    rev: Option<&str>,
+    old: Option<&str>,
+    new: &str,
+) -> HistoryWarnings {
+    let mut history = HistoryWarnings::default();
+    let Some(old) = old.filter(|old| !old.is_empty() && *old != new) else {
+        return history;
     };
-    let tag = rev.strip_prefix("refs/tags/").unwrap_or(rev);
-    let reference = format!("refs/tags/{tag}");
-    let branch = format!("refs/remotes/origin/{rev}");
-    if std::process::Command::new("git")
-        .args(["show-ref", "--verify", "--quiet", &branch])
-        .current_dir(&job.src)
-        .status()
-        .is_ok_and(|status| status.success())
-    {
-        return false;
+    match git.is_ancestor(repository, checkout, old, new) {
+        Ok(true) => {}
+        Ok(false) => {
+            history.rewritten = true;
+            history.warnings.push(format!(
+                "WARNING: {} is not a descendant of the locked commit {}; upstream history was rewritten or force-pushed.",
+                short(new),
+                short(old)
+            ));
+        }
+        Err(error) => history.warnings.push(format!(
+            "WARNING: couldn't verify that {} descends from the locked commit {}: {error}",
+            short(new),
+            short(old)
+        )),
     }
-    let Ok(result) = std::process::Command::new("git")
-        .args(["show-ref", "--verify", "--quiet", &reference])
-        .current_dir(&job.src)
-        .status()
-    else {
-        return false;
-    };
-    result.success()
+    if let Some(rev) = rev {
+        let tag = rev.strip_prefix("refs/tags/").unwrap_or(rev);
+        match git.tag_commit(repository, tag) {
+            Ok(Some(target)) if target != old => history.warnings.push(format!(
+                "WARNING: tag {tag} now points to {} instead of the locked commit {}; the tag was moved.",
+                short(&target),
+                short(old)
+            )),
+            Ok(_) => {}
+            Err(error) => history.warnings.push(format!(
+                "WARNING: couldn't check whether tag {tag} moved: {error}"
+            )),
+        }
+    }
+    history
 }
 
 fn resolve_build_plan(
@@ -985,14 +1223,42 @@ fn checkout_complete(app: &mut App, mut job: VcJob) {
     job.plan = Some(plan);
     // Upgrading a declared plugin: review the commits since the
     // locked one before building (a changed permission set asks
-    // again when it loads).
+    // again when it loads). Check the commit graph first: it may need a
+    // fetch, but only into a scratch repository.
+    let old = installed
+        .as_ref()
+        .and_then(|record| record.commit.clone())
+        .or_else(|| locked_commit(&job.name))
+        .filter(|old| *old != job.commit);
+    if job.upgrade
+        && let Some(old) = old.as_deref()
+    {
+        let history = history_warnings(
+            app.packages.vc.git.as_ref(),
+            &job.repo,
+            Some(&job.src),
+            job.rev.as_deref(),
+            Some(old),
+            &job.commit,
+        );
+        job.rewritten = history.rewritten;
+        job.history_warnings = history.warnings;
+        if app.unattended && !job.history_warnings.is_empty() {
+            append(app, &format!("\n{}\n", job.history_warnings.join("\n")));
+        }
+        if app.unattended && job.rewritten && !job.allow_rewrite {
+            let why = format!(
+                "{}: upstream history was rewritten ({} is not a descendant of the locked commit {}); no changes were made. Set allow_history_rewrite: true in the declaration to allow this unattended.",
+                job.name,
+                short(&job.commit),
+                short(old)
+            );
+            return fail(app, &job, &why);
+        }
+    }
     if !app.unattended
         && job.upgrade
-        && let Some(old) = installed
-            .as_ref()
-            .and_then(|record| record.commit.clone())
-            .or_else(|| locked_commit(&job.name))
-            .filter(|old| *old != job.commit)
+        && let Some(old) = old
     {
         let args = vec![
             "log".to_string(),
@@ -1429,9 +1695,12 @@ mod tests {
             },
             src: std::env::temp_dir(),
             upgrade: false,
+            allow_rewrite: false,
             commit: String::new(),
             plan: None,
             review: None,
+            history_warnings: Vec::new(),
+            rewritten: false,
             fetch_started: None,
             build_started: None,
         }
@@ -1472,6 +1741,125 @@ mod tests {
             .map(|buffer| buffer.get_contents())
             .unwrap_or_default();
         assert!(text.contains("timed out"), "{text:?}");
+    }
+
+    #[derive(Default)]
+    struct FakeGit {
+        ancestor: Option<bool>,
+        tag: Option<String>,
+    }
+
+    impl GitRemote for FakeGit {
+        fn remote_commit(&self, _repository: &str, _rev: Option<&str>) -> Result<String, String> {
+            Ok(String::new())
+        }
+
+        fn build_plan_at(
+            &self,
+            _repository: &str,
+            _commit: &str,
+            _name: &str,
+            _dir: Option<&str>,
+            _build: Option<&str>,
+            _features: &[String],
+        ) -> Result<BuildPlan, String> {
+            Err("not used".into())
+        }
+
+        fn is_ancestor(
+            &self,
+            _repository: &str,
+            _checkout: Option<&Path>,
+            _old: &str,
+            _new: &str,
+        ) -> Result<bool, String> {
+            self.ancestor.ok_or_else(|| "unknown history".into())
+        }
+
+        fn tag_commit(&self, _repository: &str, _rev: &str) -> Result<Option<String>, String> {
+            Ok(self.tag.clone())
+        }
+    }
+
+    #[test]
+    fn a_fast_forward_has_no_history_warnings() {
+        let git = FakeGit {
+            ancestor: Some(true),
+            tag: None,
+        };
+        let history = history_warnings(
+            &git,
+            "https://example.test/repo",
+            None,
+            Some("main"),
+            Some("aaaaaaa"),
+            "bbbbbbb",
+        );
+        assert_eq!(history, HistoryWarnings::default());
+    }
+
+    #[test]
+    fn a_rewritten_history_is_flagged() {
+        let git = FakeGit {
+            ancestor: Some(false),
+            tag: None,
+        };
+        let history = history_warnings(
+            &git,
+            "https://example.test/repo",
+            None,
+            Some("main"),
+            Some("aaaaaaa"),
+            "bbbbbbb",
+        );
+        assert!(history.rewritten);
+        assert!(
+            history.warnings[0].contains("not a descendant")
+                && history.warnings[0].contains("rewritten"),
+            "{:?}",
+            history.warnings
+        );
+    }
+
+    #[test]
+    fn a_moved_tag_is_flagged_even_for_a_fast_forward() {
+        let git = FakeGit {
+            ancestor: Some(true),
+            tag: Some("bbbbbbb".into()),
+        };
+        let history = history_warnings(
+            &git,
+            "https://example.test/repo",
+            None,
+            Some("v1"),
+            Some("aaaaaaa"),
+            "bbbbbbb",
+        );
+        assert!(!history.rewritten);
+        assert!(
+            history.warnings[0].contains("tag v1") && history.warnings[0].contains("was moved"),
+            "{:?}",
+            history.warnings
+        );
+    }
+
+    #[test]
+    fn an_ancestry_error_is_a_warning_not_a_rewrite() {
+        let git = FakeGit::default();
+        let history = history_warnings(
+            &git,
+            "https://example.test/repo",
+            None,
+            None,
+            Some("aaaaaaa"),
+            "bbbbbbb",
+        );
+        assert!(!history.rewritten);
+        assert!(
+            history.warnings[0].contains("couldn't verify"),
+            "{:?}",
+            history.warnings
+        );
     }
 
     #[cfg(unix)]

@@ -433,6 +433,9 @@ use_package("consult", #{
 //         build may inherit; all other variables are dropped
 //     build_timeout_secs: 1800          kill a build that runs this long
 //         (the default is 30 minutes)
+//     allow_history_rewrite: true       let an unattended upgrade move to
+//         an upstream commit that isn't a descendant of the locked one
+//         (a force-push or rewritten history); interactive upgrades only warn
 
 // ---- files
 

@@ -914,16 +914,24 @@ the author can commit a reviewed `build = "..."` instead.
 `M-x package-vc-upgrade` and `package-vc-upgrade-all` fetch, check out
 the same rev again (a branch moves on, a tag stays unless it was moved)
 and rebuild only if the commit changed. Forge shows commit subjects before
-applying, flags `BREAKING` markers and moved tags, and asks for confirmation.
-Before installing the built component it applies the same capability diff as
-an index upgrade. Unattended runs stop on additions; a checkout and build may
-already exist, but the installed component and lock entry are not replaced.
-`C-u` on either Git upgrade command shows a plan using `git ls-remote`
-without fetching or changing the checkout, and detects the build command
-in the remote revision rather than reusing the installed one. Failed
-builds, smoke tests or lock recording restore the previous artifact,
-installed record and lock entry. A smoke test loads the candidate in an
-isolated editor, runs its `init`, and checks that manifest commands
+applying and flags `BREAKING` markers. It also warns when the new commit is
+not a descendant of the locked commit (a force-push or rewritten history)
+and when a pinned tag now points to a different commit. These warnings do
+not block an interactive upgrade. Unattended runs stop on a rewritten
+history before installing anything unless the declaration sets
+`allow_history_rewrite: true`; moved-tag warnings are informational.
+Ancestry needs commit objects, so Forge fetches old and new commits into a
+scratch repository rather than changing the real checkout. Before
+installing the built component it applies the same capability diff as an
+index upgrade. Unattended runs also stop on capability additions; a
+checkout and build may already exist, but the installed component and lock
+entry are not replaced. `C-u` on either Git upgrade command shows a plan
+using `git ls-remote` for revisions and tags and a scratch repository for
+ancestry, without fetching into or changing the real checkout, and detects
+the build command in the remote revision rather than reusing the installed
+one. Failed builds, smoke tests or lock recording restore the previous
+artifact, installed record and lock entry. A smoke test loads the candidate
+in an isolated editor, runs its `init`, and checks that manifest commands
 registered. `package-upgrade-all` includes Git packages and rolls back the
 whole run if any package fails; `package-delete` removes the clone too.
 `packages.toml` records the repository, rev, commit and build command of
