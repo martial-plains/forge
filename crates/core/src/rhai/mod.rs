@@ -1344,9 +1344,21 @@ fn name_or_names(v: &Dynamic, what: &str) -> RhaiResult<Vec<String>> {
 /// `use_package(name, spec)`: record a declared plugin.
 fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
     use crate::declare::PluginUse;
-    const KEYS: [&str; 12] = [
-        "git", "rev", "index", "url", "sha256", "config", "grant", "hook", "on", "after",
-        "version", "freeze",
+    const KEYS: [&str; 14] = [
+        "git",
+        "rev",
+        "index",
+        "url",
+        "sha256",
+        "config",
+        "grant",
+        "hook",
+        "on",
+        "after",
+        "version",
+        "freeze",
+        "build_env",
+        "build_timeout_secs",
     ];
     for k in spec.keys() {
         if !KEYS.contains(&k.as_str()) {
@@ -1368,6 +1380,20 @@ fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
         frozen: map_bool(spec, "freeze")?.unwrap_or(false),
         url: map_string(spec, "url")?,
         sha256: map_string(spec, "sha256")?,
+        build_env: map_get(spec, "build_env")
+            .map(|value| name_or_names(value, "build_env"))
+            .transpose()?
+            .unwrap_or_default(),
+        build_timeout_secs: match map_get(spec, "build_timeout_secs") {
+            Some(value) => {
+                let secs = as_int(value, "build_timeout_secs")?;
+                if secs <= 0 {
+                    return Err(err("build_timeout_secs must be positive"));
+                }
+                Some(secs as u64)
+            }
+            None => None,
+        },
         ..Default::default()
     };
     if let Some(config) = map_get(spec, "config") {

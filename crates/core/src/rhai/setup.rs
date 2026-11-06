@@ -1380,6 +1380,9 @@ const USE_PACKAGE_KEYS: &[&str] = &[
     "version",
     "load_path",
     "no_require",
+    // Forge extensions.
+    "build_env",
+    "build_timeout_secs",
     "magic",
     "magic_fallback",
     "interpreter",
@@ -1830,12 +1833,28 @@ fn use_package_spec(
             Some(v) => as_bool(v, "no_require")?,
             None => false,
         };
+        let build_env = match spec.get("build_env") {
+            Some(v) => name_or_names(v, "build_env")?,
+            None => Vec::new(),
+        };
+        let build_timeout_secs = match spec.get("build_timeout_secs") {
+            Some(v) => {
+                let secs = as_int(v, "build_timeout_secs")?;
+                if secs <= 0 {
+                    return Err(err("build_timeout_secs must be positive"));
+                }
+                Some(secs as u64)
+            }
+            None => None,
+        };
         if let Some(u) = s.uses.borrow_mut().iter_mut().find(|u| u.name == name) {
             u.load_path = load_path;
             u.no_require = no_require;
             u.git_dir = git_dir;
             u.build = build;
             u.features = features;
+            u.build_env = build_env;
+            u.build_timeout_secs = build_timeout_secs;
             u.requires = requires;
             u.line = line;
         }

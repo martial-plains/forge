@@ -58,12 +58,26 @@ pub struct PluginUse {
     pub build: Option<String>,
     /// With `git` and a Cargo build: cargo features to turn on.
     pub features: Vec<String>,
+    /// Extra environment names or `PREFIX_*` patterns this build may inherit.
+    pub build_env: Vec<String>,
+    /// With `git`: how long the build may run, in seconds.
+    pub build_timeout_secs: Option<u64>,
 }
 
 impl PluginUse {
     /// Is the plugin loaded lazily rather than at startup?
     pub fn lazy(&self) -> bool {
         !self.on_commands.is_empty() || !self.on_modes.is_empty() || !self.on_extensions.is_empty()
+    }
+
+    /// What the build may inherit and how long it may run.
+    pub fn build_policy(&self) -> crate::package::BuildPolicy {
+        let mut policy = crate::package::BuildPolicy::default();
+        policy.allow(self.build_env.iter().cloned());
+        if let Some(secs) = self.build_timeout_secs {
+            policy.timeout = std::time::Duration::from_secs(secs);
+        }
+        policy
     }
 }
 

@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -800,6 +801,137 @@ impl BuildRecipe {
     }
 }
 
+/// Default time a source build may run before it is killed.
+pub const DEFAULT_BUILD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+
+/// Environment variables a build may inherit by default. A trailing `*`
+/// is a prefix match; every other name is an exact match.
+pub const DEFAULT_BUILD_ENV: &[&str] = &[
+    // Core.
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LC_*",
+    // Toolchains.
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    // Windows.
+    "SystemRoot",
+    "COMSPEC",
+    "PATHEXT",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "SystemDrive",
+    // Proxies and certificate bundles.
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+];
+
+/// What a source build may inherit from the parent process and how long
+/// it may run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildPolicy {
+    /// Names, or `PREFIX_*` patterns, copied from the parent environment.
+    /// Everything else is dropped.
+    pub env_allow: Vec<String>,
+    pub timeout: Duration,
+}
+
+impl Default for BuildPolicy {
+    fn default() -> Self {
+        Self {
+            env_allow: DEFAULT_BUILD_ENV
+                .iter()
+                .map(|name| name.to_string())
+                .collect(),
+            timeout: DEFAULT_BUILD_TIMEOUT,
+        }
+    }
+}
+
+impl BuildPolicy {
+    /// Add names or patterns to the allowlist.
+    pub fn allow<I, S>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.env_allow.extend(names.into_iter().map(Into::into));
+    }
+}
+
+/// Copy the variables `policy` allows out of `parent`.
+///
+/// Pure: the caller reads the process environment (see [`process_env`]),
+/// so the filter is testable without touching the real environment.
+pub fn build_env(policy: &BuildPolicy, parent: &[(String, String)]) -> Vec<(String, String)> {
+    parent
+        .iter()
+        .filter(|(name, _)| {
+            policy
+                .env_allow
+                .iter()
+                .any(|pattern| env_name_matches(pattern, name))
+        })
+        .cloned()
+        .collect()
+}
+
+/// The real process environment, with non-Unicode values made lossy.
+pub fn process_env() -> Vec<(String, String)> {
+    std::env::vars_os()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect()
+}
+
+fn env_name_matches(pattern: &str, name: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => name_has_prefix(name, prefix),
+        None => name_eq(name, pattern),
+    }
+}
+
+#[cfg(windows)]
+fn name_eq(name: &str, expected: &str) -> bool {
+    name.eq_ignore_ascii_case(expected)
+}
+
+#[cfg(not(windows))]
+fn name_eq(name: &str, expected: &str) -> bool {
+    name == expected
+}
+
+#[cfg(windows)]
+fn name_has_prefix(name: &str, prefix: &str) -> bool {
+    let (name, prefix) = (name.as_bytes(), prefix.as_bytes());
+    name.len() >= prefix.len() && name[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
+#[cfg(not(windows))]
+fn name_has_prefix(name: &str, prefix: &str) -> bool {
+    name.starts_with(prefix)
+}
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ForgePackageToml {
@@ -818,8 +950,10 @@ struct ForgePackageToml {
 /// 2. An executable `build.sh`: run as `./build.sh -o "$OUT"` (what the
 ///    Lua and C SDKs' scripts and plugins/lsp take).
 /// 3. `Cargo.toml`: `cargo build --release --target wasm32-wasip2`.
-/// 4. `package.json` with a "forge" field: `npm install` and the JS SDK's
-///    `forge-plugin build` on its "main" (or plugin.js / plugin.ts).
+/// 4. `package.json` with a "forge" field: `npm ci --ignore-scripts` and
+///    the JS SDK's `forge-plugin build` on its "main" (or plugin.js /
+///    plugin.ts). The repository must commit `package-lock.json` or
+///    `npm-shrinkwrap.json`.
 /// 5. Exactly one `.wasm` at the top or in `dist/`: used as is.
 pub fn build_plan(src: &Path, default_name: &str) -> Result<BuildPlan, String> {
     let out = src
@@ -881,10 +1015,16 @@ pub fn build_plan(src: &Path, default_name: &str) -> Result<BuildPlan, String> {
             let main = extract_json_string(&text, "main")
                 .or(main.map(String::from))
                 .ok_or("package.json: no \"main\" or plugin.js")?;
+            if !src.join("package-lock.json").exists() && !src.join("npm-shrinkwrap.json").exists()
+            {
+                return Err(format!(
+                    "{default_name}: package.json has no package-lock.json or npm-shrinkwrap.json, so npm ci can't run. Ask the author to commit one, or declare a reviewed build = \"...\" for this plugin."
+                ));
+            }
             return Ok(BuildPlan {
                 name,
                 command: Some(format!(
-                    "npm install --no-audit --no-fund && npx forge-plugin build {main} -o \"$OUT\""
+                    "npm ci --ignore-scripts --no-audit --no-fund && npx --no-install forge-plugin build {main} -o \"$OUT\""
                 )),
                 output: out,
                 how: "package.json".into(),
@@ -1049,5 +1189,132 @@ mod vc_tests {
         assert_eq!(i.packages["x"].git.as_deref(), Some("https://g/x"));
         assert!(Index::parse("[[package]]\nname = \"x\"\nversion = \"1\"\n", "i").is_err());
         assert!(Index::parse("[[package]]\nname = \"x\"\nversion = \"1\"\ngit = \"g\"\nurl = \"u\"\nsha256 = \"s\"\n", "i").is_err());
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn default_build_policy_allows_toolchains_and_proxies() {
+        let policy = BuildPolicy::default();
+        let parent = vec![
+            ("PATH".into(), "/bin".into()),
+            ("CARGO_HOME".into(), "/c".into()),
+            ("LC_ALL".into(), "C".into()),
+            ("HTTPS_PROXY".into(), "http://p".into()),
+            ("NPM_TOKEN".into(), "secret".into()),
+        ];
+        let env = build_env(&policy, &parent);
+        let names: Vec<&str> = env.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"PATH"));
+        assert!(names.contains(&"CARGO_HOME"));
+        assert!(names.contains(&"LC_ALL"));
+        assert!(names.contains(&"HTTPS_PROXY"));
+        assert!(!names.contains(&"NPM_TOKEN"), "{names:?}");
+    }
+
+    #[test]
+    fn build_env_exact_and_prefix_patterns() {
+        let policy = BuildPolicy {
+            env_allow: vec!["MY_*".into(), "TOKEN".into()],
+            ..Default::default()
+        };
+        let parent = vec![
+            ("MY_TOKEN".into(), "a".into()),
+            ("MY_".into(), "b".into()),
+            ("TOKEN".into(), "c".into()),
+            ("TOKEN_EXTRA".into(), "d".into()),
+            ("OTHER".into(), "e".into()),
+        ];
+        let env = build_env(&policy, &parent);
+        let names: Vec<&str> = env.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["MY_TOKEN", "MY_", "TOKEN"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn build_env_names_ignore_case_on_windows() {
+        let policy = BuildPolicy {
+            env_allow: vec!["Path".into(), "lc_*".into()],
+            ..Default::default()
+        };
+        let parent = vec![
+            ("PATH".into(), "a".into()),
+            ("LC_ALL".into(), "b".into()),
+            ("other".into(), "c".into()),
+        ];
+        let env = build_env(&policy, &parent);
+        let names: Vec<&str> = env.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["PATH", "LC_ALL"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_env_keeps_allowlisted_values_and_drops_secrets_from_spawn() {
+        use crate::process::{ProcessEvent, Processes, Program};
+
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let secret = format!("FORGE_TEST_SECRET_{}", std::process::id());
+        let allowed = format!("FORGE_TEST_ALLOWED_{}", std::process::id());
+        // SAFETY: this test holds ENV_LOCK, so it is the only one in this
+        // module changing the environment while it runs.
+        unsafe {
+            std::env::set_var(&secret, "top-secret");
+            std::env::set_var(&allowed, "visible");
+        }
+        let mut policy = BuildPolicy::default();
+        policy.allow([allowed.clone()]);
+        let env = build_env(&policy, &process_env());
+        let names: Vec<&str> = env.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(!names.contains(&secret.as_str()), "{names:?}");
+        assert!(names.contains(&allowed.as_str()), "{names:?}");
+
+        let mut processes = Processes::new();
+        let dir = std::env::temp_dir();
+        let script = format!("printf '%s|%s' \"${{{allowed}:-unset}}\" \"${{{secret}:-unset}}\"");
+        let id = processes
+            .spawn_env(Program::Shell(&script), &dir, false, &env)
+            .unwrap();
+        let events = processes.wait(id, Duration::from_secs(10));
+        let output: String = events
+            .iter()
+            .filter_map(|event| match event {
+                ProcessEvent::Output(_, text) | ProcessEvent::Stderr(_, text) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(output, "visible|unset");
+        // SAFETY: still holding ENV_LOCK.
+        unsafe {
+            std::env::remove_var(&secret);
+            std::env::remove_var(&allowed);
+        }
+    }
+
+    #[test]
+    fn npm_plan_requires_a_lockfile_and_disables_scripts() {
+        let dir = std::env::temp_dir().join(format!("forge-npm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.js"), "").unwrap();
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"main":"plugin.js","forge":{}}"#,
+        )
+        .unwrap();
+        let error = build_plan(&dir, "p").unwrap_err();
+        assert!(error.contains("package-lock.json"), "{error}");
+        assert!(error.contains("npm-shrinkwrap.json"), "{error}");
+
+        std::fs::write(dir.join("package-lock.json"), "{}").unwrap();
+        let plan = build_plan(&dir, "p").unwrap();
+        let command = plan.command.unwrap();
+        assert!(command.starts_with("npm ci --ignore-scripts"), "{command}");
+        assert!(
+            command.contains("npx --no-install forge-plugin build plugin.js"),
+            "{command}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -931,6 +931,8 @@ fn plugin_use_from_init_rhai() {
               hook: #{ "org-mode": "org-modern-mode" },
               on: #{ commands: ["org-modern-mode"], extensions: "org" },
               after: ["org"],
+              build_env: ["NPM_TOKEN", "MY_*"],
+              build_timeout_secs: 120,
             });
             "#,
     ));
@@ -940,6 +942,11 @@ fn plugin_use_from_init_rhai() {
     assert_eq!(u.name, "org-modern");
     assert_eq!(u.rev.as_deref(), Some("v0.2.0"));
     assert!(u.grants.network);
+    assert_eq!(u.build_env, ["NPM_TOKEN", "MY_*"]);
+    assert_eq!(u.build_timeout_secs, Some(120));
+    let policy = u.build_policy();
+    assert!(policy.env_allow.contains(&"NPM_TOKEN".to_string()));
+    assert_eq!(policy.timeout, std::time::Duration::from_secs(120));
     assert_eq!(
         u.hooks,
         [("org-mode".to_string(), "org-modern-mode".into())]
@@ -1125,7 +1132,8 @@ fn use_package_conditions_code_and_modes() {
         &rhai,
         &mut ed,
         r#"use_package("built", #{ vc: #{ url: "https://example.com/b", rev: "main",
-             make: "cargo build -p b", lisp_dir: "crates/b", features: ["fast"] } });"#,
+             make: "cargo build -p b", lisp_dir: "crates/b", features: ["fast"] },
+             build_env: ["NPM_TOKEN", "MY_*"], build_timeout_secs: 90 });"#,
     ));
     let b = rhai
         .plugin_uses()
@@ -1137,6 +1145,18 @@ fn use_package_conditions_code_and_modes() {
     assert_eq!(b.build.as_deref(), Some("cargo build -p b"));
     assert_eq!(b.git_dir.as_deref(), Some("crates/b"));
     assert_eq!(b.features, ["fast"]);
+    assert_eq!(b.build_env, ["NPM_TOKEN", "MY_*"]);
+    assert_eq!(b.build_timeout_secs, Some(90));
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"use_package("slow", #{ build_timeout_secs: 0 });"#,
+    );
+    assert!(
+        out.errors[0].contains("build_timeout_secs"),
+        "{:?}",
+        out.errors
+    );
     let bounded = rhai
         .plugin_uses()
         .into_iter()

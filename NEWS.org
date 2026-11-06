@@ -1,5 +1,20 @@
 #+title: Forge NEWS
 * 0.1.0
+** Package builds get a scrubbed environment and a time limit
+Source builds no longer inherit the whole process environment. Only
+=PATH=, =HOME=, =USER=, =LOGNAME=, =LANG=, =LC_*=, temporary-directory
+variables, Rust toolchain variables, Windows system variables and
+proxy/certificate variables are passed by default; tokens and
+=SSH_AUTH_SOCK= are dropped. Add names or =PREFIX_*= patterns with
+=build_env= and set =build_timeout_secs= in a declaration. Builds now
+time out after 30 minutes (killed and reported as timed out), and
+=*Package Build*= lists the variable names that were passed through,
+never their values. JavaScript plugins now build with
+=npm ci --ignore-scripts= and must commit a lockfile; =npx --no-install=
+will not download an unlisted =forge-plugin=. Because lifecycle scripts
+are disabled, a dependency that needs =postinstall= (native modules) will
+not build; a reviewed =build = "..."= in the declaration still overrides
+the plan.
 ** Sharing safety and init review
 The manual now documents the configuration-sharing policy and ships a
 =.gitignore= snippet for a config repository: share =init.rhai= and

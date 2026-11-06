@@ -19,12 +19,13 @@
 
 use crate::app::App;
 use crate::minibuffer::{ConfirmAction, Purpose};
-use forge_core::package::{self, BuildPlan, Installed, InstalledDb, VcSource};
+use forge_core::package::{self, BuildPlan, BuildPolicy, Installed, InstalledDb, VcSource};
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use forge_core::process::{ProcessEvent, ProcessId, Processes, Program, shell_quote};
 use forge_core::{CapabilityDiff, LockFile};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::time::Instant;
 
 pub const BUFFER: &str = "*Package Build*";
 
@@ -38,6 +39,8 @@ pub struct VcJob {
     dir: Option<String>,
     build: Option<String>,
     features: Vec<String>,
+    /// What the build may inherit and how long it may run.
+    policy: BuildPolicy,
     src: PathBuf,
     /// Upgrading: stop if the commit is the one installed.
     upgrade: bool,
@@ -103,7 +106,7 @@ pub struct Vc {
     processes: Processes,
     queue: VecDeque<VcJob>,
     /// The job being worked on, its running step and that step's stdout.
-    current: Option<(VcJob, Stage, ProcessId, String)>,
+    current: Option<Current>,
     /// A job waiting for "build it? y or n".
     confirming: Option<VcJob>,
     /// That question, until the minibuffer is free to ask it.
@@ -111,6 +114,18 @@ pub struct Vc {
     reviewing: Option<VcJob>,
     capability: Option<PendingCapability>,
     git: Box<dyn GitRemote>,
+    /// The default build policy; declarations extend it per job.
+    policy: BuildPolicy,
+}
+
+struct Current {
+    job: VcJob,
+    stage: Stage,
+    id: ProcessId,
+    out: String,
+    /// When a build must be killed; only build stages have one.
+    deadline: Option<Instant>,
+    timed_out: bool,
 }
 
 struct PendingCapability {
@@ -130,6 +145,7 @@ impl Default for Vc {
             reviewing: None,
             capability: None,
             git: Box::new(SystemGit),
+            policy: BuildPolicy::default(),
         }
     }
 }
@@ -153,15 +169,20 @@ impl Vc {
     pub fn set_git_remote(&mut self, remote: Box<dyn GitRemote>) {
         self.git = remote;
     }
+
+    /// Replace the default build policy (declarations still extend it).
+    pub fn set_build_policy(&mut self, policy: BuildPolicy) {
+        self.policy = policy;
+    }
 }
 
 /// What the package manager should show for an in-flight Git install.
 pub fn status(app: &App, name: &str) -> Option<&'static str> {
     let vc = &app.packages.vc;
-    if let Some((job, stage, _, _)) = &vc.current
-        && job.name == name
+    if let Some(current) = &vc.current
+        && current.job.name == name
     {
-        return Some(match stage {
+        return Some(match current.stage {
             Stage::Fetch => "fetching Git",
             Stage::Checkout => "checking out",
             Stage::Submodules => "getting submodules",
@@ -276,13 +297,18 @@ pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgra
             return app.error(format!("{name}: lisp_dir must stay inside the repository"));
         }
     }
+    let (build, features, policy) = match &declared {
+        Some(u) => (u.build.clone(), u.features.clone(), u.build_policy()),
+        None => (None, Vec::new(), app.packages.vc.policy.clone()),
+    };
     let job = VcJob {
         name: name.to_string(),
         repo: repo.to_string(),
         rev,
         dir,
-        build: declared.as_ref().and_then(|u| u.build.clone()),
-        features: declared.map(|u| u.features).unwrap_or_default(),
+        build,
+        features,
+        policy,
         src,
         upgrade,
         commit: String::new(),
@@ -579,7 +605,7 @@ fn next(app: &mut App) {
 }
 
 fn spawn(app: &mut App, program: Program, dir: PathBuf) -> Result<ProcessId, String> {
-    spawn_with_env(app, program, dir, &[])
+    spawn_process(app, program, dir, false, &[])
 }
 
 fn spawn_with_env(
@@ -588,21 +614,47 @@ fn spawn_with_env(
     dir: PathBuf,
     env: &[(String, String)],
 ) -> Result<ProcessId, String> {
+    spawn_process(app, program, dir, true, env)
+}
+
+fn spawn_process(
+    app: &mut App,
+    program: Program,
+    dir: PathBuf,
+    clear: bool,
+    env: &[(String, String)],
+) -> Result<ProcessId, String> {
     let line = match &program {
         Program::Shell(l) => format!("$ {l}\n"),
         Program::Argv(p, a) => format!("$ {p} {}\n", a.join(" ")),
     };
     append(app, &line);
-    app.packages
-        .vc
-        .processes
-        .spawn(program, &dir, false, env)
-        .map_err(|e| e.to_string())
+    let processes = &mut app.packages.vc.processes;
+    let r = if clear {
+        processes.spawn_env(program, &dir, false, env)
+    } else {
+        processes.spawn(program, &dir, false, env)
+    };
+    r.map_err(|e| e.to_string())
 }
 
 fn step(app: &mut App, job: VcJob, stage: Stage, r: Result<ProcessId, String>) {
     match r {
-        Ok(id) => app.packages.vc.current = Some((job, stage, id, String::new())),
+        Ok(id) => {
+            let deadline = if stage == Stage::Build {
+                Instant::now().checked_add(job.policy.timeout)
+            } else {
+                None
+            };
+            app.packages.vc.current = Some(Current {
+                job,
+                stage,
+                id,
+                out: String::new(),
+                deadline,
+                timed_out: false,
+            });
+        }
         Err(e) => {
             log_stage(&job, stage, Status::Failed, Some(&e));
             fail(app, &job, &e)
@@ -687,40 +739,58 @@ pub fn poll(app: &mut App) {
     for ev in app.packages.vc.processes.poll() {
         match ev {
             ProcessEvent::Output(id, text) => {
-                if let Some((_, _, cur, out)) =
-                    app.packages.vc.current.as_mut().filter(|c| c.2 == id)
-                {
-                    let _ = cur;
-                    out.push_str(&text);
+                if let Some(current) = app.packages.vc.current.as_mut().filter(|c| c.id == id) {
+                    current.out.push_str(&text);
                 }
                 append(app, &text);
             }
             ProcessEvent::Stderr(_, text) => append(app, &text),
             ProcessEvent::Exited(id, code) => {
-                let Some((job, stage, cur, out)) = app.packages.vc.current.take() else {
+                let Some(current) = app.packages.vc.current.take() else {
                     continue;
                 };
-                if cur != id {
-                    app.packages.vc.current = Some((job, stage, cur, out));
+                if current.id != id {
+                    app.packages.vc.current = Some(current);
                     continue;
                 }
-                if code != Some(0) {
-                    let what = match stage {
-                        Stage::Fetch => "git couldn't get the repository",
-                        Stage::Checkout => "git couldn't check out that revision",
-                        Stage::Submodules => "git couldn't update submodules",
-                        Stage::Commit => "git couldn't read the checked-out revision",
-                        Stage::Review => "git couldn't list the changes",
-                        Stage::Build => "the build failed",
+                if current.timed_out || code != Some(0) {
+                    let message = if current.timed_out {
+                        format!(
+                            "the build timed out after {} s (see {BUFFER})",
+                            current.job.policy.timeout.as_secs()
+                        )
+                    } else {
+                        let what = match current.stage {
+                            Stage::Fetch => "git couldn't get the repository",
+                            Stage::Checkout => "git couldn't check out that revision",
+                            Stage::Submodules => "git couldn't update submodules",
+                            Stage::Commit => "git couldn't read the checked-out revision",
+                            Stage::Review => "git couldn't list the changes",
+                            Stage::Build => "the build failed",
+                        };
+                        format!("{what} (see {BUFFER})")
                     };
-                    let message = format!("{what} (see {BUFFER})");
-                    log_stage(&job, stage, Status::Failed, Some(&message));
-                    fail(app, &job, &message);
+                    log_stage(&current.job, current.stage, Status::Failed, Some(&message));
+                    fail(app, &current.job, &message);
                     continue;
                 }
-                finished(app, job, stage, out);
+                finished(app, current.job, current.stage, current.out);
             }
         }
+    }
+    // Kill a build that outlived its deadline; its exit is reported by
+    // the next poll.
+    let expired = app.packages.vc.current.as_ref().and_then(|current| {
+        current
+            .deadline
+            .filter(|deadline| !current.timed_out && Instant::now() >= *deadline)
+            .map(|_| current.id)
+    });
+    if let Some(id) = expired {
+        if let Some(current) = app.packages.vc.current.as_mut() {
+            current.timed_out = true;
+        }
+        app.packages.vc.processes.kill(id);
     }
 }
 
@@ -1104,20 +1174,19 @@ fn build(app: &mut App, mut job: VcJob) {
         crate::compile::display_buffer(app, id);
     }
     let build_started = Timer::start();
+    let mut env = package::build_env(&job.policy, &package::process_env());
+    env.push(("OUT".into(), plan.output.display().to_string()));
+    let names: Vec<&str> = env.iter().map(|(name, _)| name.as_str()).collect();
+    append(app, &format!("\nBuild environment: {}\n", names.join(", ")));
     #[cfg(windows)]
-    let r = spawn_with_env(
-        app,
-        Program::Shell(&command),
-        job.root(),
-        &[("OUT".into(), plan.output.display().to_string())],
-    );
+    let r = spawn_with_env(app, Program::Shell(&command), job.root(), &env);
     #[cfg(not(windows))]
     let r = {
         let script = format!(
             "OUT={}; export OUT; {command}",
             shell_quote(&plan.output.display().to_string())
         );
-        spawn(app, Program::Shell(&script), job.root())
+        spawn_with_env(app, Program::Shell(&script), job.root(), &env)
     };
     job.build_started = Some(build_started);
     step(app, job, Stage::Build, r);
@@ -1338,4 +1407,94 @@ fn append(app: &mut App, text: &str) {
         return;
     };
     crate::compile::append(app, id, text);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge_core::Editor;
+    use std::time::Duration;
+
+    fn job(timeout: Duration) -> VcJob {
+        VcJob {
+            name: "slow".into(),
+            repo: "https://example.com/slow".into(),
+            rev: None,
+            dir: None,
+            build: Some("sleep 30".into()),
+            features: Vec::new(),
+            policy: BuildPolicy {
+                timeout,
+                ..Default::default()
+            },
+            src: std::env::temp_dir(),
+            upgrade: false,
+            commit: String::new(),
+            plan: None,
+            review: None,
+            fetch_started: None,
+            build_started: None,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_build_past_its_deadline_is_killed_and_reported_as_timed_out() {
+        let mut app = App::new(Editor::default());
+        clear_output(&mut app);
+        let dir = std::env::temp_dir();
+        let id = app
+            .packages
+            .vc
+            .processes
+            .spawn_env(Program::Shell("sleep 30"), &dir, false, &[])
+            .unwrap();
+        let timeout = Duration::from_secs(1);
+        app.packages.vc.current = Some(Current {
+            job: job(timeout),
+            stage: Stage::Build,
+            id,
+            out: String::new(),
+            deadline: Some(Instant::now() + Duration::from_millis(50)),
+            timed_out: false,
+        });
+        let started = Instant::now();
+        while app.packages.vc.current.is_some() && started.elapsed() < Duration::from_secs(10) {
+            poll(&mut app);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.packages.vc.current.is_none(), "still running");
+        let id = app.editor.find_buffer(BUFFER).expect("build buffer");
+        let text = app
+            .editor
+            .state
+            .get_buffer(id)
+            .map(|buffer| buffer.get_contents())
+            .unwrap_or_default();
+        assert!(text.contains("timed out"), "{text:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_build_stages_keep_the_inherited_environment() {
+        let mut app = App::new(Editor::default());
+        clear_output(&mut app);
+        let id = spawn(
+            &mut app,
+            Program::Shell("printf '%s' \"$PATH\""),
+            std::env::temp_dir(),
+        )
+        .unwrap();
+        let events = app.packages.vc.processes.wait(id, Duration::from_secs(10));
+        let output: String = events
+            .iter()
+            .filter_map(|event| match event {
+                ProcessEvent::Output(_, text) | ProcessEvent::Stderr(_, text) => {
+                    Some(text.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(output, std::env::var("PATH").unwrap());
+    }
 }

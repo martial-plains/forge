@@ -258,6 +258,8 @@ fn static_spec_hash(u: &PluginUse) -> Result<String, String> {
         "git_dir": u.git_dir,
         "build": u.build,
         "features": u.features,
+        "build_env": u.build_env,
+        "build_timeout_secs": u.build_timeout_secs,
     });
     serde_json::to_vec(&static_spec)
         .map(|bytes| forge_core::package::sha256_hex(&bytes))

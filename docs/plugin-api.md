@@ -888,13 +888,28 @@ How it's built, in order:
 2. An executable `build.sh`, run as `./build.sh -o "$OUT"`. That's what
    the Lua and C SDKs' scripts take.
 3. `Cargo.toml`: `cargo build --release --target wasm32-wasip2`.
-4. `package.json` with a `"forge"` field: `npm install`, then the JS
-   SDK's `forge-plugin build`.
+4. `package.json` with a `"forge"` field: `npm ci --ignore-scripts`
+   (the repository must commit `package-lock.json` or
+   `npm-shrinkwrap.json`), then `npx --no-install forge-plugin build`.
 5. Exactly one `.wasm` at the top or in `dist/`, used as is.
 
 A build runs code from the repository with your rights, so Forge shows
 the command and asks first. It asks again only if the command changes.
 Git's and the build's output go to `*Package Build*`.
+
+Builds get a scrubbed environment. By default they inherit only `PATH`,
+`HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, the temporary-directory
+variables, the Rust toolchain variables (`CARGO_HOME`, `RUSTUP_HOME`),
+the Windows system variables, and proxy/certificate variables such as
+`HTTP(S)_PROXY` and `NODE_EXTRA_CA_CERTS`. Tokens such as `NPM_TOKEN` and
+`SSH_AUTH_SOCK` are not passed. A declaration can add names or `PREFIX_*`
+patterns with `build_env` and change the limit with
+`build_timeout_secs` (default 30 minutes); a build that runs longer is
+killed and reported as timed out. `*Package Build*` lists the variable
+names passed through, never their values. Files under `HOME` are still
+readable. Because `npm ci` runs with `--ignore-scripts`, a package whose
+dependencies need a `postinstall` step (native modules) will not build;
+the author can commit a reviewed `build = "..."` instead.
 
 `M-x package-vc-upgrade` and `package-vc-upgrade-all` fetch, check out
 the same rev again (a branch moves on, a tag stays unless it was moved)
@@ -1022,7 +1037,7 @@ per declaration saying whether it was skipped, deferred or loads at startup.
 `docs/init.example.rhai` describes each. The remaining use-package keywords
 work under their underscore names: `pin` (the git revision; `use_package` has no `rev` or `on` key, those are `forge.plugin.declare`'s), `load_path`, `no_require`,
 `autoload`, `diminish`, `bind_star`, `interpreter`, `magic`, `magic_fallback`,
-`custom_face`. `vc` is a git url or a map like `:vc`: `#{ url, rev, make, lisp_dir, features }`, where `make` is the build command (given `$OUT`), `lisp_dir` the subdirectory to build in, and `features` cargo features to turn on. The build still asks before it first runs.
+`custom_face`. `vc` is a git url or a map like `:vc`: `#{ url, rev, make, lisp_dir, features }`, where `make` is the build command (given `$OUT`), `lisp_dir` the subdirectory to build in, and `features` cargo features to turn on. `build_env` (names or `PREFIX_*` patterns) and `build_timeout_secs` are top-level keys on the same declaration. The build still asks before it first runs.
 
 A plugin declared with `use_package` or `forge.plugin.declare` can say the
 same up front, with `on` (see the plugin API), so it starts lazily without

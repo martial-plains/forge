@@ -429,6 +429,10 @@ use_package("consult", #{
 //            lisp_dir: "crates/plugin",           build inside this directory
 //            features: ["fast"] }                 cargo features to enable
 //         (the first build of a command still asks before running it)
+//     build_env: ["NPM_TOKEN", "MY_*"]  extra variables (or prefixes) the
+//         build may inherit; all other variables are dropped
+//     build_timeout_secs: 1800          kill a build that runs this long
+//         (the default is 30 minutes)
 
 // ---- files
 

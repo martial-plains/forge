@@ -693,7 +693,7 @@ pub fn check_build_tools(ctx: &DoctorContext) -> Vec<Finding> {
                     Some(u.name.clone()),
                     u.line,
                     format!("{}: can't work out how to build it: {error}", u.name),
-                    "Add forge-package.toml, build.sh, Cargo.toml, package.json, or a build command.",
+                    "Add forge-package.toml, build.sh, Cargo.toml, package.json with a committed lockfile, or a build command.",
                 ));
                 continue;
             }
