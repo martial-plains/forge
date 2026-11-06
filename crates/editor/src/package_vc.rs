@@ -21,10 +21,17 @@ use crate::app::App;
 use crate::minibuffer::{ConfirmAction, Purpose};
 use forge_core::package::{self, BuildPlan, BuildPolicy, Installed, InstalledDb, VcSource};
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
+use forge_core::package_source::{
+    RepositoryInfo, SourceKind as PackageSourceKind, SystemRepositoryInfo, repository_warnings,
+};
 use forge_core::process::{ProcessEvent, ProcessId, Processes, Program, shell_quote};
 use forge_core::{CapabilityDiff, LockFile};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    mpsc::{self, Receiver, TryRecvError},
+};
 use std::time::Instant;
 
 pub const BUFFER: &str = "*Package Build*";
@@ -140,6 +147,9 @@ pub struct Vc {
     reviewing: Option<VcJob>,
     capability: Option<PendingCapability>,
     git: Box<dyn GitRemote>,
+    repository_info: Arc<dyn RepositoryInfo>,
+    repository_checks: bool,
+    repository_checks_pending: Vec<(String, Receiver<Vec<String>>)>,
     /// The default build policy; declarations extend it per job.
     policy: BuildPolicy,
 }
@@ -171,6 +181,9 @@ impl Default for Vc {
             reviewing: None,
             capability: None,
             git: Box::new(SystemGit),
+            repository_info: Arc::new(SystemRepositoryInfo),
+            repository_checks: false,
+            repository_checks_pending: Vec::new(),
             policy: BuildPolicy::default(),
         }
     }
@@ -178,7 +191,7 @@ impl Default for Vc {
 
 impl Vc {
     pub fn busy(&self) -> bool {
-        self.processes.any_running()
+        self.processes.any_running() || !self.repository_checks_pending.is_empty()
     }
 
     pub fn has_question(&self) -> bool {
@@ -194,6 +207,16 @@ impl Vc {
     /// Replace remote Git access (tests use a fixture implementation).
     pub fn set_git_remote(&mut self, remote: Box<dyn GitRemote>) {
         self.git = remote;
+    }
+
+    /// Replace repository metadata lookups (tests use a fixture).
+    pub fn set_repository_info(&mut self, info: Arc<dyn RepositoryInfo>) {
+        self.repository_info = info;
+    }
+
+    /// Turn optional archived/owner-changed checks on or off.
+    pub fn set_repository_checks(&mut self, on: bool) {
+        self.repository_checks = on;
     }
 
     /// Replace the default build policy (declarations still extend it).
@@ -309,6 +332,15 @@ pub fn install_spec(app: &mut App, spec: &str) {
 
 /// Queue a package to fetch, build and install.
 pub fn install(app: &mut App, name: &str, repo: &str, rev: Option<String>, upgrade: bool) {
+    if let Err(error) = crate::packages::check_source(app, PackageSourceKind::Git, repo) {
+        if upgrade {
+            crate::packages::abort_update(app, error);
+        } else {
+            app.error(error);
+        }
+        return;
+    }
+    start_repository_check(app, name, repo);
     let Some(src) = package::vc_dir(name) else {
         return app.error("No data directory (set HOME or FORGE_DATA_DIR)");
     };
@@ -412,6 +444,7 @@ pub fn dry_run_lines(app: &App) -> Result<Vec<String>, String> {
         if frozen.contains(&name) {
             continue;
         }
+        crate::packages::check_source(app, PackageSourceKind::Git, &repository)?;
         let package = records
             .packages
             .get(&name)
@@ -772,6 +805,56 @@ fn temp_checkout_dir() -> PathBuf {
     ))
 }
 
+fn start_repository_check(app: &mut App, name: &str, repo: &str) {
+    let vc = &app.packages.vc;
+    if !vc.repository_checks {
+        return;
+    }
+    let info = Arc::clone(&vc.repository_info);
+    let repository = repo.to_string();
+    let (tx, rx) = mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("package-repository-check".into())
+        .spawn(move || {
+            let warnings = info
+                .inspect(&repository)
+                .map(|metadata| repository_warnings(&repository, &metadata))
+                .unwrap_or_default();
+            let _ = tx.send(warnings);
+        });
+    if spawned.is_ok() {
+        app.packages
+            .vc
+            .repository_checks_pending
+            .push((name.to_string(), rx));
+    }
+}
+
+fn poll_repository_checks(app: &mut App) {
+    let mut finished = Vec::new();
+    app.packages
+        .vc
+        .repository_checks_pending
+        .retain_mut(|(name, rx)| match rx.try_recv() {
+            Ok(warnings) => {
+                finished.push((name.clone(), warnings));
+                false
+            }
+            Err(TryRecvError::Empty) => true,
+            Err(TryRecvError::Disconnected) => false,
+        });
+    for (name, warnings) in finished {
+        for warning in &warnings {
+            append(app, &format!("\n{warning}\n"));
+        }
+        if !warnings.is_empty() {
+            app.msg(format!(
+                "Repository check for {name} found a warning (see {BUFFER})"
+            ));
+        }
+    }
+}
+
 /// Start the next queued job, if nothing is running.
 fn next(app: &mut App) {
     let vc = &mut app.packages.vc;
@@ -942,6 +1025,7 @@ fn fail(app: &mut App, job: &VcJob, why: &str) {
 
 /// Output and finished steps (idle time).
 pub fn poll(app: &mut App) {
+    poll_repository_checks(app);
     ask(app);
     if app.packages.vc.current.is_none() {
         return;
@@ -1741,6 +1825,63 @@ mod tests {
             .map(|buffer| buffer.get_contents())
             .unwrap_or_default();
         assert!(text.contains("timed out"), "{text:?}");
+    }
+
+    #[derive(Default)]
+    struct FakeRepositoryInfo {
+        calls: std::sync::atomic::AtomicUsize,
+        metadata: forge_core::package_source::RepositoryMetadata,
+    }
+
+    impl RepositoryInfo for FakeRepositoryInfo {
+        fn inspect(
+            &self,
+            _repository: &str,
+        ) -> Result<forge_core::package_source::RepositoryMetadata, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.metadata.clone())
+        }
+    }
+
+    #[test]
+    fn repository_checks_are_off_by_default_and_advisory() {
+        let mut app = App::new(Editor::default());
+        let info = Arc::new(FakeRepositoryInfo::default());
+        app.packages.vc.set_repository_info(info.clone());
+        start_repository_check(&mut app, "demo", "https://github.com/old/repo");
+        assert!(app.packages.vc.repository_checks_pending.is_empty());
+        assert_eq!(
+            info.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the default is off"
+        );
+
+        app.packages.vc.set_repository_checks(true);
+        clear_output(&mut app);
+        let info = Arc::new(FakeRepositoryInfo {
+            calls: Default::default(),
+            metadata: forge_core::package_source::RepositoryMetadata {
+                archived: Some(true),
+                canonical: Some("new/name".into()),
+            },
+        });
+        app.packages.vc.set_repository_info(info.clone());
+        start_repository_check(&mut app, "demo", "https://github.com/old/repo");
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while !app.packages.vc.repository_checks_pending.is_empty() && Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            poll_repository_checks(&mut app);
+        }
+        assert!(app.packages.vc.repository_checks_pending.is_empty());
+        assert_eq!(info.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let text = app
+            .editor
+            .state
+            .get_buffer(app.editor.find_buffer(BUFFER).unwrap())
+            .unwrap()
+            .get_contents();
+        assert!(text.contains("archived"), "{text}");
+        assert!(text.contains("owner or name changed"), "{text}");
     }
 
     #[derive(Default)]

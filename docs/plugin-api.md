@@ -834,6 +834,47 @@ Point Forge at one or more indexes in init.rhai:
 forge.opt["package_index"] = "https://example.org/forge/index.toml";   // or a list
 ```
 
+An index can have a detached [Minisign](https://jedisct1.github.io/minisign/)
+signature beside it, named `index.toml.minisig` (Forge adds `.minisig`
+to the index location, before any query or fragment). Put the public
+keys in `package_index_keys`; Forge verifies the exact downloaded bytes
+before parsing the TOML and accepts a signature from any listed key, so
+you can add a new key before removing the old one:
+
+```rhai
+forge.opt["package_index_keys"] = ["RWQ...", "RWQ..."];   // or one key
+forge.opt["package_index_strict"] = true;                 // optional
+```
+
+When keys are configured, a signature that is present must verify; an
+unsigned index is still accepted unless strict mode is on. Strict mode
+refuses unsigned indexes and needs at least one key. Sign an index with
+`minisign -S -s secret.key -m index.toml`; the signature is written as
+`index.toml.minisig`.
+
+To restrict where indexes and packages may come from, set
+`package_allowed_sources`. An unset option leaves sources unrestricted; an
+empty list denies all. Entries are exact hosts (`github.com`, any scheme or
+port), subdomain suffixes (`*.example.org`, not the apex), exact sources
+(`https://example.org/forge/index.toml`), or directory prefixes ending in
+`/` (`https://example.org/forge/`, `/srv/forge/pkgs/`, `file:///srv/forge/`).
+A URL matches the same scheme, host and port; an exact index URL also covers
+its `.minisig` sibling, and HTTP redirect targets must match the same list.
+Allowing an index does not implicitly allow the packages it lists, so use a
+host or directory-prefix rule for those.
+
+```rhai
+forge.opt["package_allowed_sources"] = [
+  "github.com",
+  "https://example.org/forge/",
+];
+```
+
+For Git packages, `package_repository_checks` (off by default) asks GitHub
+whether the repository is archived or has moved to another owner/name. The
+checks are advisory: failures are ignored and warnings never block an
+install or upgrade.
+
 The commands:
 
 - `M-x list-packages` shows what's available and installed. In that

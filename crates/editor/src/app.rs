@@ -598,6 +598,30 @@ impl App {
             forge_docs::Kind::Option,
             forge_docs::Source::Config,
         ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_index_keys",
+            "Trusted Minisign keys for package index signatures.\n\nValues: a key or a list of keys",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_index_strict",
+            "Refuse unsigned package indexes; needs package_index_keys.\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allowed_sources",
+            "Hosts, URLs and paths packages and indexes may come from.\n\nValues: a host, URL, absolute path, or a list of them",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_repository_checks",
+            "Ask GitHub whether a repository is archived or renamed; only warns.\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
         docs.add(crate::docs_bridge::legacy_to_doc_kind("electric_indent", "RET indents the new line; a closing bracket re-indents its line.\n\nValues: true or false", forge_docs::Kind::Option, forge_docs::Source::Config));
         docs.add(crate::docs_bridge::legacy_to_doc_kind("line_numbers", "Line numbers in buffers that don't choose their own.\n\nValues: off, absolute or relative", forge_docs::Kind::Option, forge_docs::Source::Config));
         docs.add(crate::docs_bridge::legacy_to_doc_kind(
@@ -2464,6 +2488,23 @@ impl App {
             self.message_log_max = m;
         }
         self.packages.indexes = settings.package_index.clone().unwrap_or_default();
+        self.packages.index_keys = settings.package_index_keys.clone().unwrap_or_default();
+        self.packages.allowed_sources = settings.package_allowed_sources.as_ref().map(|entries| {
+            forge_core::package_source::SourceAllowlist::new(entries)
+                .unwrap_or_else(|_| forge_core::package_source::SourceAllowlist::default())
+        });
+        self.packages.index_strict = settings
+            .flags
+            .get("package_index_strict")
+            .copied()
+            .unwrap_or(false);
+        self.packages.vc.set_repository_checks(
+            settings
+                .flags
+                .get("package_repository_checks")
+                .copied()
+                .unwrap_or(false),
+        );
         if let Some(r) = settings.plugin_auto_reload {
             self.plugin_auto_reload = r;
         }

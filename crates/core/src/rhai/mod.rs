@@ -95,6 +95,10 @@ pub struct Settings {
     pub wrap: Option<crate::decoration::Wrap>,
     /// Where package indexes are (forge.opt.package_index: one or a list).
     pub package_index: Option<Vec<String>>,
+    /// Trusted Minisign public keys for package indexes (rotation: a list).
+    pub package_index_keys: Option<Vec<String>>,
+    /// Hosts, URLs and paths packages and indexes may come from.
+    pub package_allowed_sources: Option<Vec<String>>,
     /// How many lines *Messages* keeps: t (unlimited), false (off) or a
     /// number of lines.
     pub message_log_max: Option<crate::messages::MessageLogMax>,
@@ -246,6 +250,8 @@ pub const FLAGS: &[&str] = &[
     "modifier_bar",
     "mouse_drag_copy_region",
     "no_littering",
+    "package_index_strict",
+    "package_repository_checks",
     "org_clock_persist",
     "org_log_done",
     "delete_trailing_whitespace_on_save",
@@ -376,6 +382,8 @@ pub const OPTIONS: &[&str] = &[
     "org_startup_indented",
     "org_update_dblocks_on_save",
     "package_index",
+    "package_index_keys",
+    "package_allowed_sources",
     "epa_file_encrypt_to",
     "page_delimiter",
     "paragraph_separate",

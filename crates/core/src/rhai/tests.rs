@@ -128,6 +128,8 @@ fn options_keymaps_and_remaps() {
             electric_indent: Some(false),
             wrap: None,
             package_index: None,
+            package_index_keys: None,
+            package_allowed_sources: None,
             message_log_max: None,
             save_interprogram_paste_before_kill: None,
             flags: Default::default(),
@@ -443,6 +445,92 @@ fn options_are_checked_where_they_are_set() {
     );
     let out = load(&rhai, &mut ed, r#"let x = forge.opt["colour"];"#);
     assert!(out.errors[0].contains("unknown option"), "{:?}", out.errors);
+}
+
+#[test]
+fn package_allowed_sources_options() {
+    let mut ed = editor();
+    let rhai = RhaiConfig::new().unwrap();
+    ok(&load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_allowed_sources"] = ["github.com", "https://e.org/forge/"];
+           forge.opt["package_repository_checks"] = true;
+           assert(forge.opt["package_allowed_sources"] == ["github.com", "https://e.org/forge/"]);
+           assert(forge.opt["package_repository_checks"] == true);"#,
+    ));
+    let st = rhai.settings();
+    assert_eq!(
+        st.package_allowed_sources,
+        Some(vec![
+            "github.com".to_string(),
+            "https://e.org/forge/".to_string()
+        ])
+    );
+    assert_eq!(st.flags.get("package_repository_checks"), Some(&true));
+
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_allowed_sources"] = ["https://e.org/*"];"#,
+    );
+    assert!(
+        out.errors[0].contains("invalid source rule"),
+        "{:?}",
+        out.errors
+    );
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_allowed_sources"] = 1;"#,
+    );
+    assert!(
+        out.errors[0].contains("is a host, URL, path"),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn package_index_trust_options() {
+    let mut ed = editor();
+    let rhai = RhaiConfig::new().unwrap();
+    ok(&load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_index"] = ["https://e.org/index.toml"];
+           forge.opt["package_index_keys"] = ["key-one", "key-two"];
+           forge.opt["package_index_strict"] = true;
+           assert(forge.opt["package_index_keys"] == ["key-one", "key-two"]);
+           assert(forge.opt["package_index_strict"] == true);"#,
+    ));
+    let st = rhai.settings();
+    assert_eq!(
+        st.package_index,
+        Some(vec!["https://e.org/index.toml".to_string()])
+    );
+    assert_eq!(
+        st.package_index_keys,
+        Some(vec!["key-one".to_string(), "key-two".to_string()])
+    );
+    assert_eq!(st.flags.get("package_index_strict"), Some(&true));
+
+    let out = load(&rhai, &mut ed, r#"forge.opt["package_index_keys"] = 1;"#);
+    assert!(
+        out.errors[0].contains("Minisign public key"),
+        "{:?}",
+        out.errors
+    );
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_index_strict"] = "yes";"#,
+    );
+    assert!(
+        out.errors[0].contains("must be true or false"),
+        "{:?}",
+        out.errors
+    );
 }
 
 #[test]

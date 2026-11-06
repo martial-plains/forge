@@ -1,5 +1,25 @@
 #+title: Forge NEWS
 * 0.1.0
+** Package sources can be allowlisted
+Set =forge.opt["package_allowed_sources"]= to restrict package indexes,
+downloads and Git repositories to exact hosts, =*.example.org= suffixes,
+exact URLs or paths, and directory prefixes. Unset leaves sources
+unrestricted; an empty list denies all. Allowing an index does not
+authorize the packages it lists. Denied sources are refused before any
+read or network request.
+** Optional GitHub repository checks
+Set =forge.opt["package_repository_checks"] = true= to ask GitHub whether
+a Git package's repository is archived or now belongs to another owner or
+name. The checks run in the background and only add warnings; failures and
+warnings never block an install or upgrade. They are off by default.
+** Package indexes can be signed
+A package index can now have a detached Minisign signature,
+=index.toml.minisig=, beside it. Set =forge.opt["package_index_keys"]= to
+the trusted public keys; Forge verifies the exact downloaded bytes before
+parsing the TOML. A signature from any listed key is accepted, so keys can
+be rotated without a gap. Set =forge.opt["package_index_strict"] = true= to
+also refuse unsigned indexes; without strict mode they still load when no
+signature is present. Tampered indexes and signatures are always refused.
 ** Git upgrades warn about rewritten history and moved tags
 Dry runs and upgrade reviews now warn when a Git package's new commit is
 not a descendant of the locked commit (a force-push or rewritten upstream

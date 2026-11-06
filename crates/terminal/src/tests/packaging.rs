@@ -312,6 +312,139 @@ fn packages_install_list_and_delete() {
 }
 
 #[test]
+fn package_allowed_sources_deny_indexes_before_reading_them() {
+    let dir = std::env::temp_dir().join(format!("forge-allow-index-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let missing = dir.join("missing/index.toml");
+    let mut app = app_with("");
+    app.packages.allowed_sources = Some(
+        forge_core::package_source::SourceAllowlist::new(&["github.com".to_string()]).unwrap(),
+    );
+    app.packages.indexes = vec![missing.display().to_string()];
+    press(&mut app, "M-x package-refresh-contents RET");
+    let message = app.message.as_deref().unwrap_or("");
+    assert!(message.contains("not allowed"), "{message}");
+    assert!(!message.contains("No such file"), "{message}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn package_allowed_sources_do_not_inherit_from_an_allowed_index() {
+    let dir = std::env::temp_dir().join(format!("forge-allow-pkg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let wasm = demo_plugin_file(&dir.join("repo"));
+    let index = dir.join("repo/index.toml");
+    std::fs::write(&index, forge_core::package::entry_for(&wasm, None).unwrap()).unwrap();
+    let mut app = app_with("");
+    app.plugin_cache = None;
+    app.packages.indexes = vec![index.display().to_string()];
+    app.packages.plugin_dir = Some(dir.join("plugins"));
+    app.packages.allowed_sources = Some(
+        forge_core::package_source::SourceAllowlist::new(&[index.display().to_string()]).unwrap(),
+    );
+
+    press(&mut app, "M-x list-packages RET");
+    assert!(
+        !app.message.as_deref().unwrap_or("").contains("not allowed"),
+        "{:?}",
+        app.message
+    );
+    press(&mut app, "M-x package-install RET demo RET");
+    let message = app.message.as_deref().unwrap_or("");
+    assert!(message.contains("Can't install demo"), "{message}");
+    assert!(message.contains("not allowed"), "{message}");
+    assert!(!dir.join("plugins/demo.wasm").exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn package_allowed_sources_stop_redirects_before_contacting_the_target() {
+    let source = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let source_port = source.local_addr().unwrap().port();
+    let target = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    target.set_nonblocking(true).unwrap();
+    let target_port = target.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = source.accept().unwrap();
+        let mut request = [0; 1024];
+        let _ = std::io::Read::read(&mut stream, &mut request);
+        use std::io::Write;
+        write!(
+            stream,
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target_port}/index.toml\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+    });
+
+    let mut app = app_with("");
+    app.message = None;
+    app.packages.indexes = vec![format!("http://127.0.0.1:{source_port}/index.toml")];
+    app.packages.allowed_sources = Some(
+        forge_core::package_source::SourceAllowlist::new(&[format!("127.0.0.1:{source_port}")])
+            .unwrap(),
+    );
+    press(&mut app, "M-x package-refresh-contents RET");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !app
+        .message
+        .as_deref()
+        .is_some_and(|message| message.contains("not allowed"))
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        app.on_idle();
+    }
+    let message = app.message.as_deref().unwrap_or("");
+    assert!(message.contains("redirect"), "{message}");
+    assert!(message.contains("not allowed"), "{message}");
+    assert!(
+        target.accept().is_err(),
+        "the disallowed redirect target was contacted"
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn package_allowed_sources_deny_git_and_dry_run_before_network() {
+    let dir = std::env::temp_dir().join(format!("forge-allow-git-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let repo = dir.join("repo");
+    let mut app = app_with("");
+    app.packages.allowed_sources = Some(
+        forge_core::package_source::SourceAllowlist::new(&["github.com".to_string()]).unwrap(),
+    );
+    crate::package_vc::install(&mut app, "demo", repo.to_str().unwrap(), None, false);
+    let message = app.message.as_deref().unwrap_or("");
+    assert!(message.contains("Git source"), "{message}");
+    assert!(message.contains("not allowed"), "{message}");
+    assert!(!dir.join("plugins/demo.wasm").exists());
+
+    let plugins = dir.join("plugins");
+    std::fs::create_dir_all(&plugins).unwrap();
+    let mut db = forge_core::package::InstalledDb::load(&plugins);
+    db.packages.insert(
+        "demo".into(),
+        forge_core::package::Installed {
+            version: "0.1.0".into(),
+            sha256: String::new(),
+            url: String::new(),
+            git: Some("https://evil.test/repo".into()),
+            rev: None,
+            commit: Some("aaaaaaa".into()),
+            build: None,
+            recipe: None,
+        },
+    );
+    db.save().unwrap();
+    app.packages.plugin_dir = Some(plugins);
+    let error = crate::package_vc::dry_run_lines(&app).unwrap_err();
+    assert!(error.contains("not allowed"), "{error}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn packages_from_version_control() {
     let dir = std::env::temp_dir().join(format!("forge-vc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

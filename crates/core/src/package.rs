@@ -28,6 +28,7 @@
 //! permissions aren't in the index: they are in its manifest, and Forge
 //! asks for them when it loads the plugin, as for any other.
 
+use minisign_verify::{PublicKey, Signature};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -157,6 +158,65 @@ impl Index {
         }
         Ok(None)
     }
+}
+
+/// Detached signatures live next to the index: `index.toml.minisig`.
+pub const SIGNATURE_SUFFIX: &str = ".minisig";
+
+/// Where an index's detached signature lives, keeping any query or fragment.
+pub fn signature_location(location: &str) -> String {
+    let end = location.find(['?', '#']).unwrap_or(location.len());
+    format!("{}{SIGNATURE_SUFFIX}{}", &location[..end], &location[end..])
+}
+
+/// Verify an index's exact bytes before parsing them.
+///
+/// With no trusted keys, signatures can't be checked: unsigned indexes are
+/// accepted unless `strict` is set. With keys, a signature that is present
+/// must verify; an unsigned index is accepted only when `strict` is false.
+pub fn verify_index(
+    location: &str,
+    bytes: &[u8],
+    signature: Option<&str>,
+    keys: &[String],
+    strict: bool,
+) -> Result<(), String> {
+    if keys.is_empty() {
+        if strict {
+            return Err(format!(
+                "{location}: signed package indexes are required, but forge.opt.package_index_keys is empty"
+            ));
+        }
+        return Ok(());
+    }
+    let Some(signature) = signature else {
+        if strict {
+            return Err(format!("{location}: unsigned package index (strict mode)"));
+        }
+        return Ok(());
+    };
+    let signature = Signature::decode(signature)
+        .map_err(|e| format!("{location}: invalid package index signature: {e}"))?;
+    let mut key_errors = Vec::new();
+    for key in keys {
+        match PublicKey::from_base64(key.trim()) {
+            Ok(public_key) => {
+                // Accept both current (prehashed) and legacy signatures.
+                match public_key.verify(bytes, &signature, true) {
+                    Ok(()) => return Ok(()),
+                    Err(e) => key_errors.push(e.to_string()),
+                }
+            }
+            Err(e) => key_errors.push(format!("invalid key: {e}")),
+        }
+    }
+    let detail = key_errors
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "no keys".to_string());
+    Err(format!(
+        "{location}: package index signature did not verify against forge.opt.package_index_keys ({detail})"
+    ))
 }
 
 /// `url` relative to where the index came from.
@@ -499,6 +559,107 @@ pub fn entry_for(wasm: &Path, url: Option<&str>) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn minisign_key_and_signature(bytes: &[u8], seed: u8, key_id: [u8; 8]) -> (String, String) {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD;
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let signing = SigningKey::from_bytes(&[seed; 32]);
+        let mut public = vec![0x45, 0x64];
+        public.extend_from_slice(&key_id);
+        public.extend_from_slice(signing.verifying_key().as_bytes());
+
+        let signature = signing.sign(bytes);
+        let mut packet = vec![0x45, 0x64];
+        packet.extend_from_slice(&key_id);
+        packet.extend_from_slice(&signature.to_bytes());
+        let trusted = "timestamp:0\tfile:index.toml";
+        let mut global = signature.to_bytes().to_vec();
+        global.extend_from_slice(trusted.as_bytes());
+        let global_signature = signing.sign(&global);
+        let signature_file = format!(
+            "untrusted comment: signature from minisign secret key\n{}\ntrusted comment: {trusted}\n{}",
+            STANDARD.encode(packet),
+            STANDARD.encode(global_signature.to_bytes())
+        );
+        (STANDARD.encode(public), signature_file)
+    }
+
+    #[test]
+    fn signed_indexes_verify_before_parsing() {
+        let src =
+            "[[package]]\nname = \"x\"\nversion = \"1.0.0\"\nurl = \"x.wasm\"\nsha256 = \"abc\"\n";
+        let (key, signature) =
+            minisign_key_and_signature(src.as_bytes(), 7, [1, 2, 3, 4, 5, 6, 7, 8]);
+        let (other_key, _) =
+            minisign_key_and_signature(src.as_bytes(), 9, [9, 8, 7, 6, 5, 4, 3, 2]);
+
+        assert_eq!(
+            signature_location("https://e.org/index.toml?cache=1"),
+            "https://e.org/index.toml.minisig?cache=1"
+        );
+        assert_eq!(
+            signature_location("/srv/index.toml"),
+            "/srv/index.toml.minisig"
+        );
+
+        verify_index(
+            "index.toml",
+            src.as_bytes(),
+            Some(&signature),
+            std::slice::from_ref(&key),
+            true,
+        )
+        .unwrap();
+        let index = Index::parse(src, "/srv/index.toml").unwrap();
+        assert_eq!(index.packages["x"].version, "1.0.0");
+
+        let tampered = src.replace("1.0.0", "9.9.9");
+        let error = verify_index(
+            "index.toml",
+            tampered.as_bytes(),
+            Some(&signature),
+            std::slice::from_ref(&key),
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("did not verify"), "{error}");
+
+        // A second trusted key allows rotation without dropping the old one.
+        verify_index(
+            "index.toml",
+            src.as_bytes(),
+            Some(&signature),
+            &[other_key, key.clone()],
+            true,
+        )
+        .unwrap();
+
+        // Unsigned indexes are allowed outside strict mode, and refused in it.
+        verify_index(
+            "index.toml",
+            src.as_bytes(),
+            None,
+            std::slice::from_ref(&key),
+            false,
+        )
+        .unwrap();
+        let error = verify_index(
+            "index.toml",
+            src.as_bytes(),
+            None,
+            std::slice::from_ref(&key),
+            true,
+        )
+        .unwrap_err();
+        assert!(error.contains("unsigned"), "{error}");
+
+        // Strict mode also needs somewhere to get the keys from.
+        let error = verify_index("index.toml", src.as_bytes(), None, &[], true).unwrap_err();
+        assert!(error.contains("package_index_keys is empty"), "{error}");
+        verify_index("index.toml", src.as_bytes(), None, &[], false).unwrap();
+    }
 
     #[test]
     fn indexes_versions_and_installing() {

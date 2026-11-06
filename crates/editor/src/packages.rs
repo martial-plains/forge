@@ -13,6 +13,7 @@ use crate::app::App;
 use crate::minibuffer::{Choice, Purpose};
 use forge_core::package::{self, Index, InstalledDb, Package};
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
+use forge_core::package_source::{SourceAllowlist, SourceKind as PackageSourceKind};
 use forge_core::{CapabilityDiff, LockFile, Manifest};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -42,6 +43,7 @@ enum Fetch {
     Index {
         location: String,
         file: PathBuf,
+        signature: Option<PathBuf>,
         started: Timer,
     },
     Package {
@@ -296,9 +298,22 @@ pub(crate) fn abort_update(app: &mut App, error: String) {
     app.error(error);
 }
 
+pub(crate) fn check_source(app: &App, kind: PackageSourceKind, source: &str) -> Result<(), String> {
+    match &app.packages.allowed_sources {
+        Some(list) => list.check(kind, source),
+        None => Ok(()),
+    }
+}
+
 #[derive(Default)]
 pub struct Packages {
     pub indexes: Vec<String>,
+    /// Trusted Minisign public keys for package indexes (rotation: several).
+    pub index_keys: Vec<String>,
+    /// Refuse unsigned package indexes.
+    pub index_strict: bool,
+    /// Hosts, URLs and paths package sources may come from.
+    pub allowed_sources: Option<SourceAllowlist>,
     /// Where plugins are installed (None: the default plugins directory).
     pub plugin_dir: Option<PathBuf>,
     pub index: Option<Index>,
@@ -924,21 +939,33 @@ pub fn refresh(app: &mut App, then: Then) {
     let mut remote = 0;
     for loc in locations {
         let started = Timer::start();
+        if let Err(error) = check_source(app, PackageSourceKind::Index, &loc) {
+            log_fetch(
+                started,
+                None,
+                index_source(&loc),
+                &Err::<String, String>(error.clone()),
+            );
+            index_read(app, &loc, Err(error));
+            continue;
+        }
         match package::local_path(&loc) {
             Some(path) => {
-                let r = std::fs::read_to_string(&path).map_err(|e| format!("{loc}: {e}"));
+                let r = read_local_index(app, &loc, &path);
                 log_fetch(started, None, index_source(&loc), &r);
                 index_read(app, &loc, r);
             }
             None => {
                 let file = temp_file("index");
-                match download(app, &loc, &file) {
+                let signature = index_needs_signature(app).then(|| temp_file("index-signature"));
+                match download_index(app, &loc, &file, signature.as_deref()) {
                     Ok(id) => {
                         app.packages.fetches.insert(
                             id,
                             Fetch::Index {
                                 location: loc,
                                 file,
+                                signature,
                                 started,
                             },
                         );
@@ -962,6 +989,60 @@ pub fn refresh(app: &mut App, then: Then) {
     } else {
         finish_refresh(app);
     }
+}
+
+fn index_needs_signature(app: &App) -> bool {
+    !app.packages.index_keys.is_empty() || app.packages.index_strict
+}
+
+fn read_signature(path: &std::path::Path) -> Result<Option<String>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(signature) => Ok(Some(signature)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
+}
+
+fn verify_index_bytes(
+    app: &App,
+    location: &str,
+    bytes: &[u8],
+    signature: Option<String>,
+) -> Result<String, String> {
+    package::verify_index(
+        location,
+        bytes,
+        signature.as_deref(),
+        &app.packages.index_keys,
+        app.packages.index_strict,
+    )?;
+    String::from_utf8(bytes.to_vec()).map_err(|e| format!("{location}: index is not UTF-8: {e}"))
+}
+
+fn read_local_index(app: &App, location: &str, path: &std::path::Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{location}: {e}"))?;
+    let signature = if index_needs_signature(app) {
+        let signature_path = package::local_path(&package::signature_location(location))
+            .ok_or_else(|| format!("{location}: can't find the signature path"))?;
+        read_signature(&signature_path).map_err(|e| format!("{location}: {e}"))?
+    } else {
+        None
+    };
+    verify_index_bytes(app, location, &bytes, signature)
+}
+
+fn read_downloaded_index(
+    app: &App,
+    location: &str,
+    file: &std::path::Path,
+    signature: Option<&std::path::Path>,
+) -> Result<String, String> {
+    let bytes = std::fs::read(file).map_err(|e| format!("{location}: {e}"))?;
+    let signature = match signature {
+        Some(path) => read_signature(path).map_err(|e| format!("{location}: {e}"))?,
+        None => None,
+    };
+    verify_index_bytes(app, location, &bytes, signature)
 }
 
 fn index_read(app: &mut App, location: &str, text: Result<String, String>) {
@@ -1759,6 +1840,19 @@ fn install_named_version(app: &mut App, name: &str, requirement: Option<&str>, f
 /// Start installing a package; returns true when a download will finish later.
 fn install(app: &mut App, p: Package, force: bool) -> bool {
     let upgrading = db(app).is_some_and(|db| db.packages.contains_key(&p.name));
+    let (kind, source) = match &p.git {
+        Some(git) => (PackageSourceKind::Git, git.as_str()),
+        None => (PackageSourceKind::Package, p.url.as_str()),
+    };
+    if let Err(error) = check_source(app, kind, source) {
+        let message = format!("Can't install {}: {error}", p.name);
+        if upgrading {
+            abort_update(app, message);
+        } else {
+            app.error(message);
+        }
+        return false;
+    }
     if let Some(git) = &p.git {
         crate::package_vc::install(app, &p.name, git, p.rev.clone(), upgrading);
         return false;
@@ -2125,6 +2219,34 @@ fn temp_file(tag: &str) -> PathBuf {
 }
 
 fn download(app: &mut App, url: &str, to: &std::path::Path) -> Result<u64, String> {
+    let allowed = app.packages.allowed_sources.clone();
+    let rx = download_with(url, to, None, allowed)?;
+    let id = app.packages.next_download;
+    app.packages.next_download += 1;
+    app.packages.downloads.push((id, rx));
+    Ok(id)
+}
+
+fn download_index(
+    app: &mut App,
+    url: &str,
+    to: &std::path::Path,
+    signature: Option<&std::path::Path>,
+) -> Result<u64, String> {
+    let allowed = app.packages.allowed_sources.clone();
+    let rx = download_with(url, to, signature, allowed)?;
+    let id = app.packages.next_download;
+    app.packages.next_download += 1;
+    app.packages.downloads.push((id, rx));
+    Ok(id)
+}
+
+fn download_with(
+    url: &str,
+    to: &std::path::Path,
+    signature: Option<&std::path::Path>,
+    allowed: Option<SourceAllowlist>,
+) -> Result<Receiver<Result<(), String>>, String> {
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return Err(format!(
             "{url}: only local files and http(s) URLs are supported"
@@ -2132,20 +2254,51 @@ fn download(app: &mut App, url: &str, to: &std::path::Path) -> Result<u64, Strin
     }
     let (tx, rx) = mpsc::channel();
     let (url_owned, to_owned) = (url.to_string(), to.to_path_buf());
+    let signature = signature.map(std::path::Path::to_path_buf);
     std::thread::Builder::new()
         .name("package-download".into())
         .spawn(move || {
-            let _ = tx.send(http_get_to_file(&url_owned, &to_owned));
+            let result = (|| {
+                http_get_to_file(&url_owned, &to_owned, allowed.clone())?;
+                if let Some(signature) = signature {
+                    http_get_optional_to_file(
+                        &package::signature_location(&url_owned),
+                        &signature,
+                        allowed,
+                    )?;
+                }
+                Ok(())
+            })();
+            let _ = tx.send(result);
         })
         .map_err(|e| format!("can't start the download of {url}: {e}"))?;
-    let id = app.packages.next_download;
-    app.packages.next_download += 1;
-    app.packages.downloads.push((id, rx));
-    Ok(id)
+    Ok(rx)
 }
 
 /// GET `url` into `to` (an error for a failing status, as curl -f was).
-fn http_get_to_file(url: &str, to: &std::path::Path) -> Result<(), String> {
+fn http_get_to_file(
+    url: &str,
+    to: &std::path::Path,
+    allowed: Option<SourceAllowlist>,
+) -> Result<(), String> {
+    http_get(url, to, false, allowed).map(|_| ())
+}
+
+/// GET an optional file; a 404 means it isn't published.
+fn http_get_optional_to_file(
+    url: &str,
+    to: &std::path::Path,
+    allowed: Option<SourceAllowlist>,
+) -> Result<bool, String> {
+    http_get(url, to, true, allowed)
+}
+
+fn http_get(
+    url: &str,
+    to: &std::path::Path,
+    allow_missing: bool,
+    allowed: Option<SourceAllowlist>,
+) -> Result<bool, String> {
     use std::error::Error;
     let describe = |e: &reqwest::Error| {
         let mut msg = e.to_string();
@@ -2168,6 +2321,17 @@ fn http_get_to_file(url: &str, to: &std::path::Path) -> Result<(), String> {
     if local {
         builder = builder.no_proxy();
     }
+    if let Some(allowed) = allowed {
+        builder = builder.redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("too many redirects");
+            }
+            match allowed.check_redirect(attempt.url().as_str()) {
+                Ok(()) => attempt.follow(),
+                Err(error) => attempt.error(error),
+            }
+        }));
+    }
     let client = builder
         .build()
         .map_err(|e| format!("download failed ({})", describe(&e)))?;
@@ -2175,6 +2339,9 @@ fn http_get_to_file(url: &str, to: &std::path::Path) -> Result<(), String> {
         .get(url)
         .send()
         .map_err(|e| format!("download failed ({})", describe(&e)))?;
+    if allow_missing && resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
     if !resp.status().is_success() {
         return Err(format!(
             "download failed (the server answered {})",
@@ -2184,7 +2351,7 @@ fn http_get_to_file(url: &str, to: &std::path::Path) -> Result<(), String> {
     let mut file = std::fs::File::create(to).map_err(|e| format!("download failed ({e})"))?;
     resp.copy_to(&mut file)
         .map_err(|e| format!("download failed ({})", describe(&e)))?;
-    Ok(())
+    Ok(true)
 }
 
 /// Finished downloads (called when idle).
@@ -2222,15 +2389,20 @@ pub fn poll(app: &mut App) {
                     Fetch::Index {
                         location,
                         file,
+                        signature,
                         started,
                     } => {
                         let r = match failed {
                             Some(e) => Err(format!("{location}: {e}")),
-                            None => std::fs::read_to_string(&file)
-                                .map_err(|e| format!("{location}: {e}")),
+                            None => {
+                                read_downloaded_index(app, &location, &file, signature.as_deref())
+                            }
                         };
                         log_fetch(started, None, index_source(&location), &r);
                         let _ = std::fs::remove_file(&file);
+                        if let Some(signature) = &signature {
+                            let _ = std::fs::remove_file(signature);
+                        }
                         index_read(app, &location, r);
                         if !app
                             .packages

@@ -64,6 +64,7 @@ pub mod package;
 pub mod package_doctor;
 pub mod package_journal;
 pub mod package_log;
+pub mod package_source;
 pub mod permissions;
 pub mod plugin;
 pub mod plugin_bisect;

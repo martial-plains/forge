@@ -308,6 +308,20 @@ forge.command.create("two-space-indent", || {
 // package fetch/build/install/upgrade/rollback timings, and
 // package-log-export writes them as JSON lines.
 //
+// Package indexes can be signed. Forge looks for index.toml.minisig next
+// to each index and verifies it against these Minisign public keys; list
+// several while rotating keys. Strict mode also refuses unsigned indexes.
+// forge.opt["package_index_keys"] = ["RWQ...", "RWQ..."];
+// forge.opt["package_index_strict"] = true;
+//
+// Restrict package and index sources. Unset means unrestricted; [] denies
+// all. Entries are exact hosts, *.subdomain suffixes, exact URLs/paths, or
+// directory prefixes ending in /. Allowing an index does not authorize the
+// packages it lists.
+// forge.opt["package_allowed_sources"] = ["github.com", "https://example.org/forge/"];
+// Optionally warn when a GitHub repository is archived or changed owners.
+// forge.opt["package_repository_checks"] = true;
+//
 // use_package is forge.plugin.declare plus `bind` and `init`: `bind` binds
 // keys (a command no one has defined yet makes its key load the plugin),
 // and `init` runs now, before the plugin loads.

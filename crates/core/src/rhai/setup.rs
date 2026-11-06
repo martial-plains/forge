@@ -2012,6 +2012,16 @@ fn opt_get(settings: &Settings, name: &str) -> RhaiResult<Dynamic> {
             .as_ref()
             .map(|list| Dynamic::from_array(list.iter().cloned().map(Dynamic::from).collect()))
             .unwrap_or(Dynamic::UNIT),
+        "package_index_keys" => settings
+            .package_index_keys
+            .as_ref()
+            .map(|list| Dynamic::from_array(list.iter().cloned().map(Dynamic::from).collect()))
+            .unwrap_or(Dynamic::UNIT),
+        "package_allowed_sources" => settings
+            .package_allowed_sources
+            .as_ref()
+            .map(|list| Dynamic::from_array(list.iter().cloned().map(Dynamic::from).collect()))
+            .unwrap_or(Dynamic::UNIT),
         "message_log_max" => match settings.message_log_max {
             Some(MessageLogMax::Unlimited) => Dynamic::from(true),
             Some(MessageLogMax::Off) => Dynamic::from(false),
@@ -2128,6 +2138,44 @@ fn opt_set(settings: &mut Settings, name: &str, value: Dynamic) -> RhaiResult<()
                     "forge.opt.package_index is a location (path or URL) or a list of them",
                 ));
             }
+        }
+        "package_index_keys" => {
+            if is_nil {
+                settings.package_index_keys = None;
+            } else if value.is::<ImmutableString>() {
+                settings.package_index_keys = Some(vec![as_string(&value, "package_index_keys")?]);
+            } else if value.is::<Vec<Dynamic>>() {
+                let list = as_array(value, "package_index_keys")?
+                    .iter()
+                    .map(|d| as_string(d, "package_index_keys"))
+                    .collect::<RhaiResult<Vec<_>>>()?;
+                settings.package_index_keys = Some(list);
+            } else {
+                return Err(err(
+                    "forge.opt.package_index_keys is a Minisign public key or a list of them",
+                ));
+            }
+        }
+        "package_allowed_sources" => {
+            let list = if is_nil {
+                None
+            } else if value.is::<ImmutableString>() {
+                Some(vec![as_string(&value, "package_allowed_sources")?])
+            } else if value.is::<Vec<Dynamic>>() {
+                Some(
+                    as_array(value, "package_allowed_sources")?
+                        .iter()
+                        .map(|d| as_string(d, "package_allowed_sources"))
+                        .collect::<RhaiResult<Vec<_>>>()?,
+                )
+            } else {
+                return Err(err(
+                    "forge.opt.package_allowed_sources is a host, URL, path, or a list of them",
+                ));
+            };
+            crate::package_source::SourceAllowlist::new(list.as_deref().unwrap_or_default())
+                .map_err(err)?;
+            settings.package_allowed_sources = list;
         }
         "message_log_max" => {
             if is_nil {
