@@ -471,6 +471,8 @@ pub enum ConfirmAction {
     DeleteBackups(Vec<PathBuf>),
     /// Something version control asked (see vc/mod.rs).
     Vc(crate::vc::Confirm),
+    /// Does the problem happen with these plugins enabled? (plugin-bisect).
+    PluginBisect,
 }
 
 pub struct Isearch {
@@ -1249,6 +1251,7 @@ fn cancel(app: &mut App, mut mb: Minibuffer) {
         Purpose::Confirm(ConfirmAction::GitPackageUpgrade) => {
             crate::package_vc::upgrade_review_declined(app);
         }
+        Purpose::Confirm(ConfirmAction::PluginBisect) => crate::plugin_bisect::abort(app),
         _ => {}
     }
 }
@@ -1276,6 +1279,7 @@ fn confirm(app: &mut App, action: ConfirmAction) {
             crate::grep::save_confirmed(app, buffer, rest, true);
         }
         ConfirmAction::OrgCryptDecrypt => crate::org_crypt::decrypt_after_confirm(app),
+        ConfirmAction::PluginBisect => crate::plugin_bisect::answer(app, true),
         ConfirmAction::Save(id) if id == app.active_id() => commands::save(app),
         ConfirmAction::TetherSave(id) if id == app.active_id() => {
             crate::tether::save(app, true);
@@ -3333,6 +3337,7 @@ pub fn cmd_no(app: &mut App) {
         Purpose::Confirm(ConfirmAction::GrepSave { buffer, rest }) => {
             crate::grep::save_confirmed(app, buffer, rest, false);
         }
+        Purpose::Confirm(ConfirmAction::PluginBisect) => crate::plugin_bisect::answer(app, false),
         Purpose::Confirm(_) => {}
         _ => app.minibuffer = Some(mb),
     }

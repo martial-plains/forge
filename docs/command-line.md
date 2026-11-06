@@ -29,6 +29,7 @@ forgeclient -s work -e '1 + 2'                        # evaluate Rhai there, pri
 | `--package-snapshot-diff BEFORE AFTER [--json]` | compare saved package snapshots without starting the editor |
 | `--package-lockfile-diff BEFORE AFTER [--json]` | compare two lockfiles without starting the editor |
 | `--package-doctor [--json]` | check declared and installed plugins without starting the editor; exit status is 1 on an error finding |
+| `--headless ... [--test CMD]` | run the editor without a terminal; `--test` runs the plugin bisect with CMD (a nonzero exit status means the problem happens; CMD gets `FORGE_BISECT_ENABLED`) |
 
 `--json` emits the result as JSON and is only accepted with
 `--package-snapshot-diff`, `--package-lockfile-diff`, or `--package-doctor`.

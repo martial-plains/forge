@@ -23,6 +23,7 @@ mod menu;
 mod messages;
 mod mouse;
 mod packaging;
+mod plugin_bisect;
 mod plugins;
 mod rhai;
 mod term;

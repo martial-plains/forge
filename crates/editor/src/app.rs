@@ -293,6 +293,8 @@ pub struct App {
     pub wdired: std::collections::HashMap<forge_core::BufferId, Vec<(usize, std::path::PathBuf)>>,
     /// Loaded plugins (the runtime starts with the first one).
     pub plugin_host: Option<PluginHost>,
+    /// M-x plugin-bisect in progress.
+    pub plugin_bisect: Option<crate::plugin_bisect::Session>,
     /// Where compiled plugins and their summaries are cached (None: no cache).
     pub plugin_cache: Option<std::path::PathBuf>,
     /// Plugin questions waiting for the minibuffer.
@@ -836,6 +838,7 @@ impl App {
             tooltip_mode: true,
             wdired: Default::default(),
             plugin_host: None,
+            plugin_bisect: None,
             plugin_cache: None,
             pending_questions: VecDeque::new(),
             plugin_depth: 0,

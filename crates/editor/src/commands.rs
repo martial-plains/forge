@@ -1043,6 +1043,7 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
         "package-vc-upgrade-all",
         "Rebuild changed Git packages (C-u: show plan).",
     ),
+    forge_docs::CommandDoc::new("plugin-bisect", "Find the plugin that causes a problem by disabling halves of the loaded plugins,").body("asking after each step whether the problem still happens. Dependencies stay with the plugins that require them, and the original set is restored when the search ends, is aborted (C-g), or Forge is restarted."),
     forge_docs::CommandDoc::line(
         "point-to-register",
         "Save point in a register, for C-x r j. It follows later edits.",
@@ -2927,6 +2928,7 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             }
         }
         "list-plugins" => plugins::list(app),
+        "plugin-bisect" => crate::plugin_bisect::start(app),
         "list-projects" => crate::project::list(app),
         "eval-expression" => app.prompt("Eval: ", Purpose::EvalRhai),
         "eval-rhai-last-sexp" => plugins::eval_rhai_sexp_before(app, false),

@@ -65,6 +65,7 @@ pub mod org_table_cmds;
 pub mod package_doctor;
 pub mod package_vc;
 pub mod packages;
+pub mod plugin_bisect;
 pub mod plugins;
 pub mod project;
 pub mod query;
@@ -135,6 +136,7 @@ pub fn start(opts: &StartOptions) -> anyhow::Result<App> {
     // observe a half-written installation. The journal is machine-local, so
     // this also applies with -q.
     crate::packages::recover_startup(&mut app);
+    crate::plugin_bisect::recover_startup(&mut app);
     app.graphical = opts.graphical;
     // The frame furniture is on by default: the menu bar, tab bar and the
     // vertical scroll bar in every frontend, and the tool bar in a GUI.

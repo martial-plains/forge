@@ -47,9 +47,11 @@ Forge's own:
                     run its commands (answering questions with --answer),
                     open files, wait for events and its processes' output
   --headless [--init FILE] [--plugin FILE] [--open FILE] [--keys KEYS] [--type TEXT]
-             [--wait SECONDS] [--screen] [--size WxH]
+             [--wait SECONDS] [--test CMD] [--screen] [--size WxH]
                     run the editor without a terminal, in that order, and
-                    print the screen (for testing plugins end to end)
+                    print the screen (for testing plugins end to end).
+                    --test runs plugin-bisect with CMD as the test (a
+                    nonzero exit status means the problem happens)
   --package-entry FILE.wasm [--url URL]
                     print a package index entry for a plugin (see
                     docs/plugin-api.md, \"Sharing plugins\")

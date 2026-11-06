@@ -112,6 +112,53 @@ pub fn load_lazy(
     }
 }
 
+/// Load a plugin during a bisect without asking permission questions: it
+/// was loaded before, so keep the grants it already had. `dormant` puts it
+/// back in the lazy state it was in when the bisect started.
+pub fn reload_for_bisect(
+    app: &mut App,
+    path: &Path,
+    dormant: bool,
+    lazy: Option<(&[String], &[String], &[String])>,
+) -> Result<(), String> {
+    if !ensure_host(app) {
+        return Err("can't start the plugin runtime".into());
+    }
+    let file = PluginFile::read(path).map_err(|error| format!("{error:#}"))?;
+    check_settings(app, &file.name, file.manifest.as_ref())?;
+    let granted = effective_grants(app, &file.name);
+    let mut host = app.plugin_host.take().expect("just made");
+    let mut out = forge_core::Outcome::default();
+    let result = if dormant {
+        if let Some((commands, modes, extensions)) = lazy {
+            host.load_lazy(&mut app.editor, file, &granted, commands, modes, extensions)
+        } else {
+            match host.load_dormant(&mut app.editor, file, &granted) {
+                Ok(()) => Ok(()),
+                Err(file) => {
+                    let request = host
+                        .inspect_file(&file.path)
+                        .map_err(|error| format!("{error:#}"))?;
+                    let (result, more) = host.load_request(&mut app.editor, request, &granted);
+                    out = more;
+                    result
+                }
+            }
+        }
+    } else {
+        let request = host
+            .inspect_file(path)
+            .map_err(|error| format!("{error:#}"))?;
+        let (result, more) = host.load_request(&mut app.editor, request, &granted);
+        out = more;
+        result
+    };
+    app.plugin_host = Some(host);
+    apply(app, out);
+    app.sync_docs();
+    result.map_err(|error| format!("{error:#}"))
+}
+
 /// M-x reload-plugin: load it again from the file it came from.
 pub fn reload(app: &mut App, name: &str) {
     let path = app

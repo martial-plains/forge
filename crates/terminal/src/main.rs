@@ -59,6 +59,7 @@ fn main() -> anyhow::Result<()> {
                         .parse()
                         .map_err(|_| anyhow::anyhow!("--wait takes seconds"))?,
                 )),
+                "--test" => opts.steps.push(headless::Step::Test(value)),
                 "--size" => {
                     let (w, h) = value
                         .split_once('x')
