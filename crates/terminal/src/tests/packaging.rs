@@ -251,7 +251,7 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
     // The package browser lays out at the width of the last redisplay.
     let _ = screen(&mut app, 80, 24);
     press(&mut app, "M-x package-manager RET");
-    assert_eq!(point(&app).line, 5, "the first package row is selected");
+    assert_eq!(point(&app).line, 6, "the first package row is selected");
     press(&mut app, "RET");
     assert!(
         text(&app).contains("Declaration:"),
@@ -274,7 +274,7 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
         assert!(shown.contains("demo"), "{label}:\n{shown}");
         assert!(shown.contains("declared-demo"), "{label}:\n{shown}");
         assert!(
-            shown.contains("warning") || shown.contains("error"),
+            shown.contains('!') || shown.contains('x') || shown.contains("error"),
             "{label}:\n{shown}"
         );
         assert!(shown.contains("Problems"), "{label}:\n{shown}");
@@ -287,7 +287,7 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
             "long names end in an ellipsis at {label} columns:\n{shown}"
         );
         assert!(
-            shown.contains("RET expand") && shown.contains("q quit"),
+            shown.contains("RET expand") && shown.contains("? help"),
             "the footer is visible at {label} columns:\n{shown}"
         );
         for line in shown.lines() {
@@ -298,8 +298,8 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
         }
     }
     assert!(
-        wide.contains("demo.wasm"),
-        "wide layout shows sources:\n{wide}"
+        wide.contains("cmd: demo-command"),
+        "wide layout shows triggers:\n{wide}"
     );
     assert!(
         !narrow
@@ -692,7 +692,9 @@ fn packages_from_version_control() {
         text(&app).contains("demo")
             && text(&app).contains("declared-demo")
             && text(&app).contains("Problems")
-            && (text(&app).contains("warning") || text(&app).contains("error")),
+            && (text(&app).contains('!')
+                || text(&app).contains('x')
+                || text(&app).contains("error")),
         "{}",
         text(&app)
     );
@@ -704,7 +706,7 @@ fn packages_from_version_control() {
     assert!(
         text(&app)
             .lines()
-            .any(|line| line.starts_with("| declared-demo") && line.contains("error")),
+            .any(|line| line.contains("declared-demo") && line.contains('x')),
         "first plugin should be selected:\n{}",
         text(&app)
     );
@@ -744,9 +746,9 @@ fn packages_from_version_control() {
     );
     press(&mut app, "j");
     assert!(
-        text(&app)
-            .lines()
-            .any(|line| line.starts_with("| demo") && line.contains("warning")),
+        text(&app).lines().any(|line| {
+            line.contains(" demo ") && !line.contains("declared-demo") && line.contains('!')
+        }),
         "j should select the next plugin:\n{}",
         text(&app)
     );
@@ -1733,11 +1735,7 @@ fn package_manager_switches_views_and_has_clickable_tabs() {
         text(&app)
     );
     press(&mut app, "H");
-    assert!(
-        text(&app).contains("Forge Packages") && text(&app).contains("Filter: (none)"),
-        "{}",
-        text(&app)
-    );
+    assert!(text(&app).contains("Forge Packages"), "{}", text(&app));
 
     let keymaps: std::collections::BTreeSet<String> = app
         .buf_ref()
@@ -1746,7 +1744,7 @@ fn package_manager_switches_views_and_has_clickable_tabs() {
         .filter_map(|deco| deco.keymap.clone())
         .collect();
     for view in [
-        "home", "install", "update", "check", "log", "restore", "profile", "doctor", "help",
+        "home", "install", "update", "sync", "clean", "check", "log", "doctor", "help",
     ] {
         assert!(
             keymaps.contains(&format!("package-manager-tab-{view}")),

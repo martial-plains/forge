@@ -490,6 +490,8 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         "package-manager-show-profile" => crate::package_manager_ui::show_profile(app),
         "package-manager-show-doctor" => crate::package_manager_ui::show_doctor(app),
         "package-manager-show-help" => crate::package_manager_ui::show_help(app),
+        "package-manager-show-sync" => crate::package_manager_ui::show_sync(app),
+        "package-manager-show-clean" => crate::package_manager_ui::show_clean(app),
         "package-manager-upgrade-all" => {
             app.packages.manager_previous_view = app.packages.manager_view;
             app.packages.manager_view = crate::package_manager_ui::View::Update;
@@ -840,9 +842,10 @@ pub(crate) struct UpgradeReview<'a> {
 }
 
 pub(crate) fn show_capability_review(app: &mut App, review: UpgradeReview<'_>) {
-    let width = app.win().width.max(20);
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
     let symbols = Symbols::for_app(app);
-    let mut text = Text::new();
+    let mut text = Text::for_width(outer);
     package_ui::title(
         &mut text,
         "Upgrade Review",
@@ -853,20 +856,7 @@ pub(crate) fn show_capability_review(app: &mut App, review: UpgradeReview<'_>) {
         width,
         symbols,
     );
-    text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
-    text.newline();
-    text.newline();
-    text.push_face(review.name, PackageFace::Heading);
-    text.newline();
-    text.newline();
-    package_ui::band(
-        &mut text,
-        UiStatus::Warning,
-        "unattended upgrades stop and change nothing",
-        width,
-        symbols,
-    );
-    text.newline();
+    package_ui::rule(&mut text, width, symbols);
 
     let additions = &review.diff.additions;
     let removals = &review.diff.removals;
@@ -874,92 +864,165 @@ pub(crate) fn show_capability_review(app: &mut App, review: UpgradeReview<'_>) {
         .into_iter()
         .filter(|change| !additions.contains(change))
         .collect();
-    package_ui::heading(
-        &mut text,
-        &format!(
-            "Capabilities (+{} -{} ={})",
-            additions.len(),
-            removals.len(),
-            unchanged.len()
-        ),
-        width,
-        symbols,
-    );
+    text.push_face("Capabilities changed", PackageFace::Heading);
     text.newline();
+    let name_w = additions
+        .iter()
+        .chain(removals)
+        .chain(&unchanged)
+        .map(|change| capability_parts(change).0.len() + 1)
+        .max()
+        .unwrap_or(0)
+        .max(11);
+    let line = |text: &mut Text,
+                mark: &str,
+                mark_face: PackageFace,
+                change: &CapabilityChange,
+                tag: &str,
+                tag_face: PackageFace| {
+        let (name, description) = capability_parts(change);
+        package_ui::capability_line(
+            text,
+            mark,
+            mark_face,
+            name,
+            &description,
+            Some((tag, tag_face)),
+            name_w,
+            width,
+            symbols,
+        );
+    };
     for change in additions {
-        push_capability_change(
+        line(
             &mut text,
             "+",
             PackageFace::Warning,
             change,
-            true,
-            width,
-            symbols,
+            "added",
+            PackageFace::Warning,
         );
     }
     for change in removals {
-        push_capability_change(
+        line(
             &mut text,
             "-",
-            PackageFace::Inactive,
+            PackageFace::Ok,
             change,
-            false,
-            width,
-            symbols,
+            "removed",
+            PackageFace::Ok,
         );
     }
     for change in &unchanged {
-        push_capability_change(
+        line(
             &mut text,
             "=",
-            PackageFace::Ok,
+            PackageFace::Inactive,
             change,
-            false,
+            "unchanged",
+            PackageFace::Inactive,
+        );
+    }
+    if additions.is_empty() && removals.is_empty() && unchanged.is_empty() {
+        text.push_face("none", PackageFace::Inactive);
+        text.newline();
+    }
+
+    if !additions.is_empty() {
+        text.newline();
+        package_ui::band_lines(
+            &mut text,
+            UiStatus::Warning,
+            &[
+                "A new capability needs your confirmation.",
+                "Unattended upgrades stop here and change nothing.",
+            ],
             width,
             symbols,
         );
-    }
-
-    if let Some(commits) = review.commits.filter(|text| !text.trim().is_empty()) {
-        text.newline();
-        package_ui::heading(&mut text, "Changes", width, symbols);
-        text.newline();
-        for line in commits.lines() {
-            let upper = line.to_ascii_uppercase();
-            let face = if upper.contains("BREAKING") {
-                PackageFace::Error
-            } else if upper.contains("WARNING") {
-                PackageFace::Warning
-            } else {
-                PackageFace::Neutral
-            };
-            let line = package_ui::fit(line, width, symbols.ellipsis);
-            text.push_face(&line, face);
-            text.newline();
-        }
     }
 
     if review.build.is_some() || !review.recipe_changes.is_empty() {
         text.newline();
-        package_ui::heading(&mut text, "Build", width, symbols);
+        text.push_face("Build", PackageFace::Heading);
         text.newline();
         if let Some(build) = review.build {
-            text.push_face("  command: ", PackageFace::Heading);
-            text.push_face(build, PackageFace::Primary);
-            text.newline();
+            package_ui::field(&mut text, 4, "command", build, None, width, symbols);
         }
-        for change in review.recipe_changes {
-            text.push_face(
-                &package_ui::fit(&format!("  {change}"), width, symbols.ellipsis),
-                PackageFace::Warning,
+        if review.recipe_changes.is_empty() {
+            package_ui::field(
+                &mut text,
+                4,
+                "changed",
+                &format!("no (same recipe as {})", review.old_version),
+                None,
+                width,
+                symbols,
             );
+        } else {
+            package_ui::field(
+                &mut text,
+                4,
+                "changed",
+                "yes",
+                Some(PackageFace::Warning),
+                width,
+                symbols,
+            );
+            for change in review.recipe_changes {
+                text.push(&" ".repeat(4 + package_ui::FIELD_LABEL));
+                text.push_face(
+                    &package_ui::fit(
+                        change,
+                        width.saturating_sub(4 + package_ui::FIELD_LABEL),
+                        symbols.ellipsis,
+                    ),
+                    PackageFace::Warning,
+                );
+                text.newline();
+            }
+        }
+    }
+
+    if let Some(commits) = review.commits.filter(|text| !text.trim().is_empty()) {
+        text.newline();
+        text.push_face("Changes", PackageFace::Heading);
+        text.newline();
+        for line in commits.lines() {
+            let upper = line.to_ascii_uppercase();
+            let face = if upper.contains("BREAKING") {
+                Some(PackageFace::Error)
+            } else if upper.contains("WARNING") {
+                Some(PackageFace::Warning)
+            } else {
+                None
+            };
+            let line = package_ui::fit(line.trim_end(), width.saturating_sub(2), symbols.ellipsis);
+            text.push("  ");
+            // `git log --oneline` puts the short hash first.
+            match line.split_once(' ') {
+                Some((hash, subject))
+                    if hash.len() >= 4 && hash.chars().all(|c| c.is_ascii_hexdigit()) =>
+                {
+                    text.push_face(hash, PackageFace::Info);
+                    text.push(" ");
+                    match face {
+                        Some(face) => text.push_face(subject, face),
+                        None => text.push(subject),
+                    }
+                }
+                _ => match face {
+                    Some(face) => text.push_face(&line, face),
+                    None => text.push(&line),
+                },
+            }
             text.newline();
         }
     }
 
     if let Some(notes) = review.notes.filter(|notes| !notes.trim().is_empty()) {
         text.newline();
-        package_ui::heading(&mut text, "Release notes", width, symbols);
+        text.push_face("Release notes", PackageFace::Heading);
         text.newline();
         for line in notes.lines() {
             text.push_face(
@@ -971,14 +1034,36 @@ pub(crate) fn show_capability_review(app: &mut App, review: UpgradeReview<'_>) {
     }
 
     text.newline();
-    text.push_face("y", PackageFace::Accent);
-    text.push(" apply upgrade   ");
-    text.push_face("n", PackageFace::Accent);
-    text.push(" skip   ");
-    text.push_face("C-g", PackageFace::Accent);
-    text.push(" cancel");
+    text.push_face(
+        "y apply upgrade   n skip   C-g cancel",
+        PackageFace::Inactive,
+    );
     text.newline();
     text.show(app, "*Package Upgrade Review*", "special-mode", None);
+}
+
+/// The short name and plain description of a capability, as the review and
+/// the permission prompt both show them.
+fn capability_parts(change: &CapabilityChange) -> (&'static str, String) {
+    match change {
+        CapabilityChange::Network => ("network", "connect to the internet".to_string()),
+        CapabilityChange::Http => ("http", "make web requests".to_string()),
+        CapabilityChange::Environment => ("environment", "read environment variables".to_string()),
+        CapabilityChange::Directory { path, write } => (
+            "directory",
+            format!("{} {path}", if *write { "write" } else { "read" }),
+        ),
+        CapabilityChange::Process(program) => (
+            "processes",
+            if program == "*" {
+                "run any program".to_string()
+            } else {
+                format!("run {program}")
+            },
+        ),
+        CapabilityChange::Memory { from, to } if from == to => ("memory", format!("{to} MB")),
+        CapabilityChange::Memory { from, to } => ("memory", format!("{to} MB (was {from} MB)")),
+    }
 }
 
 fn capability_list(grants: &Grants) -> Vec<CapabilityChange> {
@@ -1008,41 +1093,6 @@ fn capability_list(grants: &Grants) -> Vec<CapabilityChange> {
         changes.push(CapabilityChange::Process(process.clone()));
     }
     changes
-}
-
-fn push_capability_change(
-    text: &mut Text,
-    mark: &str,
-    mark_face: PackageFace,
-    change: &CapabilityChange,
-    risk: bool,
-    width: usize,
-    symbols: Symbols,
-) {
-    let prefix = format!("  {mark} ");
-    let risk_label = "higher risk";
-    let risk_width = if risk {
-        package_ui::display_width(risk_label) + 2
-    } else {
-        0
-    };
-    let room =
-        width.saturating_sub(package_ui::display_width(&prefix) + risk_width + usize::from(risk));
-    let description = package_ui::fit(&change.describe(), room, symbols.ellipsis);
-    text.push_face(&prefix, mark_face);
-    text.push(&description);
-    if risk {
-        let gap = width.saturating_sub(
-            package_ui::display_width(&prefix)
-                + package_ui::display_width(&description)
-                + risk_width,
-        );
-        if gap > 0 {
-            text.push(&" ".repeat(gap));
-        }
-        package_ui::chip(text, risk_label, PackageFace::Risk);
-    }
-    text.newline();
 }
 
 fn restore_snapshot(app: &mut App, name: &str) {
@@ -2939,6 +2989,42 @@ Build --------------------------------------------------------------------------
 
 y apply upgrade   n skip   C-g cancel"#,
         );
+    }
+
+    #[test]
+    fn dump_upgrade() {
+        std::fs::create_dir_all("/tmp/actual").unwrap();
+        let new = Grants {
+            network: true,
+            directories: vec![DirGrant {
+                path: "~/.config/forge".into(),
+                write: false,
+                why: None,
+            }],
+            ..Default::default()
+        };
+        let diff = CapabilityDiff {
+            additions: vec![CapabilityChange::Network],
+            removals: vec![CapabilityChange::Process("git".into())],
+        };
+        let mut app = app();
+        show_capability_review(
+            &mut app,
+            UpgradeReview {
+                name: "org-modern",
+                old_version: "0.2.0",
+                new_version: "0.3.1",
+                new: &new,
+                diff: &diff,
+                build: Some("cargo build --release --target wasm32-wasip2"),
+                recipe_changes: &[],
+                commits: Some(
+                    "a1b2c3d add async fetch for remote tables\n9f8e7d6 BREAKING: rename org-modern-style\n5c4b3a2 fix heading indent",
+                ),
+                notes: None,
+            },
+        );
+        std::fs::write("/tmp/actual/upgrade_capability_review_dark.txt", text(&app)).unwrap();
     }
 
     #[test]

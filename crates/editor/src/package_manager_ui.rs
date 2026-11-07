@@ -24,6 +24,8 @@ pub enum View {
     Home,
     Install,
     Update,
+    Sync,
+    Clean,
     Check,
     Log,
     Restore,
@@ -33,10 +35,12 @@ pub enum View {
 }
 
 impl View {
-    pub const ALL: [View; 9] = [
+    pub const ALL: [View; 11] = [
         View::Home,
         View::Install,
         View::Update,
+        View::Sync,
+        View::Clean,
         View::Check,
         View::Log,
         View::Restore,
@@ -50,12 +54,14 @@ impl View {
             View::Home => "Home",
             View::Install => "Install",
             View::Update => "Update",
+            View::Sync => "Sync",
+            View::Clean => "Clean",
             View::Check => "Check",
             View::Log => "Log",
             View::Restore => "Restore",
             View::Profile => "Profile",
             View::Doctor => "Doctor",
-            View::Help => "? Help",
+            View::Help => "Help",
         }
     }
 
@@ -64,6 +70,8 @@ impl View {
             View::Home => 'H',
             View::Install => 'I',
             View::Update => 'U',
+            View::Sync => 'S',
+            View::Clean => 'X',
             View::Check => 'C',
             View::Log => 'L',
             View::Restore => 'R',
@@ -78,6 +86,8 @@ impl View {
             View::Home => "package-manager-show-home",
             View::Install => "package-manager-show-install",
             View::Update => "package-manager-show-update",
+            View::Sync => "package-manager-show-sync",
+            View::Clean => "package-manager-show-clean",
             View::Check => "package-manager-show-check",
             View::Log => "package-manager-show-log",
             View::Restore => "package-manager-show-restore",
@@ -92,6 +102,8 @@ impl View {
             View::Home => "home",
             View::Install => "install",
             View::Update => "update",
+            View::Sync => "sync",
+            View::Clean => "clean",
             View::Check => "check",
             View::Log => "log",
             View::Restore => "restore",
@@ -137,12 +149,17 @@ pub struct Row {
     pub version: String,
     pub target: Option<String>,
     pub source: String,
+    pub triggers: String,
     pub frozen: bool,
     pub section: Option<Section>,
     pub problem: Option<Problem>,
     pub capabilities: Vec<String>,
-    pub load_ms: Option<u64>,
+    /// Start-up time in microseconds.
+    pub load_us: Option<u64>,
     pub has_update: bool,
+    pub build: Option<String>,
+    pub about: String,
+    pub last_op: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,28 +208,8 @@ pub struct UpdateItem {
     pub new: String,
     pub state: ItemState,
     pub started: Option<Timer>,
-}
-
-impl UpdateItem {
-    pub fn state_label(&self, symbols: Symbols, tick: usize) -> String {
-        match &self.state {
-            ItemState::Queued => "queued".into(),
-            ItemState::Running(step) => format!("{} {step}", symbols.spinner(tick)),
-            ItemState::Done(result) => format!("{} {result}", symbols.check),
-            ItemState::Failed(reason) => format!("{} {reason}", symbols.cross),
-            ItemState::Skipped(reason) => format!("- {reason}"),
-        }
-    }
-
-    fn status(&self) -> Status {
-        match &self.state {
-            ItemState::Queued => Status::Neutral,
-            ItemState::Running(_) => Status::Info,
-            ItemState::Done(_) => Status::Ok,
-            ItemState::Failed(_) => Status::Error,
-            ItemState::Skipped(_) => Status::Neutral,
-        }
-    }
+    /// How long the package took, once it finished.
+    pub took: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]
@@ -258,6 +255,67 @@ impl UpdateSnapshot {
             .filter(|item| matches!(item.state, ItemState::Done(_)))
             .count()
     }
+
+    /// The short status shown at the right of the title.
+    pub fn title(&self) -> String {
+        let total = self.items.len();
+        let done = self.finished();
+        match self.state {
+            UpdateState::Running if self.running() > 0 => format!("Updating {done}/{total}"),
+            UpdateState::Running => format!("Starting update {done}/{total}"),
+            UpdateState::Done => format!("Updated {} of {total}", self.updated()),
+            UpdateState::Failed => format!("Update stopped at {done}/{total}"),
+        }
+    }
+}
+
+/// The widths of the name and version columns, shared by every row on a
+/// screen so the columns line up across sections.
+#[derive(Debug, Clone, Copy)]
+struct Columns {
+    name: usize,
+    version: usize,
+}
+
+impl Columns {
+    fn of(model: &ManagerModel, width: usize) -> Self {
+        let names = model
+            .rows
+            .iter()
+            .map(|row| package_ui::display_width(&row.name));
+        let versions = model
+            .rows
+            .iter()
+            .map(|row| package_ui::display_width(&version_text(row)));
+        let update = model.update.iter().flat_map(|update| &update.items);
+        let names = names.chain(update.clone().map(|i| package_ui::display_width(&i.name)));
+        let versions =
+            versions.chain(update.map(|i| package_ui::display_width(&update_versions(i))));
+        let mut name = names.max().unwrap_or(4).clamp(18, 24);
+        let mut version = (versions.max().unwrap_or(4) + 3).clamp(8, 24);
+        // Leave room for the mark, the gaps and a little detail.
+        let room = width.saturating_sub(6 + 12);
+        if name + version > room {
+            version = version.min(room / 2).max(6);
+            name = room.saturating_sub(version).max(6);
+        }
+        Self { name, version }
+    }
+}
+
+fn version_text(row: &Row) -> String {
+    match &row.target {
+        Some(target) => format!("{} → {target}", row.version),
+        None => row.version.clone(),
+    }
+}
+
+fn update_versions(item: &UpdateItem) -> String {
+    format!("{} → {}", item.old, item.new)
+}
+
+fn seconds(duration: Duration) -> String {
+    format!("{:.1}s", duration.as_secs_f64())
 }
 
 #[derive(Debug, Default)]
@@ -276,6 +334,14 @@ pub fn show_install(app: &mut App) {
 
 pub fn show_update(app: &mut App) {
     show_view(app, View::Update);
+}
+
+pub fn show_sync(app: &mut App) {
+    show_view(app, View::Sync);
+}
+
+pub fn show_clean(app: &mut App) {
+    show_view(app, View::Clean);
 }
 
 pub fn show_check(app: &mut App) {
@@ -488,6 +554,23 @@ fn collect(app: &mut App) -> ManagerModel {
             })
             .unwrap_or("-")
             .to_string();
+        let triggers = declaration
+            .filter(|u| u.lazy())
+            .map(|u| {
+                let mut parts = Vec::new();
+                if !u.on_commands.is_empty() {
+                    parts.push(format!("cmd: {}", u.on_commands.join(", ")));
+                }
+                if !u.on_modes.is_empty() {
+                    parts.push(format!("mode: {}", u.on_modes.join(", ")));
+                }
+                if !u.on_extensions.is_empty() {
+                    parts.push(format!("ext: {}", u.on_extensions.join(", ")));
+                }
+                parts.join("  ")
+            })
+            .unwrap_or_default();
+
         let section = if app.packages.manager_view == View::Home {
             Some(if problem.is_some() {
                 Section::Problems
@@ -501,6 +584,19 @@ fn collect(app: &mut App) -> ManagerModel {
         } else {
             None
         };
+        let build = package
+            .and_then(|p| p.build.clone())
+            .or_else(|| declaration.and_then(|u| u.build.clone()));
+        let about = indexed.map(|p| p.description.clone()).unwrap_or_default();
+        let last_op = latest.get(name).map(|event| {
+            format!(
+                "{} {} {} {:.1}s",
+                operation_label(event.operation),
+                status_label(event.status),
+                "·",
+                event.duration_us as f64 / 1_000_000.0
+            )
+        });
         rows.push(Row {
             name: name.clone(),
             status,
@@ -508,12 +604,24 @@ fn collect(app: &mut App) -> ManagerModel {
             version,
             target,
             source,
+            triggers,
             frozen,
             section,
             problem,
             capabilities: crate::packages::capability_additions(app, name),
-            load_ms: load_times.get(name).copied(),
+            load_us: load_times.get(name).copied(),
             has_update,
+            build,
+            about,
+            last_op,
+        });
+    }
+
+    if app.packages.manager_view == View::Home {
+        rows.sort_by(|a, b| {
+            let ra = a.section.map(|x| x as usize).unwrap_or(4);
+            let rb = b.section.map(|x| x as usize).unwrap_or(4);
+            ra.cmp(&rb).then_with(|| a.name.cmp(&b.name))
         });
     }
 
@@ -645,7 +753,10 @@ fn load_times(profile: Option<&ProfileReport>) -> BTreeMap<String, u64> {
             plugin.cache_lookup
         };
         if stat.count > 0 {
-            out.insert(plugin.plugin.clone(), millis(stat.total()));
+            out.insert(
+                plugin.plugin.clone(),
+                u64::try_from(stat.total().as_micros()).unwrap_or(u64::MAX),
+            );
         }
     }
     out
@@ -673,16 +784,21 @@ fn restore_text() -> String {
 fn render(
     app: &App,
     model: &ManagerModel,
-    width: usize,
+    outer: usize,
     symbols: Symbols,
     tick: usize,
 ) -> Rendered {
-    let mut text = package_ui::Text::new();
+    let width = package_ui::inner(outer);
+    let mut text = package_ui::Text::for_width(outer);
     render_title(&mut text, model, width, symbols);
     render_tabs(&mut text, model.view, width, symbols);
-    render_filter(&mut text, model, width, symbols);
-    text.newline();
 
+    if !model.filter.is_empty() {
+        render_filter(&mut text, model, width, symbols);
+        text.newline();
+    }
+
+    let cols = Columns::of(model, width);
     let mut selected_line = 0;
     match model.view {
         View::Home => render_home(
@@ -690,6 +806,7 @@ fn render(
             &mut text,
             model,
             width,
+            cols,
             symbols,
             tick,
             &mut selected_line,
@@ -718,6 +835,7 @@ fn render(
                     &mut text,
                     model,
                     width,
+                    cols,
                     symbols,
                     tick,
                     &mut selected_line,
@@ -729,10 +847,63 @@ fn render(
             &mut text,
             model,
             width,
+            cols,
             symbols,
             tick,
             &mut selected_line,
         ),
+        View::Sync => {
+            render_heading(
+                &mut text,
+                "Sync",
+                None,
+                width,
+                PackageFace::Heading,
+                symbols,
+            );
+            text.push_face(
+                "Sync declared packages to forge-lock.toml.",
+                PackageFace::Inactive,
+            );
+            text.newline();
+            text.newline();
+            render_rows(
+                app,
+                &mut text,
+                model,
+                width,
+                cols,
+                symbols,
+                tick,
+                &mut selected_line,
+            );
+        }
+        View::Clean => {
+            render_heading(
+                &mut text,
+                "Installed but undeclared",
+                None,
+                width,
+                PackageFace::Heading,
+                symbols,
+            );
+            text.push_face(
+                "Packages installed locally but not declared in init.rhai.",
+                PackageFace::Inactive,
+            );
+            text.newline();
+            text.newline();
+            render_rows(
+                app,
+                &mut text,
+                model,
+                width,
+                cols,
+                symbols,
+                tick,
+                &mut selected_line,
+            );
+        }
         View::Check => render_report(&mut text, model.check.as_ref(), width),
         View::Log => render_log(&mut text, model, width, symbols),
         View::Restore => {
@@ -764,29 +935,18 @@ fn render(
 }
 
 fn render_title(text: &mut package_ui::Text, model: &ManagerModel, width: usize, symbols: Symbols) {
-    let title = " Forge Packages ";
-    text.push_face(title, PackageFace::TitlePill);
-    let counts = format!(
-        "{} package{} {} {} update{} {} {} problem{}",
-        model.rows.len(),
-        plural(model.rows.len()),
-        symbols.dot,
-        model.updates,
-        plural(model.updates),
-        symbols.dot,
-        model.problems,
-        plural(model.problems),
-    );
-    let used = package_ui::display_width(title) + package_ui::display_width(&counts);
-    let gap = width.saturating_sub(used + 1);
-    if gap > 0 {
-        text.push(&" ".repeat(gap));
-    }
-    text.push_face(
-        &package_ui::fit(&counts, width.saturating_sub(used), symbols.ellipsis),
-        PackageFace::Heading,
-    );
-    text.newline();
+    let right = match (&model.update, model.view) {
+        (Some(update), View::Update) => update.title(),
+        _ => format!(
+            "{} package{} {} {} update{}",
+            model.rows.len(),
+            plural(model.rows.len()),
+            symbols.dot,
+            model.updates,
+            plural(model.updates),
+        ),
+    };
+    package_ui::title(text, "Forge Packages", &right, width, symbols);
 }
 
 fn render_filter(
@@ -820,25 +980,25 @@ fn render_tabs(text: &mut package_ui::Text, view: View, width: usize, symbols: S
         if index > 0 {
             text.push(" ");
         }
-        let start = text.chars();
+        let start = text.mark();
         if tab.active {
-            let label = format!(" {} ", tab.label);
+            let label = format!(" {} {} ", tab.key, tab.label);
             text.push_face(&label, PackageFace::TabActive);
         } else {
             text.push_face(&format!("{}", tab.key), PackageFace::Accent);
             if tab.expanded {
-                text.push_face(&tab.label[1..], PackageFace::Heading);
+                text.push_face(&format!(" {}", tab.label), PackageFace::Inactive);
             }
         }
         text.push_region(start, text.chars(), &tab.view.region());
     }
     if labels.is_empty() {
-        text.push_face(" ? help", PackageFace::Accent);
-        let start = text.chars().saturating_sub(7);
+        let start = text.mark();
+        text.push_face("? help", PackageFace::Accent);
         text.push_region(start, text.chars(), &View::Help.region());
     }
-    let _ = symbols;
     text.newline();
+    package_ui::rule(text, width, symbols);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -851,13 +1011,30 @@ struct TabLabel {
 }
 
 fn tab_labels(view: View, width: usize) -> Vec<TabLabel> {
-    let full_width: usize = View::ALL
+    // The tabs the bar shows when it is short on room. Restore and Profile
+    // are one-off reports, so they appear when open or when there is space.
+    let reduced: Vec<View> = View::ALL
         .iter()
-        .map(|tab| tab.label().len() + 3)
-        .sum::<usize>()
-        + View::ALL.len().saturating_sub(1);
-    if width > 100 && full_width <= width {
-        return View::ALL
+        .copied()
+        .filter(|tab| !matches!(tab, View::Restore | View::Profile) || *tab == view)
+        .collect();
+    let fits = |tabs: &[View]| {
+        let labels: usize = tabs
+            .iter()
+            .map(|tab| tab.label().len() + 2 + usize::from(*tab == view) * 2)
+            .sum();
+        labels + tabs.len().saturating_sub(1) <= width
+    };
+    let all = View::ALL.to_vec();
+    let expanded = if fits(&all) {
+        Some(all)
+    } else if fits(&reduced) {
+        Some(reduced)
+    } else {
+        None
+    };
+    if let Some(tabs) = expanded {
+        return tabs
             .iter()
             .map(|tab| TabLabel {
                 view: *tab,
@@ -899,11 +1076,13 @@ fn tab_labels(view: View, width: usize) -> Vec<TabLabel> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_home(
     app: &App,
     text: &mut package_ui::Text,
     model: &ManagerModel,
     width: usize,
+    cols: Columns,
     symbols: Symbols,
     tick: usize,
     selected_line: &mut usize,
@@ -925,6 +1104,7 @@ fn render_home(
         Section::Loaded,
         Section::NotLoaded,
     ];
+    let mut first = true;
     for section in sections {
         let rows: Vec<(usize, &Row)> = model
             .rows
@@ -935,6 +1115,10 @@ fn render_home(
         if rows.is_empty() {
             continue;
         }
+        if !first {
+            text.newline();
+        }
+        first = false;
         render_heading(
             text,
             section.label(),
@@ -951,20 +1135,22 @@ fn render_home(
                 row,
                 index,
                 width,
+                cols,
                 symbols,
                 tick,
                 selected_line,
             );
         }
-        text.newline();
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_update(
     app: &App,
     text: &mut package_ui::Text,
     model: &ManagerModel,
     width: usize,
+    cols: Columns,
     symbols: Symbols,
     tick: usize,
     selected_line: &mut usize,
@@ -972,82 +1158,73 @@ fn render_update(
     if let Some(update) = &model.update {
         let total = update.items.len();
         let done = update.finished();
-        let label = match update.state {
-            UpdateState::Running => {
-                let running = update.running();
-                if running > 0 {
-                    format!("Updating {done}/{total}")
-                } else {
-                    format!("Starting update {done}/{total}")
-                }
-            }
-            UpdateState::Done => format!("Updated {} of {total}", update.updated()),
-            UpdateState::Failed => format!("Update stopped at {done}/{total}"),
-        };
-        let elapsed = millis(update.started.elapsed());
-        let right = format!("{elapsed} ms");
-        render_heading(text, &label, None, width, PackageFace::Heading, symbols);
         if update.state == UpdateState::Running {
-            let bar_width = width
-                .saturating_sub(label.len() + right.len() + 6)
-                .clamp(8, 28);
+            let bar_width = 27.min(width.saturating_sub(24)).max(8);
             let filled = done
                 .saturating_mul(bar_width)
                 .checked_div(total)
                 .unwrap_or(0)
                 .min(bar_width);
-            let mut bar = String::new();
-            bar.push_str(&symbols.progress_full.repeat(filled));
-            bar.push_str(&symbols.progress_empty.repeat(bar_width - filled));
-            let used = bar_width + right.len() + 2;
-            text.push_face(&bar, PackageFace::Accent);
-            let gap = width.saturating_sub(used);
-            if gap > 0 {
-                text.push(&" ".repeat(gap));
-            }
-            text.push_face(&right, PackageFace::Heading);
+            text.push_face(&symbols.progress_full.repeat(filled), PackageFace::Accent);
+            text.push_face(
+                &symbols.progress_empty.repeat(bar_width - filled),
+                PackageFace::Inactive,
+            );
+            text.push(&format!("  {done}/{total}  "));
+            text.push_face(&seconds(update.started.elapsed()), PackageFace::Inactive);
+            text.newline();
             text.newline();
         }
-        if let Some(note) = &update.note {
-            text.push_face(note, PackageFace::Error);
-            text.newline();
-        }
-        text.newline();
-        let name_w = update
+        let label = match update.state {
+            UpdateState::Running => "Updating",
+            UpdateState::Done => "Updated",
+            UpdateState::Failed => "Update stopped",
+        };
+        render_heading(
+            text,
+            label,
+            Some(total),
+            width,
+            PackageFace::Heading,
+            symbols,
+        );
+        let current = update
             .items
             .iter()
-            .map(|item| package_ui::display_width(&item.name))
-            .max()
-            .unwrap_or(4)
-            .clamp(4, 24);
-        let state_w = width.saturating_sub(name_w + 6).max(12);
-        for item in &update.items {
-            text.push("  ");
-            text.push(&package_ui::pad(&item.name, name_w, symbols.ellipsis));
-            text.push("  ");
-            let state = item.state_label(symbols, tick);
-            text.push_status(
-                item.status(),
-                &package_ui::fit(&state, state_w, symbols.ellipsis),
-                state_w,
-                false,
-                symbols,
+            .position(|item| matches!(item.state, ItemState::Running(_)));
+        for (index, item) in update.items.iter().enumerate() {
+            let selected = current == Some(index);
+            if selected {
+                *selected_line = text.line_count();
+            }
+            render_update_item(text, item, selected, width, cols, symbols, tick);
+        }
+        if let Some(note) = &update.note {
+            text.newline();
+            text.push_face(
+                &package_ui::fit(note, width, symbols.ellipsis),
+                PackageFace::Error,
             );
             text.newline();
-            if matches!(item.state, ItemState::Failed(_)) {
-                let detail = item
-                    .started
-                    .map(|timer| format!("  after {} ms", millis(timer.elapsed())))
-                    .unwrap_or_default();
-                if !detail.is_empty() {
-                    text.push_face(&detail, PackageFace::Inactive);
-                    text.newline();
-                }
-            }
         }
-        if update.state == UpdateState::Running && update.running() == 0 {
+        if update.state == UpdateState::Running {
             text.newline();
-            text.push_face("Waiting for the next package...", PackageFace::Inactive);
+            render_heading(
+                text,
+                "On failure",
+                None,
+                width,
+                PackageFace::Heading,
+                symbols,
+            );
+            text.push_face(
+                &package_ui::fit(
+                    "A failed smoke test restores the previous version and names the plugin.",
+                    width,
+                    symbols.ellipsis,
+                ),
+                PackageFace::Inactive,
+            );
             text.newline();
         }
         return;
@@ -1071,7 +1248,87 @@ fn render_update(
     );
     text.newline();
     text.newline();
-    render_rows(app, text, model, width, symbols, tick, selected_line);
+    render_rows(app, text, model, width, cols, symbols, tick, selected_line);
+}
+
+fn render_update_item(
+    text: &mut package_ui::Text,
+    item: &UpdateItem,
+    selected: bool,
+    width: usize,
+    cols: Columns,
+    symbols: Symbols,
+    tick: usize,
+) {
+    let base = selected.then_some(PackageFace::Selected);
+    text.begin_line(base);
+    let mut used = 0;
+    let mark_w = symbols.spinner_width().max(1);
+    let (mark, mark_face) = match &item.state {
+        ItemState::Queued => (symbols.dot, PackageFace::Inactive),
+        ItemState::Running(_) => (symbols.spinner(tick), PackageFace::Info),
+        ItemState::Done(_) => (symbols.check, PackageFace::Ok),
+        ItemState::Failed(_) => (symbols.cross, PackageFace::Error),
+        ItemState::Skipped(_) => (symbols.dot, PackageFace::Inactive),
+    };
+    text.push_face(mark, mark_face);
+    used += package_ui::display_width(mark);
+    let gap = " ".repeat(mark_w.saturating_sub(used) + 1);
+    push_base(text, &mut used, &gap, base);
+    push_cell(text, &mut used, &item.name, cols.name, base, symbols);
+    push_base(text, &mut used, " ", base);
+    let versions_face = match item.state {
+        ItemState::Queued if !selected => Some(PackageFace::Inactive),
+        _ => base,
+    };
+    push_cell(
+        text,
+        &mut used,
+        &update_versions(item),
+        cols.version,
+        versions_face,
+        symbols,
+    );
+    let took = |item: &UpdateItem| {
+        item.took
+            .or_else(|| item.started.map(|timer| timer.elapsed()))
+            .map(seconds)
+    };
+    let (detail, face) = match &item.state {
+        ItemState::Queued => ("queued".to_string(), PackageFace::Inactive),
+        ItemState::Running(step) => (join_dot(step, took(item), symbols), PackageFace::Info),
+        ItemState::Done(result) => (join_dot(result, took(item), symbols), PackageFace::Inactive),
+        ItemState::Failed(reason) => (join_dot(reason, took(item), symbols), PackageFace::Error),
+        ItemState::Skipped(reason) => (reason.clone(), PackageFace::Inactive),
+    };
+    let room = width.saturating_sub(used);
+    let detail = package_ui::fit(&detail, room, symbols.ellipsis);
+    push_base(text, &mut used, &detail, Some(face));
+    finish_row(text, &mut used, width, base);
+}
+
+fn join_dot(left: &str, right: Option<String>, symbols: Symbols) -> String {
+    match right {
+        Some(right) => format!("{left} {} {right}", symbols.dot),
+        None => left.to_string(),
+    }
+}
+
+/// End a row. A selected row's surface runs to the window edge.
+fn finish_row(
+    text: &mut package_ui::Text,
+    used: &mut usize,
+    width: usize,
+    base: Option<PackageFace>,
+) {
+    if let Some(face) = base {
+        if *used < width {
+            let fill = " ".repeat(width - *used);
+            push_base(text, used, &fill, Some(face));
+        }
+        text.end_line_fill(face);
+    }
+    text.newline();
 }
 
 fn render_report(
@@ -1259,22 +1516,18 @@ fn render_heading(
     if let Some(count) = count {
         heading.push_str(&format!(" ({count})"));
     }
+    let _ = (width, symbols);
     text.push_face(&heading, face);
-    let used = package_ui::display_width(&heading);
-    if used < width {
-        text.push_face(
-            &symbols.rule.repeat(width.saturating_sub(used + 1)),
-            PackageFace::Rule,
-        );
-    }
     text.newline();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_rows(
     app: &App,
     text: &mut package_ui::Text,
     model: &ManagerModel,
     width: usize,
+    cols: Columns,
     symbols: Symbols,
     tick: usize,
     selected_line: &mut usize,
@@ -1287,6 +1540,7 @@ fn render_rows(
             row,
             index,
             width,
+            cols,
             symbols,
             tick,
             selected_line,
@@ -1302,6 +1556,7 @@ fn render_row(
     row: &Row,
     index: usize,
     width: usize,
+    cols: Columns,
     symbols: Symbols,
     tick: usize,
     selected_line: &mut usize,
@@ -1310,68 +1565,144 @@ fn render_row(
     if selected {
         *selected_line = text.line_count();
     }
-    let base = if selected {
-        Some(PackageFace::Selected)
-    } else if row.frozen {
+    let base = selected.then_some(PackageFace::Selected);
+    let quiet = row.kind == Status::Neutral;
+
+    text.begin_line(base);
+    let mut used = 0;
+    // The mark carries the status; a quiet row's mark is dim, not boxed.
+    let mark_face = if quiet {
+        PackageFace::Inactive
+    } else {
+        row.kind.face()
+    };
+    text.push_face(symbols.mark(row.kind), mark_face);
+    used += package_ui::display_width(symbols.mark(row.kind));
+    push_base(text, &mut used, " ", base);
+    push_cell(text, &mut used, &row.name, cols.name, base, symbols);
+    push_base(text, &mut used, " ", base);
+    let version_face = if selected {
+        base
+    } else if quiet {
         Some(PackageFace::Inactive)
     } else {
         None
     };
-    let name_w = width.saturating_sub(50).clamp(8, 26);
-    let status_w = 14.min(width.saturating_sub(name_w + 8)).max(9);
-    let version_w = 10.min(width.saturating_sub(name_w + status_w + 8)).max(4);
-    let show_source = width >= 100;
-    let show_target = row.target.is_some() && width >= 54;
-    let source_w = width
-        .saturating_sub(3 + name_w + 2 + status_w + 2 + version_w + 2 + 12)
-        .max(6);
+    push_cell(
+        text,
+        &mut used,
+        &version_text(row),
+        cols.version,
+        version_face,
+        symbols,
+    );
 
-    let mut used = 0;
-    let marker = if selected { symbols.selected } else { " " };
-    text.push_face(marker, PackageFace::SelectedMarker);
-    used += package_ui::display_width(marker);
-    push_base(text, &mut used, " ", base);
-    push_cell(text, &mut used, &row.name, name_w, base, symbols);
-    push_base(text, &mut used, "  ", base);
-    let status = package_ui::fit(&row.status, status_w, symbols.ellipsis);
-    text.push_status(row.kind, &status, status_w, selected, symbols);
-    used += package_ui::display_width(&status) + 2;
-    push_base(text, &mut used, "  ", base);
-    push_cell(text, &mut used, &row.version, version_w, base, symbols);
-    if show_target {
-        push_base(text, &mut used, " ", base);
-        push_base(text, &mut used, symbols.arrow, Some(PackageFace::Accent));
-        push_base(text, &mut used, " ", base);
-        let target = row.target.as_deref().unwrap_or("");
+    if let Some(problem) = &row.problem {
+        let room = width.saturating_sub(used);
         push_cell(
             text,
             &mut used,
-            target,
-            version_w.saturating_sub(2).max(3),
-            base,
+            &problem.message,
+            room,
+            Some(PackageFace::Error),
             symbols,
         );
-    }
-    if let Some(ms) = row.load_ms {
-        let load = format!(" {ms} ms");
-        if used + load.len() <= width {
-            push_base(text, &mut used, &load, Some(PackageFace::Inactive));
+    } else {
+        let mut chipped = false;
+        if row.has_update && !row.capabilities.is_empty() {
+            let chip = format!(" adds {} ", row.capabilities.join(", "));
+            push_chip(
+                text,
+                &mut used,
+                &chip,
+                PackageFace::BadgeWarning,
+                width,
+                symbols,
+            );
+            chipped = true;
+        } else if row.frozen {
+            push_chip(
+                text,
+                &mut used,
+                " frozen ",
+                PackageFace::BadgeInactive,
+                width,
+                symbols,
+            );
+            chipped = true;
+        }
+        // Keep a cell between the chip and the detail, but only if the
+        // detail has something to say.
+        let gap = usize::from(chipped && used < width);
+        let room = width.saturating_sub(used + gap);
+        let detail = row_detail(row, model.view, symbols, room);
+        if !detail.is_empty() {
+            if gap > 0 {
+                push_base(text, &mut used, " ", base);
+            }
+            let face = if selected {
+                base
+            } else {
+                Some(PackageFace::Inactive)
+            };
+            push_base(text, &mut used, &detail, face);
         }
     }
-    if show_source {
-        push_base(text, &mut used, "  ", base);
-        let room = source_w.min(width.saturating_sub(used));
-        push_cell(text, &mut used, &row.source, room, base, symbols);
-    }
-    if selected && used < width {
-        let fill = " ".repeat(width - used);
-        push_base(text, &mut used, &fill, base);
-    }
-    text.newline();
+    finish_row(text, &mut used, width, base);
 
     if app.packages.manager_expanded.contains(&row.name) {
         render_expanded(app, text, row, width, symbols, tick);
     }
+}
+
+/// What a row says after its version: when it loads and how long that took.
+///
+/// The timing is reserved before the description is cut, so a long trigger
+/// list shortens itself with an ellipsis instead of hiding the start-up
+/// time at the end of the row.
+fn row_detail(row: &Row, view: View, symbols: Symbols, room: usize) -> String {
+    let timing = row
+        .load_us
+        .map(|us| format!("{:.1} ms", us as f64 / 1000.0));
+    let mut parts = Vec::new();
+    if !row.triggers.is_empty() {
+        parts.push(row.triggers.clone());
+    } else if row.load_us.is_some() {
+        parts.push("startup".to_string());
+    } else if view == View::Install && row.source != "-" {
+        parts.push(row.source.clone());
+    }
+    let description = parts.join(&format!(" {} ", symbols.dot));
+    let Some(timing) = timing else {
+        return package_ui::fit(&description, room, symbols.ellipsis);
+    };
+    if description.is_empty() {
+        return package_ui::fit(&timing, room, symbols.ellipsis);
+    }
+    let sep = format!(" {} ", symbols.dot);
+    let reserved = package_ui::display_width(&timing) + package_ui::display_width(&sep);
+    if room <= reserved {
+        return package_ui::fit(&timing, room, symbols.ellipsis);
+    }
+    let description = package_ui::fit(&description, room - reserved, symbols.ellipsis);
+    format!("{description}{sep}{timing}")
+}
+
+fn push_chip(
+    text: &mut package_ui::Text,
+    used: &mut usize,
+    label: &str,
+    face: PackageFace,
+    width: usize,
+    symbols: Symbols,
+) {
+    let room = width.saturating_sub(*used);
+    if room < 4 {
+        return;
+    }
+    let label = package_ui::fit(label, room, symbols.ellipsis);
+    text.push_face(&label, face);
+    *used += package_ui::display_width(&label);
 }
 
 fn render_expanded(
@@ -1382,6 +1713,7 @@ fn render_expanded(
     symbols: Symbols,
     tick: usize,
 ) {
+    const INDENT: usize = 4;
     if let Some(problem) = &row.problem {
         let label = match problem.severity {
             Severity::Error => "Error",
@@ -1407,32 +1739,41 @@ fn render_expanded(
             );
         }
     }
-    if !row.capabilities.is_empty() {
-        push_wrapped(
+    if row.source != "-" {
+        let value = match &row.target {
+            Some(target) => format!(
+                "{}  v{} {} v{target}",
+                row.source, row.version, symbols.arrow
+            ),
+            None => row.source.clone(),
+        };
+        package_ui::field(text, INDENT, "source", &value, None, width, symbols);
+    }
+    if let Some(build) = &row.build {
+        package_ui::field(text, INDENT, "build", build, None, width, symbols);
+    }
+    if !row.about.is_empty() {
+        package_ui::field(text, INDENT, "about", &row.about, None, width, symbols);
+    }
+    if row.has_update && !row.capabilities.is_empty() {
+        let value = format!(
+            "{}  (new capability, needs confirmation)",
+            row.capabilities.join(", ")
+        );
+        package_ui::field(
             text,
-            "    ",
-            &format!("New capabilities: {}", row.capabilities.join(", ")),
+            INDENT,
+            "adds",
+            &value,
+            Some(PackageFace::Warning),
             width,
-            PackageFace::BadgeWarning,
             symbols,
         );
     }
-    let details = crate::packages::details(app, &row.name);
-    for line in details.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        push_wrapped(
-            text,
-            "      ",
-            line.trim_start(),
-            width,
-            PackageFace::Inactive,
-            symbols,
-        );
+    if let Some(last) = &row.last_op {
+        package_ui::field(text, INDENT, "last op", last, None, width, symbols);
     }
-    let status = crate::package_vc::status(app, &row.name);
-    if let Some(status) = status {
+    if let Some(status) = crate::package_vc::status(app, &row.name) {
         push_wrapped(
             text,
             "    ",
@@ -1515,9 +1856,11 @@ fn wrap(line: &str, width: usize) -> Vec<String> {
 
 fn render_footer(text: &mut package_ui::Text, view: View, width: usize, symbols: Symbols) {
     let hint = match view {
-        View::Home => "RET expand  i install  U update  f filter  g refresh  q quit",
-        View::Install => "RET expand  i install  f filter  g refresh  q quit",
-        View::Update => "U start update  j/k select  RET expand  g refresh  q quit",
+        View::Home => "RET expand  i install  u update  d delete  f filter  g refresh  ? help",
+        View::Install => "RET expand  i install  u update  d delete  f filter  g refresh  ? help",
+        View::Update => "C-g cancel  L log  H home",
+        View::Sync => "g refresh  S sync  q quit",
+        View::Clean => "d delete selected  g refresh  q quit",
         View::Check => "g run the check again  U start update  q quit",
         View::Log => "g refresh  l full log  q quit",
         View::Restore => "M-x package-snapshot-restore  g refresh  q quit",
@@ -1527,7 +1870,7 @@ fn render_footer(text: &mut package_ui::Text, view: View, width: usize, symbols:
     };
     text.push_face(
         &package_ui::fit(hint, width, symbols.ellipsis),
-        PackageFace::Heading,
+        PackageFace::Inactive,
     );
 }
 
@@ -1538,10 +1881,6 @@ fn empty(text: &mut package_ui::Text, message: &str) {
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
-}
-
-fn millis(duration: Duration) -> u64 {
-    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn operation_label(operation: Operation) -> &'static str {
@@ -1586,6 +1925,7 @@ pub(crate) fn update_start_index(
             new: package.version.clone(),
             state: ItemState::Queued,
             started: None,
+            took: None,
         })
         .collect();
     app.packages.manager_update = Some(UpdateSnapshot::new(items));
@@ -1609,6 +1949,7 @@ pub(crate) fn update_start_git(app: &mut App, packages: &[(String, String, Optio
             new: rev.clone().unwrap_or_else(|| "latest".into()),
             state: ItemState::Queued,
             started: None,
+            took: None,
         })
         .collect();
     match app.packages.manager_update.as_mut() {
@@ -1644,6 +1985,7 @@ pub(crate) fn update_done(app: &mut App, name: &str, result: &str) {
     if let Some(snapshot) = app.packages.manager_update.as_mut()
         && let Some(item) = snapshot.items.iter_mut().find(|item| item.name == name)
     {
+        item.took = item.started.map(|timer| timer.elapsed());
         item.state = ItemState::Done(result.to_string());
     }
 }
@@ -1665,6 +2007,7 @@ pub(crate) fn update_failed(app: &mut App, name: &str, reason: &str) {
             if item.started.is_none() {
                 item.started = Some(Timer::start());
             }
+            item.took = item.started.map(|timer| timer.elapsed());
         }
     }
 }
@@ -1694,7 +2037,10 @@ mod tests {
     fn tabs_collapse_before_overflowing() {
         let wide = tab_labels(View::Home, 120);
         assert!(wide.iter().all(|tab| tab.expanded));
-        let medium = tab_labels(View::Home, 80);
+        let roomy = tab_labels(View::Home, 76);
+        assert_eq!(roomy.len(), 9, "Restore and Profile wait for more room");
+        assert!(roomy.iter().all(|tab| tab.expanded));
+        let medium = tab_labels(View::Home, 64);
         assert!(
             medium
                 .iter()
@@ -1714,14 +2060,179 @@ mod tests {
     }
 
     #[test]
-    fn update_labels_use_static_ascii() {
-        let item = UpdateItem {
+    fn spinner_is_static_in_ascii() {
+        assert_eq!(Symbols::ASCII.spinner(0), "...");
+        assert_eq!(Symbols::ASCII.spinner(3), "...");
+        assert_ne!(Symbols::UNICODE.spinner(0), Symbols::UNICODE.spinner(1));
+    }
+
+    #[test]
+    fn startup_time_survives_a_long_trigger_list() {
+        let row = Row {
             name: "demo".into(),
-            old: "1.0".into(),
-            new: "2.0".into(),
-            state: ItemState::Running("fetching".into()),
-            started: None,
+            status: String::new(),
+            kind: Status::Ok,
+            version: "1.0.0".into(),
+            target: None,
+            source: "-".into(),
+            triggers: "cmd: a, b, c, d, e, f, g, h, i, j".into(),
+            frozen: false,
+            section: Some(Section::Loaded),
+            problem: None,
+            capabilities: Vec::new(),
+            load_us: Some(1800),
+            has_update: false,
+            build: None,
+            about: String::new(),
+            last_op: None,
         };
-        assert_eq!(item.state_label(Symbols::ASCII, 0), "... fetching");
+        let detail = row_detail(&row, View::Home, Symbols::UNICODE, 24);
+        assert!(detail.ends_with("1.8 ms"), "{detail}");
+        assert!(
+            package_ui::display_width(&detail) <= 24,
+            "detail fits: {detail}"
+        );
+        assert!(detail.contains('…'), "triggers are cut: {detail}");
+        let tight = row_detail(&row, View::Home, Symbols::UNICODE, 8);
+        assert_eq!(tight, "1.8 ms");
+    }
+}
+
+#[cfg(test)]
+mod dump {
+    use super::*;
+    use forge_core::{Buffer, Editor};
+
+    fn app() -> App {
+        let mut app = App::new(Editor::default());
+        let id = app.editor.add_buffer(Buffer::new("*scratch*"));
+        app.editor.show_buffer(id);
+        app.win_mut().width = 80;
+        app
+    }
+
+    fn row(name: &str, version: &str, kind: Status, section: Section) -> Row {
+        Row {
+            name: name.into(),
+            status: String::new(),
+            kind,
+            version: version.into(),
+            target: None,
+            source: "-".into(),
+            triggers: String::new(),
+            frozen: false,
+            section: Some(section),
+            problem: None,
+            capabilities: Vec::new(),
+            load_us: None,
+            has_update: false,
+            build: None,
+            about: String::new(),
+            last_op: None,
+        }
+    }
+
+    fn update(name: &str, old: &str, new: &str, triggers: &str) -> Row {
+        Row {
+            target: Some(new.into()),
+            triggers: triggers.into(),
+            has_update: true,
+            ..row(name, old, Status::Warning, Section::Updates)
+        }
+    }
+
+    pub(super) fn home_model() -> ManagerModel {
+        let mut org = update("org-modern", "0.2.0", "0.3.1", "");
+        org.capabilities = vec!["network".into()];
+        org.source = "github.com/you/forge-org-modern".into();
+        org.build = Some("cargo build --release --target wasm32-wasip2".into());
+        org.last_op = Some("upgrade ok · 4.2s".into());
+        let mut spell = row("spellcheck", "0.3.0", Status::Error, Section::Problems);
+        spell.problem = Some(Problem {
+            severity: Severity::Error,
+            message: "needs newer Forge (missing set-regions)".into(),
+            fix: None,
+        });
+        let mut theme = row("theme", "1.2.0", Status::Ok, Section::Loaded);
+        theme.frozen = true;
+        let mut rainbow = row("rainbow-delimiters", "0.4.1", Status::Ok, Section::Loaded);
+        rainbow.load_us = Some(1800);
+        let mut snippets = row("snippets", "2.0.0", Status::Ok, Section::Loaded);
+        snippets.triggers = "mode: org-mode".into();
+        snippets.load_us = Some(900);
+        let mut lsp = row("lsp-helper", "0.7.2", Status::Neutral, Section::NotLoaded);
+        lsp.triggers = "cmd: lsp-start, lsp-restart".into();
+        let mut gutter = row("git-gutter", "1.1.0", Status::Neutral, Section::NotLoaded);
+        gutter.triggers = "event: buffer-opened".into();
+        ManagerModel {
+            view: View::Home,
+            rows: vec![
+                org,
+                update("magit", "1.4.0", "1.5.2", "cmd: magit-status"),
+                update("few", "0.9.1", "0.9.4", "ext: few"),
+                spell,
+                theme,
+                rainbow,
+                snippets,
+                lsp,
+                gutter,
+            ],
+            selected: Some(0),
+            updates: 3,
+            ..ManagerModel::default()
+        }
+    }
+
+    #[test]
+    fn dump_home() {
+        let mut app = app();
+        app.packages.manager_expanded.insert("org-modern".into());
+        let rendered = render(&app, &home_model(), 80, Symbols::UNICODE, 0);
+        std::fs::create_dir_all("/tmp/actual").unwrap();
+        std::fs::write("/tmp/actual/home_dark.txt", rendered.text.text()).unwrap();
+    }
+
+    #[test]
+    fn dump_update() {
+        let app = app();
+        let item = |name: &str, old: &str, new: &str, state, took| UpdateItem {
+            name: name.into(),
+            old: old.into(),
+            new: new.into(),
+            state,
+            started: None,
+            took,
+        };
+        let mut running = item(
+            "org-modern",
+            "0.2.0",
+            "0.3.1",
+            ItemState::Running("building · cargo".into()),
+            None,
+        );
+        running.started = Some(Timer::start());
+        let snapshot = UpdateSnapshot::new(vec![
+            item(
+                "magit",
+                "1.4.0",
+                "1.5.2",
+                ItemState::Done("smoke test passed".into()),
+                Some(Duration::from_millis(6100)),
+            ),
+            running,
+            item("few", "0.9.1", "0.9.4", ItemState::Queued, None),
+        ]);
+        let model = ManagerModel {
+            view: View::Update,
+            update: Some(snapshot),
+            ..ManagerModel::default()
+        };
+        let rendered = render(&app, &model, 80, Symbols::UNICODE, 0);
+        std::fs::create_dir_all("/tmp/actual").unwrap();
+        std::fs::write(
+            "/tmp/actual/update_in_progress_dark.txt",
+            rendered.text.text(),
+        )
+        .unwrap();
     }
 }

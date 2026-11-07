@@ -1293,8 +1293,17 @@ final class EditorNSView: NSView, NSMenuDelegate {
                     if px == 0, !dirtyAll, !rowIsDirty(y + rowIndex, dirtyRect) { continue }
                     let hl = w.hlRows.contains(UInt16(rowIndex))
                     if hl {
-                        out.fill(cellRect(x: x + Int(w.gutter), y: y + rowIndex,
-                                          width: textWidth - Int(w.gutter)), Theme.hlLine)
+                        // A package row draws its own selection surface, so
+                        // the current-line fill behind it uses the same soft
+                        // colour instead of the brighter system one.
+                        let packageRow = w.rows[rowIndex].contains {
+                            $0.face.hasPrefix("package-")
+                        }
+                        out.fill(
+                            cellRect(x: x + Int(w.gutter), y: y + rowIndex,
+                                     width: textWidth - Int(w.gutter)),
+                            packageRow ? Theme.packageSelected : Theme.hlLine
+                        )
                     }
                     drawRun(row, x: x, y: y + rowIndex, runs: styleByRow[rowIndex] ?? [])
                 }

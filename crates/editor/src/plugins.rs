@@ -564,18 +564,17 @@ pub fn describe(app: &mut App, name: &str) {
         .get(name)
         .map(|p| p.unsupported.clone())
         .unwrap_or_default();
-    let width = app.win().width.max(20);
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
     let symbols = Symbols::for_app(app);
     let version = manifest
         .as_ref()
         .and_then(|m| m.version())
         .map(|v| format!("{name} {v}"))
         .unwrap_or_else(|| name.to_string());
-    let mut text = Text::new();
+    let mut text = Text::for_width(outer);
     package_ui::title(&mut text, "Plugin", &version, width, symbols);
-    text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
-    text.newline();
-    text.newline();
+    package_ui::rule(&mut text, width, symbols);
     text.push_face(name, PackageFace::Heading);
     if dormant {
         text.push(" ");
@@ -620,7 +619,7 @@ pub fn describe(app: &mut App, name: &str) {
                 .get(c)
                 .map(|i| i.doc.clone())
                 .unwrap_or_default();
-            text.push_face("  ", PackageFace::Neutral);
+            text.push("  ");
             text.push_face(c, PackageFace::Primary);
             if !doc.is_empty() {
                 text.push("  ");
@@ -645,7 +644,7 @@ pub fn describe(app: &mut App, name: &str) {
     } else {
         for (key, line) in grants.describe_keyed() {
             text.push_face(&format!("  {} ", symbols.check), PackageFace::Ok);
-            text.push_face(&line, PackageFace::Neutral);
+            text.push(&line);
             if let Some(time) = app.grants.grant_time(name, &key) {
                 text.push_face(
                     &format!("  (last changed {})", forge_core::format_grant_time(time)),
@@ -687,7 +686,7 @@ pub fn describe(app: &mut App, name: &str) {
                 });
             text.push_face(&format!("  {} ", s.name), PackageFace::Primary);
             text.push_face(&format!("({}) ", s.kind.as_str()), PackageFace::Inactive);
-            text.push_face(&format!("value: {value}"), PackageFace::Neutral);
+            text.push(&format!("value: {value}"));
             if let Some(default) = &s.default {
                 text.push_face(&format!("  default: {default}"), PackageFace::Inactive);
             }
@@ -719,13 +718,12 @@ fn show_import_mismatch(
 }
 
 fn show_mismatch(app: &mut App, view: &MismatchView) {
-    let width = app.win().width.max(20);
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
     let symbols = Symbols::for_app(app);
-    let mut text = Text::new();
+    let mut text = Text::for_width(outer);
     package_ui::title(&mut text, "Import Mismatch", &view.name, width, symbols);
-    text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
-    text.newline();
-    text.newline();
+    package_ui::rule(&mut text, width, symbols);
     text.push_face(
         &format!("{} can't load: a declared permission is missing", view.name),
         PackageFace::Heading,
@@ -743,7 +741,7 @@ fn show_mismatch(app: &mut App, view: &MismatchView) {
     text.push_face("Mismatched imports", PackageFace::Heading);
     text.newline();
     for mismatch in &view.mismatches {
-        text.push_face(&format!("  {} ", symbols.cross), PackageFace::Error);
+        text.push_face(&format!("{} ", symbols.cross), PackageFace::Error);
         let needs = format!("needs {}, not declared", mismatch.permission.describe());
         text.push_face(&mismatch.import, PackageFace::Primary);
         text.push("  ");
@@ -752,7 +750,7 @@ fn show_mismatch(app: &mut App, view: &MismatchView) {
     }
     text.newline();
     text.push_face("What its code can call", PackageFace::Heading);
-    text.push(&format!(" ({})", view.imports.len()));
+    text.push_face(&format!(" ({})", view.imports.len()), PackageFace::Heading);
     text.newline();
     push_imports(
         &mut text,
@@ -768,13 +766,6 @@ fn show_mismatch(app: &mut App, view: &MismatchView) {
         PackageFace::Inactive,
     );
     text.newline();
-    if view.imports.len() > FOLDED_IMPORTS {
-        text.push_face(
-            &fold_hint(app.plugin_ui.imports_expanded, view.imports.len()),
-            PackageFace::Heading,
-        );
-        text.newline();
-    }
     text.show(app, "*Plugin Permissions*", PERMISSIONS_MODE, None);
 }
 
@@ -815,56 +806,58 @@ struct PermissionView<'a> {
 
 fn draw_permissions(app: &mut App, view: &PermissionView<'_>) {
     let name = view.name;
-    let width = app.win().width.max(20);
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
     let symbols = Symbols::for_app(app);
     let version = view
         .version
         .map(|v| format!("{name} {v}"))
         .unwrap_or_else(|| name.to_string());
-    let mut text = Text::new();
+    let mut text = Text::for_width(outer);
     package_ui::title(&mut text, "Plugin Permissions", &version, width, symbols);
-    text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
-    text.newline();
-    text.newline();
+    package_ui::rule(&mut text, width, symbols);
     text.push_face(&format!("{name} asks for permission"), PackageFace::Heading);
     text.newline();
     text.newline();
     if view.different_binary {
-        package_ui::band(
+        package_ui::band_lines(
             &mut text,
             Status::Warning,
-            "same name, different binary",
+            &[
+                "same name, different binary",
+                "The saved approval was for a different build, so it was forgotten.",
+            ],
             width,
             symbols,
         );
-        text.push_face(
-            "The saved approval was for a different build, so it was forgotten.",
-            PackageFace::Inactive,
-        );
-        text.newline();
         text.newline();
     }
 
     let asks = permission_rows(view.missing);
-    package_ui::heading(
-        &mut text,
+    let have = permission_rows(view.granted);
+    let name_w = permission_name_width(asks.iter().chain(&have));
+    text.push_face(
         &format!("Asks for ({} new)", asks.len()),
-        width,
-        symbols,
+        PackageFace::Heading,
     );
     text.newline();
     for row in &asks {
-        push_permission_row(&mut text, row, "+", PackageFace::Warning, width, symbols);
+        push_permission_row(
+            &mut text,
+            row,
+            "+",
+            PackageFace::Warning,
+            name_w,
+            width,
+            symbols,
+        );
     }
 
     if !view.granted.is_empty() {
-        let have = permission_rows(view.granted);
         text.newline();
-        package_ui::heading(
-            &mut text,
+        text.push_face(
             &format!("Already granted ({})", have.len()),
-            width,
-            symbols,
+            PackageFace::Heading,
         );
         text.newline();
         for row in &have {
@@ -873,6 +866,7 @@ fn draw_permissions(app: &mut App, view: &PermissionView<'_>) {
                 row,
                 symbols.check,
                 PackageFace::Ok,
+                name_w,
                 width,
                 symbols,
             );
@@ -880,8 +874,10 @@ fn draw_permissions(app: &mut App, view: &PermissionView<'_>) {
     }
 
     text.newline();
-    text.push_face("What its code can call", PackageFace::Heading);
-    text.push(&format!(" ({} imports)", view.imports.len()));
+    text.push_face(
+        &format!("What its code can call ({} imports)", view.imports.len()),
+        PackageFace::Heading,
+    );
     text.newline();
     push_imports(
         &mut text,
@@ -891,24 +887,14 @@ fn draw_permissions(app: &mut App, view: &PermissionView<'_>) {
         width,
         symbols,
     );
-    if view.imports.len() > FOLDED_IMPORTS {
-        text.push_face(
-            &fold_hint(app.plugin_ui.imports_expanded, view.imports.len()),
-            PackageFace::Heading,
-        );
-        text.newline();
-    }
 
     text.newline();
-    text.push_face("y", PackageFace::Accent);
-    text.push(" grant and load   ");
-    text.push_face("n", PackageFace::Accent);
-    text.push(" load without permissions   ");
-    text.push_face("C-g", PackageFace::Accent);
-    text.push(" don't load");
-    text.newline();
     text.push_face(
-        "Grants are kept in the state directory; M-x revoke-plugin-permissions forgets them.",
+        &package_ui::fit(
+            "y grant and load   n load without these   C-g don't load   ? help",
+            width,
+            symbols.ellipsis,
+        ),
         PackageFace::Inactive,
     );
     text.newline();
@@ -966,7 +952,7 @@ fn permission_rows(grants: &Grants) -> Vec<PermissionRow> {
     }
     for process in &grants.processes {
         rows.push(PermissionRow {
-            name: "process",
+            name: "processes",
             description: format!("run {process}"),
             risk: true,
         });
@@ -974,36 +960,34 @@ fn permission_rows(grants: &Grants) -> Vec<PermissionRow> {
     rows
 }
 
+fn permission_name_width<'a>(rows: impl Iterator<Item = &'a PermissionRow>) -> usize {
+    rows.map(|row| row.name.len() + 1)
+        .max()
+        .unwrap_or(0)
+        .max(11)
+}
+
 fn push_permission_row(
     text: &mut Text,
     row: &PermissionRow,
     mark: &str,
     mark_face: PackageFace,
+    name_w: usize,
     width: usize,
     symbols: Symbols,
 ) {
-    let prefix = format!("  {mark} ");
-    let name = package_ui::pad(row.name, 12, symbols.ellipsis);
-    let risk = "higher risk";
-    let risk_width = if row.risk {
-        package_ui::display_width(risk) + 2
-    } else {
-        0
-    };
-    let used = package_ui::display_width(&prefix) + package_ui::display_width(&name);
-    let room = width.saturating_sub(used + risk_width + usize::from(row.risk));
-    let description = package_ui::fit(&row.description, room, symbols.ellipsis);
-    text.push_face(&prefix, mark_face);
-    text.push_face(&name, PackageFace::Primary);
-    text.push(&description);
-    let gap = width.saturating_sub(used + package_ui::display_width(&description) + risk_width);
-    if row.risk {
-        if gap > 0 {
-            text.push(&" ".repeat(gap));
-        }
-        package_ui::chip(text, risk, PackageFace::Risk);
-    }
-    text.newline();
+    let tag = row.risk.then_some(("higher risk", PackageFace::Warning));
+    package_ui::capability_line(
+        text,
+        mark,
+        mark_face,
+        row.name,
+        &row.description,
+        tag,
+        name_w,
+        width,
+        symbols,
+    );
 }
 
 fn push_imports(
@@ -1019,51 +1003,57 @@ fn push_imports(
     } else {
         imports.len().min(FOLDED_IMPORTS)
     };
+    let bare = |import: &str| import.split('@').next().unwrap_or(import).to_string();
+    let name_w = imports[..shown]
+        .iter()
+        .map(|import| package_ui::display_width(&bare(import)) + 2)
+        .max()
+        .unwrap_or(0)
+        .clamp(30, 40)
+        .min(width.saturating_sub(12).max(12));
     for import in &imports[..shown] {
         let mismatch = mismatches.and_then(|all| all.iter().find(|m| m.import == *import));
         let note = if let Some(mismatch) = mismatch {
-            format!("  (needs {}, not declared)", mismatch.permission.describe())
+            format!("needs {}, not declared", mismatch.permission.describe())
         } else if !is_supported_import(import) {
-            "  (not provided by Forge: calls fail)".to_string()
+            "not provided by Forge: calls fail".to_string()
         } else if import.starts_with("wasi:filesystem/") {
-            "  (only granted directories)".to_string()
+            "only granted directories".to_string()
         } else if import.starts_with("wasi:sockets/") {
-            "  (only with network permission)".to_string()
+            "only with network permission".to_string()
         } else {
             String::new()
         };
-        let line = package_ui::fit(&format!("  {import}{note}"), width, symbols.ellipsis);
-        text.push_face(
-            &line,
-            if mismatch.is_some() {
-                PackageFace::Error
-            } else if note.is_empty() {
-                PackageFace::Neutral
-            } else {
-                PackageFace::Inactive
-            },
-        );
+        text.push("  ");
+        let label = if mismatch.is_some() {
+            import.clone()
+        } else {
+            bare(import)
+        };
+        let label = package_ui::pad(&label, name_w, symbols.ellipsis);
+        let room = width.saturating_sub(2);
+        if mismatch.is_some() {
+            text.push_face(
+                &package_ui::fit(&format!("{label}{note}"), room, symbols.ellipsis),
+                PackageFace::Error,
+            );
+        } else {
+            text.push(&package_ui::fit(&label, room, symbols.ellipsis));
+            text.push_face(
+                &package_ui::fit(&note, room.saturating_sub(name_w), symbols.ellipsis),
+                PackageFace::Inactive,
+            );
+        }
         text.newline();
     }
-    if !expanded && imports.len() > shown {
-        text.push_face(
-            &format!(
-                "  {} more; RET shows all",
-                imports.len().saturating_sub(shown)
-            ),
-            PackageFace::Inactive,
-        );
+    if imports.len() > FOLDED_IMPORTS {
+        let hint = if expanded {
+            "RET to fold".to_string()
+        } else {
+            format!("+ {} more   RET to expand", imports.len() - shown)
+        };
+        text.push_face(&format!("  {hint}"), PackageFace::Inactive);
         text.newline();
-    }
-}
-
-fn fold_hint(expanded: bool, count: usize) -> String {
-    if expanded && count > FOLDED_IMPORTS {
-        "RET folds the import list".to_string()
-    } else if count > FOLDED_IMPORTS {
-        "RET shows all imports".to_string()
-    } else {
-        String::new()
     }
 }
 
@@ -1174,14 +1164,13 @@ fn rhai_sexp_before(app: &mut App) -> Option<String> {
 
 /// M-x list-plugins: loaded plugins and what they're allowed.
 pub fn list(app: &mut App) {
-    let width = app.win().width.max(20);
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
     let symbols = Symbols::for_app(app);
     let Some(host) = app.plugin_host.as_ref().filter(|h| !h.is_empty()) else {
-        let mut text = Text::new();
+        let mut text = Text::for_width(outer);
         package_ui::title(&mut text, "Plugins", "", width, symbols);
-        text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
-        text.newline();
-        text.newline();
+        package_ui::rule(&mut text, width, symbols);
         text.push_face(
             "No plugins are loaded. M-x load-plugin loads one.",
             PackageFace::Inactive,
@@ -1258,10 +1247,18 @@ pub fn list(app: &mut App) {
             pre,
             asked,
             memory: grants.memory_mb(),
+            memory_is_default: grants.memory_mb.is_none(),
             unsupported,
         });
     }
 
+    draw_list(app, rows);
+}
+
+fn draw_list(app: &mut App, rows: Vec<ListRow>) {
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
+    let symbols = Symbols::for_app(app);
     if !app.plugin_ui.list_initialized {
         app.plugin_ui.list_initialized = true;
         if let Some(first) = rows.first() {
@@ -1272,22 +1269,32 @@ pub fn list(app: &mut App) {
         app.plugin_ui.list_selected = rows.len().saturating_sub(1);
     }
     let selected = app.plugin_ui.list_selected;
+    let name_w = rows
+        .iter()
+        .map(|row| package_ui::display_width(&row.name))
+        .max()
+        .unwrap_or(4)
+        .clamp(18, 24);
 
-    let mut text = Text::new();
-    package_ui::title(
-        &mut text,
-        "Plugins",
-        &format!(
-            "{} plugin{}",
-            rows.len(),
-            if rows.len() == 1 { "" } else { "s" }
-        ),
-        width,
-        symbols,
+    let count = |section: ListSection| rows.iter().filter(|row| row.section == section).count();
+    let mut summary = format!(
+        "{} loaded {} {} not started",
+        count(ListSection::Loaded),
+        symbols.dot,
+        count(ListSection::NotStarted),
     );
-    text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
-    text.newline();
+    if count(ListSection::Attention) > 0 {
+        summary.push_str(&format!(
+            " {} {} need attention",
+            symbols.dot,
+            count(ListSection::Attention)
+        ));
+    }
+    let mut text = Text::for_width(outer);
+    package_ui::title(&mut text, "Plugins", &summary, width, symbols);
+    package_ui::rule(&mut text, width, symbols);
     let mut selected_line = 0;
+    let mut first = true;
     for section in [
         ListSection::Loaded,
         ListSection::NotStarted,
@@ -1302,7 +1309,10 @@ pub fn list(app: &mut App) {
         if in_section.is_empty() {
             continue;
         }
-        text.newline();
+        if !first {
+            text.newline();
+        }
+        first = false;
         let label = format!("{} ({})", section.label(), in_section.len());
         package_ui::heading(&mut text, &label, width, symbols);
         text.newline();
@@ -1317,6 +1327,7 @@ pub fn list(app: &mut App) {
                 row,
                 is_selected,
                 app.plugin_ui.list_expanded.contains(&row.name),
+                name_w,
                 width,
                 symbols,
             );
@@ -1325,11 +1336,11 @@ pub fn list(app: &mut App) {
     text.newline();
     text.push_face(
         &package_ui::fit(
-            "RET expand  j/k select  r revoke  d describe  g refresh  q quit",
+            "RET expand   r revoke   g refresh   ? help",
             width,
             symbols.ellipsis,
         ),
-        PackageFace::Heading,
+        PackageFace::Inactive,
     );
     text.newline();
     text.show(
@@ -1368,6 +1379,7 @@ struct ListRow {
     pre: Vec<(String, String)>,
     asked: Vec<(String, Option<i64>)>,
     memory: u32,
+    memory_is_default: bool,
     unsupported: Vec<String>,
 }
 
@@ -1406,104 +1418,198 @@ fn push_plugin_row(
     row: &ListRow,
     selected: bool,
     expanded: bool,
+    name_w: usize,
     width: usize,
     symbols: Symbols,
 ) {
-    let face = if selected {
-        PackageFace::Selected
-    } else {
-        PackageFace::Primary
+    let base = selected.then_some(PackageFace::Selected);
+    text.begin_line(base);
+    let mut used = 0;
+    let (mark, mark_face) = match row.section {
+        ListSection::Loaded => (symbols.ok, PackageFace::Ok),
+        ListSection::NotStarted => (symbols.neutral, PackageFace::Inactive),
+        ListSection::Attention => (symbols.error, PackageFace::Error),
     };
-    text.push_face(
-        if selected { symbols.selected } else { " " },
-        PackageFace::SelectedMarker,
-    );
-    text.push(" ");
-    let name_width = 20.min(width.saturating_sub(30).max(12));
-    text.push_face(
-        &package_ui::pad(&row.name, name_width, symbols.ellipsis),
-        face,
-    );
-    text.push(" ");
-    for (index, (label, chip_face)) in row.chips.iter().enumerate() {
-        if index > 0 {
-            text.push(" ");
+    text.push_face(mark, mark_face);
+    used += package_ui::display_width(mark);
+    list_base(text, &mut used, " ", base);
+    let name = package_ui::pad(&row.name, name_w, symbols.ellipsis);
+    list_base(text, &mut used, &name, base);
+    list_base(text, &mut used, " ", base);
+    let version = package_ui::pad(&row.version, 7, symbols.ellipsis);
+    let version_face = if selected {
+        base
+    } else {
+        Some(PackageFace::Inactive)
+    };
+    list_base(text, &mut used, &version, version_face);
+    let chip = |text: &mut Text, used: &mut usize, label: &str, face: PackageFace| {
+        let label = format!(" {label} ");
+        if *used + 1 + package_ui::display_width(&label) > width {
+            return;
         }
-        package_ui::chip(text, label, *chip_face);
+        list_base(text, used, " ", base);
+        text.push_face(&label, face);
+        *used += package_ui::display_width(&label);
+    };
+    if row.section == ListSection::Attention {
+        chip(text, &mut used, "not loaded", PackageFace::BadgeError);
+    } else {
+        for (label, chip_face) in &row.chips {
+            chip(text, &mut used, label, *chip_face);
+        }
     }
     if row.section == ListSection::NotStarted {
-        text.push(" ");
-        text.push_face("not started", PackageFace::BadgeInactive);
-    } else if row.section == ListSection::Attention {
-        text.push(" ");
-        text.push_face("needs attention", PackageFace::BadgeError);
+        let note = package_ui::fit(
+            "starts on first use",
+            width.saturating_sub(used + 1),
+            symbols.ellipsis,
+        );
+        list_base(text, &mut used, " ", base);
+        let face = if selected {
+            base
+        } else {
+            Some(PackageFace::Inactive)
+        };
+        list_base(text, &mut used, &note, face);
+    }
+    if let Some(face) = base {
+        if used < width {
+            let fill = " ".repeat(width - used);
+            list_base(text, &mut used, &fill, Some(face));
+        }
+        text.end_line_fill(face);
     }
     text.newline();
+    let unsupported = (!row.unsupported.is_empty()).then(|| {
+        format!(
+            "imports Forge doesn't provide: {}",
+            row.unsupported.join(", ")
+        )
+    });
+    if let Some(reason) = unsupported.as_ref().filter(|_| !expanded) {
+        text.push(&" ".repeat(4));
+        text.push_face(
+            &package_ui::fit(reason, width.saturating_sub(4), symbols.ellipsis),
+            PackageFace::Error,
+        );
+        text.newline();
+    }
     if !expanded {
         return;
     }
-    let indent = "    ";
+
+    const INDENT: usize = 4;
+    let field = |text: &mut Text, label: &str, value: &str, face: Option<PackageFace>| {
+        package_ui::field(text, INDENT, label, value, face, width, symbols);
+    };
     if !row.description.is_empty() {
-        text.push(indent);
-        text.push_face(&row.description, PackageFace::Inactive);
-        text.newline();
-    }
-    if !row.version.is_empty() {
-        text.push(indent);
-        text.push_face("version: ", PackageFace::Heading);
-        text.push(&row.version);
-        text.newline();
+        field(text, "about", &row.description, None);
     }
     if let Some(file) = &row.file {
-        text.push(indent);
-        text.push_face("file: ", PackageFace::Heading);
-        text.push(file);
-        text.newline();
+        field(text, "file", file, None);
     }
-    text.push(indent);
-    text.push_face("commands: ", PackageFace::Heading);
     let commands = if row.commands.is_empty() {
         "none".to_string()
     } else {
         row.commands.join(", ")
     };
-    text.push(&commands);
-    text.newline();
-    for (_, line) in &row.pre {
-        text.push(indent);
-        text.push_face(line, PackageFace::Neutral);
-        text.push_face("  [init.rhai]", PackageFace::Inactive);
-        text.newline();
-    }
-    for (line, changed) in &row.asked {
-        text.push(indent);
-        text.push_face(line, PackageFace::Neutral);
-        let when = changed
-            .map(|time| format!(", last changed {}", forge_core::format_grant_time(time)))
-            .unwrap_or_default();
+    field(text, "commands", &commands, None);
+    let mut permissions = 0;
+    for (line, source, changed) in row.grant_lines() {
+        permissions += 1;
+        let (label, value) = split_grant_line(&line);
+        let tag = match (&source, changed) {
+            (Some(source), _) => format!("   [{source}]"),
+            (None, _) => "   [granted when asked]".to_string(),
+        };
+        text.push(&" ".repeat(INDENT));
         text.push_face(
-            &format!("  [granted when asked{when}]"),
+            &package_ui::pad(&label, package_ui::FIELD_LABEL, symbols.ellipsis),
             PackageFace::Inactive,
+        );
+        let room = width.saturating_sub(INDENT + package_ui::FIELD_LABEL + tag.len());
+        text.push(&package_ui::fit(&value, room, symbols.ellipsis));
+        text.push_face(&tag, PackageFace::Inactive);
+        text.newline();
+        if let Some(time) = changed {
+            text.push(&" ".repeat(INDENT + package_ui::FIELD_LABEL));
+            text.push_face(
+                &format!(
+                    "last changed {}",
+                    forge_core::format_grant_time(time)
+                        .split(' ')
+                        .next()
+                        .unwrap_or_default()
+                ),
+                PackageFace::Inactive,
+            );
+            text.newline();
+        }
+    }
+    if permissions == 0 {
+        field(
+            text,
+            "access",
+            "none (no files, network or environment)",
+            Some(PackageFace::Inactive),
+        );
+    }
+    let memory = if row.memory_is_default {
+        format!("{} MB (default)", row.memory)
+    } else {
+        format!("{} MB", row.memory)
+    };
+    field(text, "memory", &memory, Some(PackageFace::Inactive));
+    if let Some(reason) = &unsupported {
+        text.push(&" ".repeat(INDENT));
+        text.push_face(
+            &package_ui::fit(reason, width.saturating_sub(INDENT), symbols.ellipsis),
+            PackageFace::Error,
         );
         text.newline();
     }
-    if row.pre.is_empty() && row.asked.is_empty() {
-        text.push(indent);
-        text.push_face(
-            "permissions: none (no files, network or environment)",
-            PackageFace::Inactive,
-        );
-        text.newline();
+}
+
+fn list_base(text: &mut Text, used: &mut usize, value: &str, face: Option<PackageFace>) {
+    match face {
+        Some(face) => text.push_face(value, face),
+        None => text.push(value),
     }
-    text.push(indent);
-    text.push_face("memory limit: ", PackageFace::Heading);
-    text.push(&format!("{} MB", row.memory));
-    text.newline();
-    if !row.unsupported.is_empty() {
-        text.push(indent);
-        text.push_face("imports Forge doesn't provide: ", PackageFace::Heading);
-        text.push_face(&row.unsupported.join(", "), PackageFace::Error);
-        text.newline();
+    *used += package_ui::display_width(value);
+}
+
+/// Split a grant description such as `network: open connections` or
+/// `files: read ~/x` into a short label and the rest.
+fn split_grant_line(line: &str) -> (String, String) {
+    match line.split_once(": ") {
+        Some((label, rest)) => {
+            let label = match label {
+                "files" => "directory",
+                "programs" => "processes",
+                other => other,
+            };
+            (label.to_string(), rest.to_string())
+        }
+        None => ("access".to_string(), line.to_string()),
+    }
+}
+
+impl ListRow {
+    /// Every permission line with where it came from: the init file or a
+    /// grant given when asked.
+    fn grant_lines(&self) -> Vec<(String, Option<&'static str>, Option<i64>)> {
+        let mut lines: Vec<_> = self
+            .pre
+            .iter()
+            .map(|(_, line)| (line.clone(), Some("init.rhai"), None))
+            .collect();
+        lines.extend(
+            self.asked
+                .iter()
+                .map(|(line, changed)| (line.clone(), None, *changed)),
+        );
+        lines
     }
 }
 
@@ -2223,6 +2329,125 @@ What its code can call (2)
 
 Add the missing permissions to the plugin's manifest, then load it again."#,
         );
+    }
+
+    #[test]
+    fn dump_permissions_and_list() {
+        std::fs::create_dir_all("/tmp/actual").unwrap();
+        let imports: Vec<String> = [
+            "wasi:sockets/tcp@0.2.12",
+            "wasi:filesystem/types@0.2.12",
+            "forge:editor/buffers@0.1.0",
+            "forge:editor/decorations@0.1.0",
+            "forge:editor/log@0.1.0",
+            "forge:editor/commands@0.1.0",
+            "forge:editor/events@0.1.0",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let missing = Grants {
+            network: true,
+            directories: vec![forge_core::permissions::DirGrant {
+                path: "~/.cache/spellcheck".into(),
+                write: true,
+                why: None,
+            }],
+            ..Default::default()
+        };
+        let granted = Grants {
+            memory_mb: Some(256),
+            ..Default::default()
+        };
+        let mut prompt = app();
+        draw_permissions(
+            &mut prompt,
+            &view(
+                "spellcheck",
+                Some("0.3.0"),
+                &imports,
+                &missing,
+                &granted,
+                true,
+            ),
+        );
+        std::fs::write("/tmp/actual/permission_prompt_dark.txt", text(&prompt)).unwrap();
+
+        let row =
+            |name: &str, section, version: &str, chips: Vec<(&'static str, PackageFace)>| ListRow {
+                name: name.into(),
+                section,
+                version: version.into(),
+                description: String::new(),
+                file: None,
+                commands: Vec::new(),
+                chips,
+                pre: Vec::new(),
+                asked: Vec::new(),
+                memory: 128,
+                memory_is_default: true,
+                unsupported: Vec::new(),
+            };
+        let warn = PackageFace::BadgeWarning;
+        let info = PackageFace::BadgeInfo;
+        let mut org = row(
+            "org-modern",
+            ListSection::Loaded,
+            "0.3.1",
+            vec![("net", warn), ("dir:w", warn)],
+        );
+        org.file = Some("~/.config/forge/plugins/org-modern.wasm".into());
+        org.commands = vec!["org-modern-mode".into(), "org-modern-refresh".into()];
+        org.asked = vec![(
+            "network: connect to api.example.com".into(),
+            Some(1_790_942_400),
+        )];
+        org.pre = vec![(
+            "directory".into(),
+            "files: write ~/.cache/org-modern".into(),
+        )];
+        let mut old = row("old-theme", ListSection::Attention, "0.1.0", vec![]);
+        old.unsupported = vec!["forge:editor/legacy-faces".into()];
+        let rows = vec![
+            org,
+            row(
+                "spellcheck",
+                ListSection::Loaded,
+                "0.3.0",
+                vec![("net", warn), ("dir:w", warn)],
+            ),
+            row(
+                "rainbow-delimiters",
+                ListSection::Loaded,
+                "0.4.1",
+                vec![("no permissions", PackageFace::BadgeInactive)],
+            ),
+            row(
+                "git-status",
+                ListSection::Loaded,
+                "1.1.0",
+                vec![("proc", warn), ("dir:r", info)],
+            ),
+            row(
+                "snippets",
+                ListSection::NotStarted,
+                "2.0.0",
+                vec![("dir:r", info)],
+            ),
+            row(
+                "lsp-helper",
+                ListSection::NotStarted,
+                "0.7.2",
+                vec![("net", warn), ("proc", warn)],
+            ),
+            old,
+        ];
+        let mut app = app();
+        app.plugin_ui.list_initialized = true;
+        app.plugin_ui.list_expanded.insert("org-modern".into());
+        app.plugin_ui.list_selected = 0;
+        draw_list(&mut app, rows);
+        std::fs::write("/tmp/actual/plugins_list_dark.txt", text(&app)).unwrap();
     }
 
     fn insta_like(actual: &str, expected: &str) {

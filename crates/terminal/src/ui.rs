@@ -150,15 +150,20 @@ fn style(face: Face, caps: TermCaps, theme: &forge_core::theme::Theme) -> Style 
     out
 }
 
-/// Package manager: quiet titles and headings, a reversed selected row,
-/// and semantic status marks in the terminal's own palette. Status labels
-/// use [`PackageFace::Neutral`], so they stay readable when a terminal's
-/// green, yellow or cyan is too light for small text.
+/// The soft surface behind the current line and a selected package row.
+/// A dim palette gray, so it sits quietly under text instead of the
+/// bright block reverse video makes.
+const SELECTION_BG: Color = Color::Indexed(236);
+
+/// Package manager: quiet titles and headings, a selected row on a soft
+/// surface, and semantic status marks in the terminal's own palette.
+/// Status labels use [`PackageFace::Neutral`], so they stay readable when
+/// a terminal's green, yellow or cyan is too light for small text.
 fn package_style(f: PackageFace) -> Style {
     let bold = Style::default().add_modifier(Modifier::BOLD);
     match f {
         PackageFace::Title | PackageFace::Heading | PackageFace::Primary => bold,
-        PackageFace::Selected => bold.add_modifier(Modifier::REVERSED),
+        PackageFace::Selected => bold.bg(SELECTION_BG),
         PackageFace::SelectedMarker => Style::default()
             .fg(Color::Blue)
             .add_modifier(Modifier::BOLD),
@@ -618,14 +623,16 @@ pub fn render_with(
                 }
             }
         }
-        // hl-line-mode: point's line gets a background.
+        // hl-line-mode: point's line gets a background. Cells a face has
+        // already tinted keep their colour; unstyled cells carry the
+        // terminal's `Reset`, which counts as no background.
         for &row in &v.hl_rows {
             let y = text.y + row;
             if y < text.y + text.height {
                 for x in text.x + v.gutter..text.x + text.width {
                     let cell = &mut f.buffer_mut()[(x, y)];
-                    if cell.style().bg.is_none() {
-                        cell.set_bg(Color::Indexed(236));
+                    if matches!(cell.style().bg, None | Some(Color::Reset)) {
+                        cell.set_bg(SELECTION_BG);
                     }
                 }
             }
@@ -1004,10 +1011,15 @@ mod tests {
                 .contains(Modifier::REVERSED),
             "status labels are badges without tinting their text"
         );
+        let selected = package(PackageFace::Selected);
+        assert_eq!(selected.bg, Some(SELECTION_BG));
         assert!(
-            package(PackageFace::Selected)
-                .add_modifier
-                .contains(Modifier::REVERSED | Modifier::BOLD)
+            selected.add_modifier.contains(Modifier::BOLD),
+            "the selected row stays bold on a soft surface"
+        );
+        assert!(
+            !selected.add_modifier.contains(Modifier::REVERSED),
+            "the selected row is dim, not reversed"
         );
         assert_eq!(package(PackageFace::SelectedMarker).fg, Some(Color::Blue));
         assert!(

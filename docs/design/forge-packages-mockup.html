@@ -1,0 +1,249 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Forge Packages mockup</title><style>
+body{margin:0;padding:24px 16px;background:#0e0f12;color:#ddd;font:14px/1.5 system-ui,sans-serif}
+h1{font-size:18px;margin:0 0 4px} p.s{margin:0 0 20px;color:#9aa}
+.grid{display:flex;flex-wrap:wrap;gap:24px}
+figure{margin:0} figcaption{font-size:13px;color:#9aa;margin:0 0 6px}
+.term{background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;padding:14px 0;border-radius:10px;width:80ch;max-width:calc(100vw - 32px);overflow-x:auto;border:1px solid var(--rule)}
+.ln{white-space:pre;padding:0}
+.ln.sel{background:var(--sel)}
+.n{color:var(--fg)}.h{color:var(--fg);font-weight:700}.hw{color:var(--fg);font-weight:700}.d{color:var(--dim)}.r{color:var(--rule)}.dim{color:var(--dim)}.key{color:var(--acc)}
+.pill{background:var(--acc);color:var(--accfg);font-weight:700}
+.acc{color:var(--acc)}.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}.info{color:var(--info)}
+.bwarn{background:var(--bwarn);color:var(--warn)}.bdim{background:var(--bdim);color:var(--dim)}.binfo{background:var(--binfo);color:var(--info)}.berr{background:var(--berr);color:var(--err)}.band{background:var(--bwarn);color:var(--warn)}
+</style></head><body>
+<h1>Forge Packages and Permissions: mockup</h1>
+<p class="s">80 columns. Dark and light, Home, Update, Permission prompt, Upgrade capability review and Plugins list. Selected row has a soft background.</p>
+<div class="grid">
+<figure><figcaption>Home, dark</figcaption><div class="term dark"><div class="ln ">  <span class="pill"> Forge Packages </span>                                     <span class="d">42 packages · 3 updates</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="pill"> H Home </span> <span class="key">I</span><span class="d"> Install</span> <span class="key">U</span><span class="d"> Update</span> <span class="key">S</span><span class="d"> Sync</span> <span class="key">X</span><span class="d"> Clean</span> <span class="key">C</span><span class="d"> Check</span> <span class="key">L</span><span class="d"> Log</span> <span class="key">D</span><span class="d"> Doctor</span> <span class="key">?</span><span class="d"> Help</span> </div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Updates (3)</span></div>
+<div class="ln sel">  <span class="warn">▲</span> <span class="h">org-modern        </span> <span class="n">0.2.0 → 0.3.1   </span><span class="bwarn"> adds network </span> <span class="d"></span></div>
+<div class="ln ">      <span class="d">source    </span><span class="n">github.com/you/forge-org-modern  v0.2.0 → v0.3.1</span></div>
+<div class="ln ">      <span class="d">build     </span><span class="n">cargo build --release --target wasm32-wasip2</span></div>
+<div class="ln ">      <span class="d">adds      </span><span class="warn">network  (new capability, needs confirmation)</span></div>
+<div class="ln ">      <span class="d">last op   </span><span class="n">upgrade ok · 4.2s</span></div>
+<div class="ln ">  <span class="warn">▲</span> <span class="n">magit             </span> <span class="n">1.4.0 → 1.5.2   </span><span class="d">cmd: magit-status</span></div>
+<div class="ln ">  <span class="warn">▲</span> <span class="n">few               </span> <span class="n">0.9.1 → 0.9.4   </span><span class="d">ext: few</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Problems (1)</span></div>
+<div class="ln ">  <span class="err">✕</span> <span class="n">spellcheck        </span> <span class="n">0.3.0           </span><span class="err">needs newer Forge (missing set-regions)</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Loaded (3)</span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">theme             </span> <span class="n">1.2.0           </span><span class="bdim"> frozen </span> <span class="d"></span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">rainbow-delimiters</span> <span class="n">0.4.1           </span><span class="d">startup · 1.8 ms</span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">snippets          </span> <span class="n">2.0.0           </span><span class="d">mode: org-mode · 0.9 ms</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Not loaded (2)</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">lsp-helper        </span> <span class="d">0.7.2           </span><span class="d">cmd: lsp-start, lsp-restart</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">git-gutter        </span> <span class="d">1.1.0           </span><span class="d">event: buffer-opened</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">RET expand  i install  u update  d delete  f filter  g refresh  ? help</span></div></div></figure>
+<figure><figcaption>Home, light</figcaption><div class="term light"><div class="ln ">  <span class="pill"> Forge Packages </span>                                     <span class="d">42 packages · 3 updates</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="pill"> H Home </span> <span class="key">I</span><span class="d"> Install</span> <span class="key">U</span><span class="d"> Update</span> <span class="key">S</span><span class="d"> Sync</span> <span class="key">X</span><span class="d"> Clean</span> <span class="key">C</span><span class="d"> Check</span> <span class="key">L</span><span class="d"> Log</span> <span class="key">D</span><span class="d"> Doctor</span> <span class="key">?</span><span class="d"> Help</span> </div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Updates (3)</span></div>
+<div class="ln sel">  <span class="warn">▲</span> <span class="h">org-modern        </span> <span class="n">0.2.0 → 0.3.1   </span><span class="bwarn"> adds network </span> <span class="d"></span></div>
+<div class="ln ">      <span class="d">source    </span><span class="n">github.com/you/forge-org-modern  v0.2.0 → v0.3.1</span></div>
+<div class="ln ">      <span class="d">build     </span><span class="n">cargo build --release --target wasm32-wasip2</span></div>
+<div class="ln ">      <span class="d">adds      </span><span class="warn">network  (new capability, needs confirmation)</span></div>
+<div class="ln ">      <span class="d">last op   </span><span class="n">upgrade ok · 4.2s</span></div>
+<div class="ln ">  <span class="warn">▲</span> <span class="n">magit             </span> <span class="n">1.4.0 → 1.5.2   </span><span class="d">cmd: magit-status</span></div>
+<div class="ln ">  <span class="warn">▲</span> <span class="n">few               </span> <span class="n">0.9.1 → 0.9.4   </span><span class="d">ext: few</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Problems (1)</span></div>
+<div class="ln ">  <span class="err">✕</span> <span class="n">spellcheck        </span> <span class="n">0.3.0           </span><span class="err">needs newer Forge (missing set-regions)</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Loaded (3)</span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">theme             </span> <span class="n">1.2.0           </span><span class="bdim"> frozen </span> <span class="d"></span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">rainbow-delimiters</span> <span class="n">0.4.1           </span><span class="d">startup · 1.8 ms</span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">snippets          </span> <span class="n">2.0.0           </span><span class="d">mode: org-mode · 0.9 ms</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Not loaded (2)</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">lsp-helper        </span> <span class="d">0.7.2           </span><span class="d">cmd: lsp-start, lsp-restart</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">git-gutter        </span> <span class="d">1.1.0           </span><span class="d">event: buffer-opened</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">RET expand  i install  u update  d delete  f filter  g refresh  ? help</span></div></div></figure>
+<figure><figcaption>Update in progress, dark</figcaption><div class="term dark"><div class="ln ">  <span class="pill"> Forge Packages </span>                                                <span class="d">Updating 2/3</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="key">H</span><span class="d"> Home</span> <span class="key">I</span><span class="d"> Install</span> <span class="pill"> U Update </span> <span class="key">S</span><span class="d"> Sync</span> <span class="key">X</span><span class="d"> Clean</span> <span class="key">C</span><span class="d"> Check</span> <span class="key">L</span><span class="d"> Log</span> <span class="key">D</span><span class="d"> Doctor</span> <span class="key">?</span><span class="d"> Help</span> </div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="acc">██████████████████</span><span class="d">░░░░░░░░░</span>  <span class="n">2/3</span>  <span class="d">10.3s</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Updating (3)</span></div>
+<div class="ln ">  <span class="ok">✓</span> <span class="n">magit             </span> <span class="n">1.4.0 → 1.5.2   </span><span class="d">smoke test passed · 6.1s</span></div>
+<div class="ln sel">  <span class="info">⠋</span> <span class="h">org-modern        </span> <span class="n">0.2.0 → 0.3.1   </span><span class="info">building · cargo · 3.2s</span></div>
+<div class="ln ">  <span class="dim">·</span> <span class="n">few               </span> <span class="d">0.9.1 → 0.9.4   </span><span class="d">queued</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">On failure</span></div>
+<div class="ln ">  <span class="d">A failed smoke test restores the previous version and names the plugin.</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">C-g cancel  L log  H home</span></div></div></figure>
+<figure><figcaption>Update in progress, light</figcaption><div class="term light"><div class="ln ">  <span class="pill"> Forge Packages </span>                                                <span class="d">Updating 2/3</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="key">H</span><span class="d"> Home</span> <span class="key">I</span><span class="d"> Install</span> <span class="pill"> U Update </span> <span class="key">S</span><span class="d"> Sync</span> <span class="key">X</span><span class="d"> Clean</span> <span class="key">C</span><span class="d"> Check</span> <span class="key">L</span><span class="d"> Log</span> <span class="key">D</span><span class="d"> Doctor</span> <span class="key">?</span><span class="d"> Help</span> </div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="acc">██████████████████</span><span class="d">░░░░░░░░░</span>  <span class="n">2/3</span>  <span class="d">10.3s</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Updating (3)</span></div>
+<div class="ln ">  <span class="ok">✓</span> <span class="n">magit             </span> <span class="n">1.4.0 → 1.5.2   </span><span class="d">smoke test passed · 6.1s</span></div>
+<div class="ln sel">  <span class="info">⠋</span> <span class="h">org-modern        </span> <span class="n">0.2.0 → 0.3.1   </span><span class="info">building · cargo · 3.2s</span></div>
+<div class="ln ">  <span class="dim">·</span> <span class="n">few               </span> <span class="d">0.9.1 → 0.9.4   </span><span class="d">queued</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">On failure</span></div>
+<div class="ln ">  <span class="d">A failed smoke test restores the previous version and names the plugin.</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">C-g cancel  L log  H home</span></div></div></figure>
+<figure><figcaption>Permission prompt, dark</figcaption><div class="term dark"><div class="ln ">  <span class="pill"> Plugin Permissions </span>                                        <span class="d">spellcheck 0.3.0</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">spellcheck asks for permission</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="band"> ! same name, different binary                                              </span>  </div>
+<div class="ln ">  <span class="band">   The saved approval was for a different build, so it was forgotten.       </span>  </div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Asks for (2 new)</span></div>
+<div class="ln ">  <span class="warn">+</span> <span class="h">network    </span><span class="n">connect to the internet                   </span><span class="warn">higher risk</span></div>
+<div class="ln ">  <span class="warn">+</span> <span class="h">directory  </span><span class="n">write ~/.cache/spellcheck                 </span><span class="warn">higher risk</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Already granted (1)</span></div>
+<div class="ln ">  <span class="ok">✓</span> <span class="h">memory     </span><span class="n">256 MB                                    </span><span class="d"></span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">What its code can call (7 imports)</span></div>
+<div class="ln ">    <span class="n">wasi:sockets/tcp              </span><span class="d">only with network permission</span></div>
+<div class="ln ">    <span class="n">wasi:filesystem/types         </span><span class="d">only granted directories</span></div>
+<div class="ln ">    <span class="n">forge:editor/buffers          </span><span class="d"></span></div>
+<div class="ln ">    <span class="n">forge:editor/decorations      </span><span class="d"></span></div>
+<div class="ln ">    <span class="d">+ 3 more   RET to expand</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">y grant and load   n load without these   C-g don&#x27;t load   ? help</span></div></div></figure>
+<figure><figcaption>Permission prompt, light</figcaption><div class="term light"><div class="ln ">  <span class="pill"> Plugin Permissions </span>                                        <span class="d">spellcheck 0.3.0</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">spellcheck asks for permission</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="band"> ! same name, different binary                                              </span>  </div>
+<div class="ln ">  <span class="band">   The saved approval was for a different build, so it was forgotten.       </span>  </div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Asks for (2 new)</span></div>
+<div class="ln ">  <span class="warn">+</span> <span class="h">network    </span><span class="n">connect to the internet                   </span><span class="warn">higher risk</span></div>
+<div class="ln ">  <span class="warn">+</span> <span class="h">directory  </span><span class="n">write ~/.cache/spellcheck                 </span><span class="warn">higher risk</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Already granted (1)</span></div>
+<div class="ln ">  <span class="ok">✓</span> <span class="h">memory     </span><span class="n">256 MB                                    </span><span class="d"></span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">What its code can call (7 imports)</span></div>
+<div class="ln ">    <span class="n">wasi:sockets/tcp              </span><span class="d">only with network permission</span></div>
+<div class="ln ">    <span class="n">wasi:filesystem/types         </span><span class="d">only granted directories</span></div>
+<div class="ln ">    <span class="n">forge:editor/buffers          </span><span class="d"></span></div>
+<div class="ln ">    <span class="n">forge:editor/decorations      </span><span class="d"></span></div>
+<div class="ln ">    <span class="d">+ 3 more   RET to expand</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">y grant and load   n load without these   C-g don&#x27;t load   ? help</span></div></div></figure>
+<figure><figcaption>Upgrade capability review, dark</figcaption><div class="term dark"><div class="ln ">  <span class="pill"> Upgrade Review </span>                                    <span class="d">org-modern 0.2.0 → 0.3.1</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Capabilities changed</span></div>
+<div class="ln ">  <span class="warn">+</span> <span class="h">network    </span><span class="n">connect to api.example.com                </span><span class="warn">added</span></div>
+<div class="ln ">  <span class="ok">-</span> <span class="h">processes  </span><span class="n">run git                                   </span><span class="ok">removed</span></div>
+<div class="ln ">  <span class="d">=</span> <span class="h">directory  </span><span class="n">read ~/.config/forge                      </span><span class="d">unchanged</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="band"> ! A new capability needs your confirmation.                                </span>  </div>
+<div class="ln ">  <span class="band">   Unattended upgrades stop here and change nothing.                        </span>  </div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Build</span></div>
+<div class="ln ">      <span class="d">command   </span><span class="n">cargo build --release --target wasm32-wasip2</span></div>
+<div class="ln ">      <span class="d">changed   </span><span class="n">no (same recipe as 0.2.0)</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Changes</span></div>
+<div class="ln ">    <span class="info">a1b2c3d</span> <span class="n">add async fetch for remote tables</span></div>
+<div class="ln ">    <span class="info">9f8e7d6</span> <span class="err">BREAKING: rename org-modern-style</span></div>
+<div class="ln ">    <span class="info">5c4b3a2</span> <span class="n">fix heading indent</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">y apply upgrade   n skip   d full diff   C-g cancel</span></div></div></figure>
+<figure><figcaption>Upgrade capability review, light</figcaption><div class="term light"><div class="ln ">  <span class="pill"> Upgrade Review </span>                                    <span class="d">org-modern 0.2.0 → 0.3.1</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Capabilities changed</span></div>
+<div class="ln ">  <span class="warn">+</span> <span class="h">network    </span><span class="n">connect to api.example.com                </span><span class="warn">added</span></div>
+<div class="ln ">  <span class="ok">-</span> <span class="h">processes  </span><span class="n">run git                                   </span><span class="ok">removed</span></div>
+<div class="ln ">  <span class="d">=</span> <span class="h">directory  </span><span class="n">read ~/.config/forge                      </span><span class="d">unchanged</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="band"> ! A new capability needs your confirmation.                                </span>  </div>
+<div class="ln ">  <span class="band">   Unattended upgrades stop here and change nothing.                        </span>  </div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Build</span></div>
+<div class="ln ">      <span class="d">command   </span><span class="n">cargo build --release --target wasm32-wasip2</span></div>
+<div class="ln ">      <span class="d">changed   </span><span class="n">no (same recipe as 0.2.0)</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Changes</span></div>
+<div class="ln ">    <span class="info">a1b2c3d</span> <span class="n">add async fetch for remote tables</span></div>
+<div class="ln ">    <span class="info">9f8e7d6</span> <span class="err">BREAKING: rename org-modern-style</span></div>
+<div class="ln ">    <span class="info">5c4b3a2</span> <span class="n">fix heading indent</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">y apply upgrade   n skip   d full diff   C-g cancel</span></div></div></figure>
+<figure><figcaption>Plugins list, dark</figcaption><div class="term dark"><div class="ln ">  <span class="pill"> Plugins </span>                                           <span class="d">6 loaded · 2 not started</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Loaded (4)</span></div>
+<div class="ln sel">  <span class="ok">●</span> <span class="h">org-modern        </span> <span class="d">0.3.1  </span> <span class="bwarn"> net </span> <span class="bwarn"> dir:w </span> </div>
+<div class="ln ">      <span class="d">file      </span><span class="n">~/.config/forge/plugins/org-modern.wasm</span></div>
+<div class="ln ">      <span class="d">commands  </span><span class="n">org-modern-mode, org-modern-refresh</span></div>
+<div class="ln ">      <span class="d">network   </span><span class="n">connect to api.example.com   [granted when asked]</span></div>
+<div class="ln ">      <span class="d">          </span><span class="d">last changed 2026-10-02</span></div>
+<div class="ln ">      <span class="d">directory </span><span class="n">write ~/.cache/org-modern   [init.rhai]</span></div>
+<div class="ln ">      <span class="d">memory    </span><span class="d">128 MB (default)</span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">spellcheck        </span> <span class="d">0.3.0  </span> <span class="bwarn"> net </span> <span class="bwarn"> dir:w </span> </div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">rainbow-delimiters</span> <span class="d">0.4.1  </span> <span class="bdim"> no permissions </span> </div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">git-status        </span> <span class="d">1.1.0  </span> <span class="bwarn"> proc </span> <span class="binfo"> dir:r </span> </div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Not started (2)</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">snippets          </span> <span class="d">2.0.0  </span> <span class="binfo"> dir:r </span> <span class="d">starts on first use</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">lsp-helper        </span> <span class="d">0.7.2  </span> <span class="bwarn"> net </span> <span class="bwarn"> proc </span> <span class="d">starts on first use</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Needs attention (1)</span></div>
+<div class="ln ">  <span class="err">✕</span> <span class="n">old-theme         </span> <span class="d">0.1.0  </span> <span class="berr"> not loaded </span> </div>
+<div class="ln ">      <span class="err">imports Forge doesn&#x27;t provide: forge:editor/legacy-faces</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">RET expand   r revoke   g refresh   ? help</span></div></div></figure>
+<figure><figcaption>Plugins list, light</figcaption><div class="term light"><div class="ln ">  <span class="pill"> Plugins </span>                                           <span class="d">6 loaded · 2 not started</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln "><span class="r">  ────────────────────────────────────────────────────────────────────────────</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Loaded (4)</span></div>
+<div class="ln sel">  <span class="ok">●</span> <span class="h">org-modern        </span> <span class="d">0.3.1  </span> <span class="bwarn"> net </span> <span class="bwarn"> dir:w </span> </div>
+<div class="ln ">      <span class="d">file      </span><span class="n">~/.config/forge/plugins/org-modern.wasm</span></div>
+<div class="ln ">      <span class="d">commands  </span><span class="n">org-modern-mode, org-modern-refresh</span></div>
+<div class="ln ">      <span class="d">network   </span><span class="n">connect to api.example.com   [granted when asked]</span></div>
+<div class="ln ">      <span class="d">          </span><span class="d">last changed 2026-10-02</span></div>
+<div class="ln ">      <span class="d">directory </span><span class="n">write ~/.cache/org-modern   [init.rhai]</span></div>
+<div class="ln ">      <span class="d">memory    </span><span class="d">128 MB (default)</span></div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">spellcheck        </span> <span class="d">0.3.0  </span> <span class="bwarn"> net </span> <span class="bwarn"> dir:w </span> </div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">rainbow-delimiters</span> <span class="d">0.4.1  </span> <span class="bdim"> no permissions </span> </div>
+<div class="ln ">  <span class="ok">●</span> <span class="n">git-status        </span> <span class="d">1.1.0  </span> <span class="bwarn"> proc </span> <span class="binfo"> dir:r </span> </div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Not started (2)</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">snippets          </span> <span class="d">2.0.0  </span> <span class="binfo"> dir:r </span> <span class="d">starts on first use</span></div>
+<div class="ln ">  <span class="dim">○</span> <span class="n">lsp-helper        </span> <span class="d">0.7.2  </span> <span class="bwarn"> net </span> <span class="bwarn"> proc </span> <span class="d">starts on first use</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="hw">Needs attention (1)</span></div>
+<div class="ln ">  <span class="err">✕</span> <span class="n">old-theme         </span> <span class="d">0.1.0  </span> <span class="berr"> not loaded </span> </div>
+<div class="ln ">      <span class="err">imports Forge doesn&#x27;t provide: forge:editor/legacy-faces</span></div>
+<div class="ln ">&nbsp;</div>
+<div class="ln ">  <span class="d">RET expand   r revoke   g refresh   ? help</span></div></div></figure>
+</div>
+<style>.dark{--bg:#16181d;--fg:#c9ccd3;--dim:#8a90a0;--rule:#2e323b;--acc:#7aa2f7;--accfg:#12151b;--ok:#86c28f;--warn:#dbb56f;--err:#e68080;--info:#82b4dc;--sel:#242831;--bwarn:#3a3222;--bdim:#22252d;--binfo:#1f2c3a;--berr:#3b2427}
+.light{--bg:#fbfaf8;--fg:#2b2e35;--dim:#626878;--rule:#dcdde1;--acc:#2f62d0;--accfg:#ffffff;--ok:#2b7a47;--warn:#8f6200;--err:#b3342c;--info:#1f6496;--sel:#eceef3;--bwarn:#f6ead0;--bdim:#e9ebf0;--binfo:#dfeaf5;--berr:#f6dcda}
+</style></body></html>

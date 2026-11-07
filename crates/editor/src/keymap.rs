@@ -389,6 +389,8 @@ pub const PACKAGE_MANAGER_BINDINGS: &[(&str, &str)] = &[
     ("d", "package-menu-delete"),
     ("g", "package-menu-refresh"),
     ("U", "package-manager-upgrade-all"),
+    ("S", "package-manager-show-sync"),
+    ("X", "package-manager-show-clean"),
     ("H", "package-manager-show-home"),
     ("I", "package-manager-show-install"),
     ("C", "package-manager-show-check"),
@@ -402,6 +404,7 @@ pub const PACKAGE_MANAGER_BINDINGS: &[(&str, &str)] = &[
 pub const PLUGIN_PERMISSIONS_BINDINGS: &[(&str, &str)] = &[
     ("RET", "plugin-toggle-imports"),
     ("TAB", "plugin-toggle-imports"),
+    ("?", "describe-mode"),
 ];
 
 pub const PLUGIN_LIST_BINDINGS: &[(&str, &str)] = &[

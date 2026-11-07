@@ -107,11 +107,11 @@ impl Symbols {
         ellipsis: "…",
         ok: "●",
         warning: "▲",
-        error: "■",
+        error: "✕",
         info: "◆",
         neutral: "○",
         check: "✓",
-        cross: "✗",
+        cross: "✕",
         progress_full: "█",
         progress_empty: "░",
         ascii: false,
@@ -135,7 +135,7 @@ impl Symbols {
         ascii: true,
     };
 
-    const SPINNER: [&'static str; 4] = ["◐", "◓", "◑", "◒"];
+    const SPINNER: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     /// A spinner frame. Terminals get a static `...` so a missing font
     /// never turns progress into a box.
@@ -171,12 +171,31 @@ impl Symbols {
 }
 
 /// A package buffer under construction, with char offsets for its faces.
+///
+/// A buffer made with a margin indents every line that has text, so a
+/// screen can keep its content a few cells in from the window edge while
+/// blank lines stay empty.
 #[derive(Debug, Default)]
 pub struct Text {
     text: String,
     chars: usize,
     lines: usize,
     decos: Vec<DecoSpec>,
+    margin: usize,
+    line_started: bool,
+}
+
+/// Cells kept clear on each side of a package screen.
+pub const MARGIN: usize = 2;
+
+/// The margin a window of this width gets. Narrow windows keep the room.
+pub fn margin(width: usize) -> usize {
+    if width >= 40 { MARGIN } else { 0 }
+}
+
+/// The width left for content in a window of this width.
+pub fn inner(width: usize) -> usize {
+    width.saturating_sub(2 * margin(width)).max(1)
 }
 
 impl Text {
@@ -184,18 +203,87 @@ impl Text {
         Self::default()
     }
 
-    pub fn push(&mut self, text: &str) {
+    /// A buffer for a window of this width, with the screen margin.
+    pub fn for_width(width: usize) -> Self {
+        Self {
+            margin: margin(width),
+            ..Self::default()
+        }
+    }
+
+    fn raw(&mut self, text: &str) {
         self.text.push_str(text);
         self.chars += text.chars().count();
     }
 
+    /// Write the margin if this line has no text yet.
+    fn start_line(&mut self) {
+        if !self.line_started {
+            self.line_started = true;
+            if self.margin > 0 {
+                let margin = " ".repeat(self.margin);
+                self.raw(&margin);
+            }
+        }
+    }
+
+    /// Start the line now, with the margin in `face`. A selected row uses
+    /// this so its surface runs from the window edge.
+    pub fn begin_line(&mut self, face: Option<PackageFace>) {
+        if self.line_started {
+            return;
+        }
+        match face {
+            Some(face) if self.margin > 0 => {
+                self.line_started = true;
+                let start = self.chars;
+                let margin = " ".repeat(self.margin);
+                self.raw(&margin);
+                self.decos
+                    .push(DecoSpec::new(start, self.chars, DecoFace::Package(face)));
+            }
+            _ => self.start_line(),
+        }
+    }
+
+    /// Fill the right margin in `face`, ending a row that began with
+    /// [`Text::begin_line`].
+    pub fn end_line_fill(&mut self, face: PackageFace) {
+        if self.margin > 0 {
+            self.push_face(&" ".repeat(self.margin), face);
+        }
+    }
+
+    pub fn push(&mut self, text: &str) {
+        let mut parts = text.split('\n').peekable();
+        while let Some(part) = parts.next() {
+            if !part.is_empty() {
+                self.start_line();
+                self.raw(part);
+            }
+            if parts.peek().is_some() {
+                self.newline();
+            }
+        }
+    }
+
     pub fn push_face(&mut self, text: &str, face: PackageFace) {
+        if text.is_empty() {
+            return;
+        }
+        self.start_line();
         let start = self.chars;
         self.push(text);
         if start < self.chars {
             self.decos
                 .push(DecoSpec::new(start, self.chars, DecoFace::Package(face)));
         }
+    }
+
+    /// The offset where the next text will go, after the line's margin.
+    pub fn mark(&mut self) -> usize {
+        self.start_line();
+        self.chars
     }
 
     pub fn chars(&self) -> usize {
@@ -242,8 +330,9 @@ impl Text {
     }
 
     pub fn newline(&mut self) {
-        self.push("\n");
+        self.raw("\n");
         self.lines += 1;
+        self.line_started = false;
     }
 
     pub fn text(&self) -> &str {
@@ -252,6 +341,8 @@ impl Text {
 
     pub fn show(self, app: &mut App, name: &str, mode: &str, point: Option<Pos>) {
         app.show_special_buffer(name, mode, &self.text);
+        let _ = app.buf().set_option("line-numbers", "off");
+        let _ = app.buf().set_option("hl-line", "true");
         app.buf().set_decorations(OWNER, self.decos);
         if let Some(point) = point {
             app.buf().set_point(point);
@@ -259,47 +350,124 @@ impl Text {
     }
 }
 
-/// A filled title pill with optional right-aligned metadata.
+/// A filled title pill with optional right-aligned metadata, then a blank
+/// line.
 pub fn title(text: &mut Text, title: &str, right: &str, width: usize, symbols: Symbols) {
     let title = format!(" {title} ");
     text.push_face(&title, PackageFace::TitlePill);
     let used = display_width(&title) + display_width(right);
     if !right.is_empty() && used < width {
-        text.push(&" ".repeat(width.saturating_sub(used + 1)));
+        text.push(&" ".repeat(width.saturating_sub(used)));
         text.push_face(
             &fit(
                 right,
                 width.saturating_sub(display_width(&title) + 1),
                 symbols.ellipsis,
             ),
-            PackageFace::Heading,
+            PackageFace::Inactive,
         );
     }
     text.newline();
+    text.newline();
 }
 
-/// A section heading followed by a rule, with one space between.
-pub fn heading(text: &mut Text, label: &str, width: usize, symbols: Symbols) {
+/// A full-width rule and the line after it.
+pub fn rule(text: &mut Text, width: usize, symbols: Symbols) {
+    text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
+    text.newline();
+    text.newline();
+}
+
+/// A section heading. The caller ends the line.
+pub fn heading(text: &mut Text, label: &str, _width: usize, _symbols: Symbols) {
     text.push_face(label, PackageFace::Heading);
-    let used = display_width(label);
-    if used < width {
-        text.push(" ");
-        text.push_face(
-            &symbols.rule.repeat(width.saturating_sub(used + 1)),
-            PackageFace::Rule,
-        );
-    }
 }
 
 /// A full-width band whose tint and mark follow a status.
 pub fn band(text: &mut Text, status: Status, message: &str, width: usize, symbols: Symbols) {
+    band_lines(text, status, &[message], width, symbols);
+}
+
+/// A band of several lines: the first carries the mark, the rest line up
+/// under its message.
+pub fn band_lines(text: &mut Text, status: Status, lines: &[&str], width: usize, symbols: Symbols) {
     let face = match status {
         Status::Error => PackageFace::BandError,
         Status::Warning => PackageFace::BandWarning,
         _ => status.face(),
     };
-    let label = format!(" {} {} ", symbols.mark(status), message);
-    text.push_face(&pad(&label, width, symbols.ellipsis), face);
+    for (index, line) in lines.iter().enumerate() {
+        let label = if index == 0 {
+            format!(" {} {line}", symbols.mark(status))
+        } else {
+            format!("   {line}")
+        };
+        text.push_face(&pad(&label, width, symbols.ellipsis), face);
+        text.newline();
+    }
+}
+
+/// One capability: a mark, its name, what it allows and a short tag. The
+/// description column is at most 42 cells, so tags line up down the screen.
+#[allow(clippy::too_many_arguments)]
+pub fn capability_line(
+    text: &mut Text,
+    mark: &str,
+    mark_face: PackageFace,
+    name: &str,
+    description: &str,
+    tag: Option<(&str, PackageFace)>,
+    name_width: usize,
+    width: usize,
+    symbols: Symbols,
+) {
+    text.push_face(mark, mark_face);
+    text.push(" ");
+    text.push_face(
+        &pad(name, name_width, symbols.ellipsis),
+        PackageFace::Primary,
+    );
+    let used = display_width(mark) + 1 + name_width;
+    match tag {
+        Some((tag, tag_face)) => {
+            let room = width.saturating_sub(used + display_width(tag)).clamp(8, 42);
+            text.push(&pad(description, room, symbols.ellipsis));
+            text.push_face(tag, tag_face);
+        }
+        None => text.push(&fit(
+            description,
+            width.saturating_sub(used),
+            symbols.ellipsis,
+        )),
+    }
+    text.newline();
+}
+
+/// The width of a field label such as `source` or `command`.
+pub const FIELD_LABEL: usize = 10;
+
+/// A quiet label and its value, indented, on one line. A long value is cut
+/// to fit.
+pub fn field(
+    text: &mut Text,
+    indent: usize,
+    label: &str,
+    value: &str,
+    value_face: Option<PackageFace>,
+    width: usize,
+    symbols: Symbols,
+) {
+    text.push(&" ".repeat(indent));
+    text.push_face(
+        &pad(label, FIELD_LABEL, symbols.ellipsis),
+        PackageFace::Inactive,
+    );
+    let room = width.saturating_sub(indent + FIELD_LABEL).max(8);
+    let value = fit(value, room, symbols.ellipsis);
+    match value_face {
+        Some(face) => text.push_face(&value, face),
+        None => text.push(&value),
+    }
     text.newline();
 }
 

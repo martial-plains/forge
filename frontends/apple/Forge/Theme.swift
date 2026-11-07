@@ -52,24 +52,38 @@ enum Theme {
         }
     }
 
-    static let packageFg = dynamic(dark: "#cdd6f4", light: "#4c4f69")
-    static let packageChip = dynamic(dark: "#45475a", light: "#dce0e8")
-    static let packageAccent = dynamic(dark: "#89b4fa", light: "#1e66f5")
+    // Package manager palette (docs/design/forge-packages-mockup.html):
+    // quiet ink colours for status, soft tints behind badges and bands, one
+    // accent. Each follows the system's light or dark appearance.
+    static let packageAccent = dynamic(dark: "#7aa2f7", light: "#2f62d0")
+    static let packageAccentInk = dynamic(dark: "#12151b", light: "#ffffff")
+    static let packageDim = dynamic(dark: "#8a90a0", light: "#626878")
+    static let packageSelected = dynamic(dark: "#242831", light: "#eceef3")
+    static let packageRule = dynamic(dark: "#2e323b", light: "#dcdde1")
 
-    /// A filled status mark: the accent carries the meaning, the text
-    /// stays high-contrast in both appearances.
-    static func badge(
-        dark: String,
-        light: String,
-        darkText: String = "#1e1e2e",
-        lightText: String = "#000000"
+    /// A status colour on the plain background.
+    static func packageInk(dark: String, light: String) -> FaceStyle {
+        FaceStyle(foreground: dynamic(dark: dark, light: light))
+    }
+
+    /// Coloured text on a soft tint of the same hue.
+    static func packageTint(
+        ink: (dark: String, light: String),
+        tint: (dark: String, light: String)
     ) -> FaceStyle {
         FaceStyle(
-            foreground: dynamic(dark: darkText, light: lightText),
-            background: dynamic(dark: dark, light: light),
-            bold: true
+            foreground: dynamic(dark: ink.dark, light: ink.light),
+            background: dynamic(dark: tint.dark, light: tint.light)
         )
     }
+
+    static let packageWarnInk = (dark: "#dbb56f", light: "#8f6200")
+    static let packageWarnTint = (dark: "#3a3222", light: "#f6ead0")
+    static let packageErrInk = (dark: "#e68080", light: "#b3342c")
+    static let packageErrTint = (dark: "#3b2427", light: "#f6dcda")
+    static let packageInfoInk = (dark: "#82b4dc", light: "#1f6496")
+    static let packageInfoTint = (dark: "#1f2c3a", light: "#dfeaf5")
+    static let packageQuietTint = (dark: "#22252d", light: "#e9ebf0")
 
     static func syntax(_ name: String) -> FaceStyle? {
         switch name {
@@ -187,21 +201,26 @@ enum Theme {
         case "package-heading", "package-primary":
             return FaceStyle(foreground: .labelColor, bold: true)
         case "package-selected":
-            return FaceStyle(foreground: packageFg, background: packageChip, bold: true)
+            return FaceStyle(background: packageSelected, bold: true)
         case "package-selected-marker": return FaceStyle(foreground: packageAccent, bold: true)
-        case "package-ok": return badge(dark: "#a6e3a1", light: "#40a02b")
-        case "package-warning": return badge(dark: "#f9e2af", light: "#df8e1d")
-        case "package-error":
-            return badge(dark: "#f38ba8", light: "#d20f39", lightText: "#ffffff")
-        case "package-info":
-            return badge(dark: "#89b4fa", light: "#1e66f5", lightText: "#ffffff")
-        case "package-neutral": return FaceStyle(foreground: packageFg, background: packageChip)
-        case "package-inactive":
-            return FaceStyle(
-                foreground: packageFg,
-                background: dynamic(dark: "#262837", light: "#e1e4ec")
-            )
-        case "package-rule": return FaceStyle(foreground: .separatorColor)
+        case "package-ok": return packageInk(dark: "#86c28f", light: "#2b7a47")
+        case "package-warning": return packageInk(dark: packageWarnInk.dark, light: packageWarnInk.light)
+        case "package-error": return packageInk(dark: packageErrInk.dark, light: packageErrInk.light)
+        case "package-info": return packageInk(dark: packageInfoInk.dark, light: packageInfoInk.light)
+        case "package-neutral": return FaceStyle()
+        case "package-inactive": return FaceStyle(foreground: packageDim)
+        case "package-rule": return FaceStyle(foreground: packageRule)
+        case "package-title-pill", "package-tab-active":
+            return FaceStyle(foreground: packageAccentInk, background: packageAccent, bold: true)
+        case "package-accent": return FaceStyle(foreground: packageAccent)
+        case "package-badge-warning", "package-band-warning", "package-risk":
+            return packageTint(ink: packageWarnInk, tint: packageWarnTint)
+        case "package-badge-error", "package-band-error":
+            return packageTint(ink: packageErrInk, tint: packageErrTint)
+        case "package-badge-info":
+            return packageTint(ink: packageInfoInk, tint: packageInfoTint)
+        case "package-badge-inactive":
+            return packageTint(ink: (dark: "#8a90a0", light: "#626878"), tint: packageQuietTint)
         case "error", "spell-error": return underlined(.systemRed)
         case "warning": return underlined(.systemOrange)
         case "info": return underlined(.systemBlue)
