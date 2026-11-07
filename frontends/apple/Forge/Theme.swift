@@ -44,6 +44,33 @@ enum Theme {
     static let modeLine = NSColor.quaternaryLabelColor
     static let modeLineInactive = NSColor.quaternaryLabelColor.withAlphaComponent(0.4)
 
+    /// A color that follows the system's light or dark appearance.
+    static func dynamic(dark: String, light: String) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(hex: isDark ? dark : light) ?? .textColor
+        }
+    }
+
+    static let packageFg = dynamic(dark: "#cdd6f4", light: "#4c4f69")
+    static let packageChip = dynamic(dark: "#45475a", light: "#dce0e8")
+    static let packageAccent = dynamic(dark: "#89b4fa", light: "#1e66f5")
+
+    /// A filled status mark: the accent carries the meaning, the text
+    /// stays high-contrast in both appearances.
+    static func badge(
+        dark: String,
+        light: String,
+        darkText: String = "#1e1e2e",
+        lightText: String = "#000000"
+    ) -> FaceStyle {
+        FaceStyle(
+            foreground: dynamic(dark: darkText, light: lightText),
+            background: dynamic(dark: dark, light: light),
+            bold: true
+        )
+    }
+
     static func syntax(_ name: String) -> FaceStyle? {
         switch name {
         case "keyword": FaceStyle(foreground: .systemPurple)
@@ -156,6 +183,25 @@ enum Theme {
         case "paren-match": return FaceStyle(background: NSColor.systemTeal.withAlphaComponent(0.35))
         case "paren-mismatch": return FaceStyle(background: NSColor.systemRed.withAlphaComponent(0.5))
         case "trailing-whitespace": return FaceStyle(background: NSColor.systemRed.withAlphaComponent(0.35))
+        case "package-title": return FaceStyle(foreground: .labelColor, bold: true)
+        case "package-heading", "package-primary":
+            return FaceStyle(foreground: .labelColor, bold: true)
+        case "package-selected":
+            return FaceStyle(foreground: packageFg, background: packageChip, bold: true)
+        case "package-selected-marker": return FaceStyle(foreground: packageAccent, bold: true)
+        case "package-ok": return badge(dark: "#a6e3a1", light: "#40a02b")
+        case "package-warning": return badge(dark: "#f9e2af", light: "#df8e1d")
+        case "package-error":
+            return badge(dark: "#f38ba8", light: "#d20f39", lightText: "#ffffff")
+        case "package-info":
+            return badge(dark: "#89b4fa", light: "#1e66f5", lightText: "#ffffff")
+        case "package-neutral": return FaceStyle(foreground: packageFg, background: packageChip)
+        case "package-inactive":
+            return FaceStyle(
+                foreground: packageFg,
+                background: dynamic(dark: "#262837", light: "#e1e4ec")
+            )
+        case "package-rule": return FaceStyle(foreground: .separatorColor)
         case "error", "spell-error": return underlined(.systemRed)
         case "warning": return underlined(.systemOrange)
         case "info": return underlined(.systemBlue)

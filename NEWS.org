@@ -1,5 +1,13 @@
 #+title: Forge NEWS
 * 0.1.0
+** Package screens use restrained status badges
+The package manager, package list, doctor, operation log, upgrade plan,
+snapshot diff and build header now share a quiet table style. Titles and
+rows use the theme's text colors; status is a labelled badge with a
+semantic mark, not color alone. The package faces are restylable through
+=forge.theme.set=, including =package-title=, =package-selected=,
+=package-ok=, =package-warning=, =package-error=, =package-info= and
+=package-neutral=.
 ** Headless package commands collect declarations
 =forge package declarations [--json]= evaluates =init.rhai= and theme
 files without running closures, prompting, installing system packages,

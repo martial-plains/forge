@@ -266,7 +266,8 @@ pub fn render_text(events: &[Event]) -> String {
     out
 }
 
-fn operation_name(operation: Operation) -> &'static str {
+/// The short name used in the log's plain text.
+pub fn operation_name(operation: Operation) -> &'static str {
     match operation {
         Operation::Fetch => "fetch",
         Operation::Build => "build",
@@ -276,7 +277,8 @@ fn operation_name(operation: Operation) -> &'static str {
     }
 }
 
-fn status_name(status: Status) -> &'static str {
+/// The short name used in the log's plain text.
+pub fn status_name(status: Status) -> &'static str {
     match status {
         Status::Ok => "ok",
         Status::Failed => "failed",
@@ -295,7 +297,8 @@ fn source_name(kind: SourceKind) -> &'static str {
     }
 }
 
-fn format_time(ms: u64) -> String {
+/// A UTC timestamp for the log's plain text.
+pub fn format_time(ms: u64) -> String {
     let secs = ms / 1000;
     let days = i64::try_from(secs / 86_400).unwrap_or(i64::MAX);
     let rest = secs % 86_400;

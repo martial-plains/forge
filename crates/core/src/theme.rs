@@ -139,6 +139,7 @@ pub fn all_faces() -> Vec<String> {
     names.extend(crate::decoration::RainbowFace::names());
     names.extend(crate::decoration::VcFace::names());
     names.extend(crate::decoration::ModernFace::names());
+    names.extend(crate::decoration::PackageFace::names());
     names.into_iter().map(String::from).collect()
 }
 
@@ -388,6 +389,8 @@ mod tests {
         assert!(all_faces().contains(&"mode-line".to_string()));
         assert!(all_faces().contains(&"spell-error".to_string()));
         assert!(all_faces().contains(&"rainbow-depth-9".to_string()));
+        assert!(all_faces().contains(&"package-title".to_string()));
+        assert!(all_faces().contains(&"package-warning".to_string()));
         assert_eq!(
             all_faces().len(),
             all_faces()

@@ -638,30 +638,65 @@ fn save_snapshot(app: &mut App, name: &str) {
 }
 
 fn show_snapshots(app: &mut App) {
+    use crate::package_ui::Text;
+    use forge_core::decoration::PackageFace;
+
     let Some(config) = config_dir() else {
         return app.error("No config directory for package snapshots");
     };
     match LockFile::snapshots(&config) {
         Ok(names) if names.is_empty() => app.msg("No package snapshots"),
         Ok(names) => {
-            let body = format!("Package snapshots\n\n{}\n", names.join("\n"));
-            show_package_text(app, "*Package Snapshots*", &body);
+            let mut text = Text::new();
+            text.push_face("Package Snapshots", PackageFace::Title);
+            text.newline();
+            text.newline();
+            for name in names {
+                text.push_face("  ", PackageFace::Rule);
+                text.push_face(&name, PackageFace::Primary);
+                text.newline();
+            }
+            text.show(app, "*Package Snapshots*", "special-mode", None);
         }
         Err(e) => app.error(format!("Couldn't list package snapshots: {e}")),
     }
 }
 
 fn show_snapshot_diff(app: &mut App, before: &str, after: &str) {
+    use crate::package_ui::{Status, Symbols, Text};
+    use forge_core::decoration::PackageFace;
+
     let Some(config) = config_dir() else {
         return app.error("No config directory for package snapshots");
     };
     match LockFile::diff_snapshots(&config, before, after) {
         Ok(changes) => {
-            let mut body = format!("Package snapshot diff: {before} -> {after}\n\n");
+            let symbols = Symbols::for_app(app);
+            let mut text = Text::new();
+            let title = "Package Snapshot Diff";
+            text.push_face(title, PackageFace::Title);
+            let versions = format!("{before}{}{after}", symbols.arrow);
+            let width = app.win().width.max(40);
+            let gap = width.saturating_sub(
+                crate::package_ui::display_width(title)
+                    + crate::package_ui::display_width(&versions),
+            );
+            if gap > 0 {
+                text.push(&" ".repeat(gap));
+            }
+            text.push_face(&versions, PackageFace::Heading);
+            text.newline();
+            text.newline();
             if changes.is_empty() {
-                body.push_str("No changes\n");
+                text.push("No changes\n");
             }
             for change in changes {
+                let status = match change.change.as_str() {
+                    "added" => Status::Ok,
+                    "removed" => Status::Error,
+                    "changed" => Status::Warning,
+                    _ => Status::Neutral,
+                };
                 let old = change
                     .before
                     .as_ref()
@@ -672,12 +707,15 @@ fn show_snapshot_diff(app: &mut App, before: &str, after: &str) {
                     .as_ref()
                     .map(lock_revision)
                     .unwrap_or_else(|| "-".into());
-                body.push_str(&format!(
-                    "{} {}: {} -> {}\n",
-                    change.change, change.name, old, new
-                ));
+                text.push("  ");
+                text.push_status(status, &change.change, 10, false, symbols);
+                text.push("  ");
+                text.push_face(&change.name, PackageFace::Primary);
+                text.push(": ");
+                text.push(&format!("{old}{}{new}", symbols.arrow));
+                text.newline();
             }
-            show_package_text(app, "*Package Snapshot Diff*", &body);
+            text.show(app, "*Package Snapshot Diff*", "special-mode", None);
         }
         Err(e) => app.error(format!("Couldn't compare package snapshots: {e}")),
     }
@@ -1462,30 +1500,27 @@ pub fn manager(app: &mut App) {
         app.packages.manager_selected = names.first().cloned();
     }
     let selected = app.packages.manager_selected.clone();
-    let width = names.iter().map(String::len).max().unwrap_or(4).max(4);
-    let mut text = String::from(
-        "Forge Packages\nj/k or arrows move  RET/i install  u upgrade  d delete  f filter  F clear\nv details  b build log  g refresh  U upgrade all  q close\n",
-    );
-    text.push_str(&format!(
-        "Filter: {}  |  {} package{}\n\n",
-        if app.packages.manager_filter.is_empty() {
-            "(none)"
-        } else {
-            &app.packages.manager_filter
-        },
-        names.len(),
-        if names.len() == 1 { "" } else { "s" }
-    ));
-    text.push_str(&format!(
-        "  {:width$}  {:22}  {:10}  Source\n",
-        "Name", "Status", "Version"
-    ));
-    let mut selected_line = None;
-    for (i, name) in names.iter().enumerate() {
+    let symbols = crate::package_ui::Symbols::for_app(app);
+
+    struct Row {
+        name: String,
+        status: String,
+        kind: crate::package_ui::Status,
+        version: String,
+        source: String,
+        frozen: bool,
+    }
+
+    let mut rows = Vec::with_capacity(names.len());
+    for name in &names {
         let declaration = declared.get(name);
         let package = installed.get(name);
-        let status = crate::package_vc::status(app, name).unwrap_or_else(|| {
-            if package.is_some() {
+        let frozen = declaration.is_some_and(|u| u.frozen);
+        let task = crate::package_vc::status(app, name);
+        let status = match task {
+            Some(task) => task,
+            None if frozen => "frozen",
+            None if package.is_some() => {
                 if loaded.iter().any(|n| n == name) {
                     "loaded"
                 } else if declaration.is_some_and(|u| u.lazy()) {
@@ -1495,12 +1530,15 @@ pub fn manager(app: &mut App) {
                 } else {
                     "installed"
                 }
-            } else if declaration.is_some() {
-                "not installed"
-            } else {
-                "available"
             }
-        });
+            None if declaration.is_some() => "not installed",
+            None => "available",
+        };
+        let kind = if frozen {
+            crate::package_ui::Status::Neutral
+        } else {
+            crate::package_ui::Status::of(status)
+        };
         let version = package
             .map(|p| p.version.as_str())
             .or_else(|| {
@@ -1511,7 +1549,8 @@ pub fn manager(app: &mut App) {
                     .get(name)
                     .map(|p| p.version.as_str())
             })
-            .unwrap_or("-");
+            .unwrap_or("-")
+            .to_string();
         let source = declaration
             .and_then(|u| u.git.as_deref().or(u.url.as_deref()).or(u.index.as_deref()))
             .or_else(|| {
@@ -1527,26 +1566,161 @@ pub fn manager(app: &mut App) {
                     .get(name)
                     .map(|p| p.git.as_deref().or(Some(p.url.as_str())).unwrap_or(""))
             })
-            .unwrap_or("-");
-        let marker = if selected.as_deref() == Some(name.as_str()) {
-            selected_line = Some(i + 6);
-            ">"
-        } else {
-            " "
-        };
-        text.push_str(&format!(
-            "{name:width$} {marker}  {status:22}  {version:10}  {source}\n"
-        ));
+            .unwrap_or("-")
+            .to_string();
+        rows.push(Row {
+            name: name.clone(),
+            status: status.to_string(),
+            kind,
+            version,
+            source,
+            frozen,
+        });
     }
-    text.push_str("\nDetails\n-------\n");
-    if let Some(name) = selected.as_deref() {
-        text.push_str(&details(app, name));
+
+    let width = app.win().width.max(40);
+    let name_w = rows
+        .iter()
+        .map(|r| crate::package_ui::display_width(&r.name))
+        .max()
+        .unwrap_or(4)
+        .clamp(4, 20);
+    let status_w = rows
+        .iter()
+        .map(|r| crate::package_ui::display_width(&r.status) + 2)
+        .max()
+        .unwrap_or(9)
+        .clamp(9, 20);
+    let version_w = rows
+        .iter()
+        .map(|r| crate::package_ui::display_width(&r.version))
+        .max()
+        .unwrap_or(7)
+        .clamp(7, 14);
+    let source_w = width
+        .saturating_sub(2 + name_w + 2 + status_w + 2 + version_w + 2)
+        .max(8);
+    let table_w = 2 + name_w + 2 + status_w + 2 + version_w + 2 + source_w;
+
+    let mut text = crate::package_ui::Text::new();
+    let title = "Forge Packages";
+    let updates = rows
+        .iter()
+        .filter(|r| r.kind == crate::package_ui::Status::Warning)
+        .count();
+    let counts = format!(
+        "{} package{} {} {} {}",
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" },
+        symbols.dot,
+        updates,
+        if updates == 1 { "update" } else { "updates" }
+    );
+    text.push_face(title, forge_core::decoration::PackageFace::Title);
+    let gap = width.saturating_sub(
+        crate::package_ui::display_width(title) + crate::package_ui::display_width(&counts),
+    );
+    if gap > 0 {
+        text.push_face(&" ".repeat(gap), forge_core::decoration::PackageFace::Title);
+    }
+    text.push_face(&counts, forge_core::decoration::PackageFace::Heading);
+    text.newline();
+
+    let filter = if app.packages.manager_filter.is_empty() {
+        "(none)"
     } else {
-        text.push_str("No packages match this filter.\n");
+        &app.packages.manager_filter
+    };
+    text.push_face("Filter: ", forge_core::decoration::PackageFace::Heading);
+    text.push(filter);
+    let hint = "f filter";
+    let used =
+        crate::package_ui::display_width("Filter: ") + crate::package_ui::display_width(filter);
+    let gap = width.saturating_sub(used + crate::package_ui::display_width(hint));
+    if gap > 0 {
+        text.push(&" ".repeat(gap));
     }
-    app.show_special_buffer(BUFFER, "package-manager-mode", &text);
-    app.buf()
-        .set_point(forge_core::Pos::new(selected_line.unwrap_or(3), 0));
+    text.push_face(hint, forge_core::decoration::PackageFace::Heading);
+    text.newline();
+    text.newline();
+
+    let header = format!(
+        "  {}  {}  {}  {}",
+        crate::package_ui::pad("Name", name_w, symbols.ellipsis),
+        crate::package_ui::pad("Status", status_w, symbols.ellipsis),
+        crate::package_ui::pad("Version", version_w, symbols.ellipsis),
+        crate::package_ui::pad("Source", source_w, symbols.ellipsis),
+    );
+    text.push_face(&header, forge_core::decoration::PackageFace::Heading);
+    text.newline();
+    text.push_face(
+        &symbols.rule.repeat(table_w.min(width)),
+        forge_core::decoration::PackageFace::Rule,
+    );
+    text.newline();
+
+    let mut selected_line = None;
+    for (i, row) in rows.iter().enumerate() {
+        let is_selected = selected.as_deref() == Some(row.name.as_str());
+        if is_selected {
+            selected_line = Some(i + 5);
+        }
+        let base = if is_selected {
+            Some(forge_core::decoration::PackageFace::Selected)
+        } else if row.frozen {
+            Some(forge_core::decoration::PackageFace::Inactive)
+        } else {
+            None
+        };
+        let cell = |text: &mut crate::package_ui::Text, value: &str, width: usize| {
+            let value = crate::package_ui::pad(value, width, symbols.ellipsis);
+            match base {
+                Some(face) => text.push_face(&value, face),
+                None => text.push(&value),
+            }
+        };
+        let gap = |text: &mut crate::package_ui::Text, value: &str| match base {
+            Some(face) => text.push_face(value, face),
+            None => text.push(value),
+        };
+        if is_selected {
+            text.push_face(
+                symbols.selected,
+                forge_core::decoration::PackageFace::SelectedMarker,
+            );
+        } else {
+            gap(&mut text, " ");
+        }
+        gap(&mut text, " ");
+        cell(&mut text, &row.name, name_w);
+        gap(&mut text, "  ");
+        text.push_status(row.kind, &row.status, status_w, is_selected, symbols);
+        gap(&mut text, "  ");
+        cell(&mut text, &row.version, version_w);
+        gap(&mut text, "  ");
+        cell(&mut text, &row.source, source_w);
+        text.newline();
+    }
+
+    text.newline();
+    text.push_face("Details", forge_core::decoration::PackageFace::Heading);
+    text.newline();
+    text.push_face(
+        &symbols.rule.repeat(7),
+        forge_core::decoration::PackageFace::Rule,
+    );
+    text.newline();
+    if let Some(name) = selected.as_deref() {
+        text.push(&details(app, name));
+    } else {
+        text.push("No packages match this filter.\n");
+    }
+    text.show(
+        app,
+        BUFFER,
+        "package-manager-mode",
+        Some(forge_core::Pos::new(selected_line.unwrap_or(3), 0)),
+    );
 }
 
 fn show_details(app: &mut App, name: &str) {
@@ -1829,18 +2003,21 @@ pub fn list(app: &mut App) {
         return;
     };
     let installed = db(app).map(|d| d.packages).unwrap_or_default();
-    let mut text = String::from("Packages (RET install or upgrade, d delete, g refresh)\n\n");
-    let width = index
-        .packages
-        .keys()
-        .chain(installed.keys())
-        .map(String::len)
-        .max()
-        .unwrap_or(4)
-        .max(4);
+    let symbols = crate::package_ui::Symbols::for_app(app);
+
+    struct Row {
+        name: String,
+        version: String,
+        status: String,
+        kind: crate::package_ui::Status,
+        description: String,
+        problem: Option<String>,
+    }
+
     let mut names: Vec<&String> = index.packages.keys().chain(installed.keys()).collect();
     names.sort();
     names.dedup();
+    let mut rows = Vec::with_capacity(names.len());
     for name in names {
         let avail = index.packages.get(name);
         let have = installed.get(name);
@@ -1857,7 +2034,7 @@ pub fn list(app: &mut App) {
         let (version, status) = match (avail, have) {
             (_, Some(h)) if from_git.is_some() => (
                 h.version.clone(),
-                format!("git {}", from_git.unwrap_or_default()),
+                format!("git {}", from_git.clone().unwrap_or_default()),
             ),
             (Some(a), None) if a.git.is_some() => (a.version.clone(), "available (git)".into()),
             (Some(a), Some(h)) if package::compare_versions(&a.version, &h.version).is_gt() => {
@@ -1868,23 +2045,115 @@ pub fn list(app: &mut App) {
             (None, Some(h)) => (h.version.clone(), "installed (not in the index)".into()),
             (None, None) => continue,
         };
-        let desc = avail.map(|a| a.description.as_str()).unwrap_or("");
-        let compatibility = avail
-            .and_then(|a| package_compatibility(app, a))
-            .map(|problem| format!("  [{problem}]"))
-            .unwrap_or_default();
-        text.push_str(&format!(
-            "  {name:width$}  {version:10}  {status:22}  {desc}{compatibility}\n"
-        ));
+        let problem = avail.and_then(|a| package_compatibility(app, a));
+        rows.push(Row {
+            name: name.clone(),
+            version,
+            kind: crate::package_ui::Status::of(&status),
+            status,
+            description: avail.map(|a| a.description.clone()).unwrap_or_default(),
+            problem,
+        });
     }
-    app.show_special_buffer(BUFFER, "package-menu-mode", &text);
-    app.buf().set_point(forge_core::Pos::new(2, 0));
+
+    let width = app.win().width.max(40);
+    let name_w = rows
+        .iter()
+        .map(|r| crate::package_ui::display_width(&r.name))
+        .max()
+        .unwrap_or(4)
+        .clamp(4, 20);
+    let version_w = rows
+        .iter()
+        .map(|r| crate::package_ui::display_width(&r.version))
+        .max()
+        .unwrap_or(7)
+        .clamp(7, 14);
+    let status_w = rows
+        .iter()
+        .map(|r| crate::package_ui::display_width(&r.status) + 2)
+        .max()
+        .unwrap_or(9)
+        .clamp(9, 22);
+    let desc_w = width
+        .saturating_sub(2 + name_w + 2 + version_w + 2 + status_w + 2)
+        .max(8);
+    let table_w = 2 + name_w + 2 + version_w + 2 + status_w + 2 + desc_w;
+
+    let mut text = crate::package_ui::Text::new();
+    let title = "Packages";
+    let hint = "RET install or upgrade  d delete  g refresh";
+    text.push_face(title, forge_core::decoration::PackageFace::Title);
+    let gap = width.saturating_sub(
+        crate::package_ui::display_width(title) + crate::package_ui::display_width(hint),
+    );
+    if gap > 0 {
+        text.push(&" ".repeat(gap));
+    }
+    text.push_face(hint, forge_core::decoration::PackageFace::Heading);
+    text.newline();
+    text.newline();
+
+    let header = format!(
+        "  {}  {}  {}  {}",
+        crate::package_ui::pad("Name", name_w, symbols.ellipsis),
+        crate::package_ui::pad("Version", version_w, symbols.ellipsis),
+        crate::package_ui::pad("Status", status_w, symbols.ellipsis),
+        crate::package_ui::pad("Description", desc_w, symbols.ellipsis),
+    );
+    text.push_face(&header, forge_core::decoration::PackageFace::Heading);
+    text.newline();
+    text.push_face(
+        &symbols.rule.repeat(table_w.min(width)),
+        forge_core::decoration::PackageFace::Rule,
+    );
+    text.newline();
+    for row in &rows {
+        text.push("  ");
+        text.push(&crate::package_ui::pad(&row.name, name_w, symbols.ellipsis));
+        text.push("  ");
+        text.push(&crate::package_ui::pad(
+            &row.version,
+            version_w,
+            symbols.ellipsis,
+        ));
+        text.push("  ");
+        text.push_status(row.kind, &row.status, status_w, false, symbols);
+        text.push("  ");
+        let mut description = row.description.clone();
+        if let Some(problem) = &row.problem {
+            if !description.is_empty() {
+                description.push_str("  ");
+            }
+            description.push('[');
+            description.push_str(problem);
+            description.push(']');
+        }
+        text.push(&crate::package_ui::pad(
+            &description,
+            desc_w,
+            symbols.ellipsis,
+        ));
+        text.newline();
+    }
+    if rows.is_empty() {
+        text.push("No packages in the index.\n");
+    }
+    text.show(
+        app,
+        BUFFER,
+        "package-menu-mode",
+        Some(forge_core::Pos::new(if rows.is_empty() { 2 } else { 4 }, 0)),
+    );
 }
 
 fn name_on_line(app: &mut App) -> Option<String> {
     let b = app.buf_ref();
     let line = b.line(b.point().line);
-    let name = line.split_whitespace().next().map(String::from);
+    let name = line
+        .split_whitespace()
+        .find(|word| !matches!(*word, "▌" | "|"))
+        .map(String::from);
     if name.is_none() || b.point().line < 2 {
         app.error("No package on this line");
         return None;

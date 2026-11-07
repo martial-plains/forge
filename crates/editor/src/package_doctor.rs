@@ -209,9 +209,10 @@ fn plugin_path(app: &App, name: &str, plugins_dir: Option<&Path>) -> Option<Path
 
 /// Run the doctor and show its report in a special buffer.
 pub fn show(app: &mut App) {
+    use crate::package_ui::{Status, Symbols, Text};
+    use forge_core::decoration::PackageFace;
+
     let findings = findings(app);
-    let text = render_text(&findings);
-    app.show_special_buffer(BUFFER, "special-mode", &text);
     let errors = findings
         .iter()
         .filter(|f| f.severity == forge_core::package_doctor::Severity::Error)
@@ -220,6 +221,74 @@ pub fn show(app: &mut App) {
         .iter()
         .filter(|f| f.severity == forge_core::package_doctor::Severity::Warning)
         .count();
+    let symbols = Symbols::for_app(app);
+    let mut text = Text::new();
+    text.push_face("Package Doctor", PackageFace::Title);
+    let counts = format!(
+        "{} finding{} {} {} error{} {} {} warning{}",
+        findings.len(),
+        plural(findings.len()),
+        symbols.dot,
+        errors,
+        plural(errors),
+        symbols.dot,
+        warnings,
+        plural(warnings)
+    );
+    let width = app.win().width.max(40);
+    let gap = width.saturating_sub(
+        crate::package_ui::display_width("Package Doctor")
+            + crate::package_ui::display_width(&counts),
+    );
+    if gap > 0 {
+        text.push(&" ".repeat(gap));
+    }
+    text.push_face(&counts, PackageFace::Heading);
+    text.newline();
+    text.newline();
+
+    if findings.is_empty() {
+        text.push_face("No package problems found.", PackageFace::Heading);
+        text.newline();
+    }
+    for finding in &findings {
+        let status = match finding.severity {
+            forge_core::package_doctor::Severity::Error => Status::Error,
+            forge_core::package_doctor::Severity::Warning => Status::Warning,
+            forge_core::package_doctor::Severity::Info => Status::Info,
+        };
+        text.push("  ");
+        text.push_status(status, finding.severity.as_str(), 10, false, symbols);
+        text.push("  ");
+        text.push_face(
+            &format!("[{}]", finding.check.as_str()),
+            PackageFace::Heading,
+        );
+        let in_message = finding
+            .plugin
+            .as_ref()
+            .is_some_and(|plugin| finding.message.starts_with(&format!("{plugin}:")));
+        if let Some(plugin) = &finding.plugin
+            && !in_message
+        {
+            text.push(" ");
+            text.push_face(plugin, PackageFace::Primary);
+        }
+        if let Some(line) = finding.line {
+            text.push(&format!(" (init.rhai:{line})"));
+        }
+        text.push(": ");
+        text.push(&finding.message);
+        text.newline();
+        if let Some(fix) = &finding.fix {
+            text.push("  ");
+            text.push_face("fix: ", PackageFace::Heading);
+            text.push(fix);
+            text.newline();
+        }
+    }
+    text.show(app, BUFFER, "special-mode", None);
+
     if errors > 0 {
         app.msg(format!(
             "Package doctor: {errors} error{}, {warnings} warning{}",

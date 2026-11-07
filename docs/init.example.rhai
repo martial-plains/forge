@@ -529,6 +529,11 @@ use_package("consult", #{
 // frontend's style, so light and dark mode keep working.
 // forge.theme.set("comment", #{ fg: "#6a9955", italic: true });
 // forge.theme.faces() lists every face; forge.theme.reset() forgets all.
+// Package manager faces keep labels in the default text color and put the
+// semantic color on the status mark:
+// forge.theme.set("package-title", #{ bold: true });
+// forge.theme.set("package-selected", #{ bg: "#45475a", bold: true });
+// forge.theme.set("package-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
 
 // ---- menus
 

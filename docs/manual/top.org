@@ -69,7 +69,14 @@ run ~C-h f~ on it before reading on.
    :END:
 
 Use =M-x package-manager= to browse declared, installed, and indexed
-plugins. =M-x package-upgrade NAME= reviews and updates one package;
+plugins. The manager and =*Packages*= show status as a labelled badge:
+=ok= for loaded and up-to-date packages, =update= for upgrades and
+review-needed packages, =building= and =fetching= for work in progress,
+=error= for failures and incompatible packages, and =available=, =frozen=,
+or =source= for the rest. The mark carries the color and the label says
+what it means, so the state is readable without color.
+
+=M-x package-upgrade NAME= reviews and updates one package;
 =M-x package-upgrade-all= reviews available index release notes and Git
 commit subjects before applying updates. =C-u M-x package-upgrade-all= or
 =M-x package-upgrade-all-dry-run= shows the proposed versions, commits, and
@@ -77,6 +84,13 @@ build commands without modifying plugin or data files. A failed build,
 smoke test, or lock update restores the previous installed artifact. Mark a
 declaration with =freeze: true= to exclude it from automatic upgrades; =pin=
 also freezes it and selects the pinned Git revision.
+
+The package screens have their own faces: =package-title=,
+=package-heading=, =package-primary=, =package-selected=,
+=package-selected-marker=, =package-ok=, =package-warning=,
+=package-error=, =package-info=, =package-neutral=, =package-inactive=,
+and =package-rule=. Restyle them with ~forge.theme.set~; unset fields keep
+the frontend's light and dark defaults.
 
 ** Package operation log
    :PROPERTIES:
@@ -87,7 +101,9 @@ also freezes it and selects the pinned Git revision.
 
 ~M-x package-log~ shows structured fetch, build, install, upgrade, and
 rollback records with timings, source and revision details, and errors.
-~M-x package-log-export~ writes the same records as JSON lines. The log is
+Status badges follow the same rules as the package manager, and the raw
+build output keeps its own text. ~M-x package-log-export~ writes the same
+records as JSON lines. The log is
 rotated in the state directory, and credentials in URLs, query strings, and
 authentication headers are redacted. Environment values are never recorded.
 

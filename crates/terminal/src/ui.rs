@@ -5,7 +5,8 @@
 use crate::app::App;
 use crate::caps::TermCaps;
 use forge_core::decoration::{
-    ANNOTATE_AGES, DecoFace, DiredFace, ModernFace, RAINBOW_DEPTHS, RainbowFace, VcFace,
+    ANNOTATE_AGES, DecoFace, DiredFace, ModernFace, PackageFace, RAINBOW_DEPTHS, RainbowFace,
+    VcFace,
 };
 use forge_core::display::{self, Face, Span as CoreSpan};
 use forge_core::syntax::SyntaxFace;
@@ -65,6 +66,7 @@ fn style(face: Face, caps: TermCaps, theme: &forge_core::theme::Theme) -> Style 
                 DecoFace::Rainbow(f) => rainbow_style(f),
                 DecoFace::Vc(f) => vc_style(f),
                 DecoFace::Modern(f) => modern_style(f, base),
+                DecoFace::Package(f) => package_style(f),
                 DecoFace::Term(t) => term_style(t),
             }
         }
@@ -146,6 +148,34 @@ fn style(face: Face, caps: TermCaps, theme: &forge_core::theme::Theme) -> Style 
         }
     }
     out
+}
+
+/// Package manager: quiet titles and headings, a reversed selected row,
+/// and semantic status marks in the terminal's own palette. Status labels
+/// use [`PackageFace::Neutral`], so they stay readable when a terminal's
+/// green, yellow or cyan is too light for small text.
+fn package_style(f: PackageFace) -> Style {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    match f {
+        PackageFace::Title | PackageFace::Heading | PackageFace::Primary => bold,
+        PackageFace::Selected => bold.add_modifier(Modifier::REVERSED),
+        PackageFace::SelectedMarker => Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Ok => Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Warning => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Error => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        PackageFace::Info => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Neutral => Style::default().add_modifier(Modifier::REVERSED),
+        PackageFace::Inactive => Style::default().add_modifier(Modifier::DIM),
+        PackageFace::Rule => Style::default().fg(Color::DarkGray),
+    }
 }
 
 /// org-modern: labels as blocks of background color, in grays and the
@@ -928,6 +958,32 @@ mod tests {
             assert_eq!(s.underline_color, Some(color));
             assert_eq!(s.fg, None, "the text keeps its own color");
         }
+    }
+
+    #[test]
+    fn package_faces_mark_status_and_keep_rows_quiet() {
+        let package = |face| deco(DecoFace::Package(face), true);
+        assert_eq!(package(PackageFace::Ok).fg, Some(Color::Green));
+        assert_eq!(package(PackageFace::Warning).fg, Some(Color::Yellow));
+        assert_eq!(package(PackageFace::Error).fg, Some(Color::Red));
+        assert_eq!(package(PackageFace::Info).fg, Some(Color::Cyan));
+        assert!(
+            package(PackageFace::Neutral)
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "status labels are badges without tinting their text"
+        );
+        assert!(
+            package(PackageFace::Selected)
+                .add_modifier
+                .contains(Modifier::REVERSED | Modifier::BOLD)
+        );
+        assert_eq!(package(PackageFace::SelectedMarker).fg, Some(Color::Blue));
+        assert!(
+            package(PackageFace::Inactive)
+                .add_modifier
+                .contains(Modifier::DIM)
+        );
     }
 
     #[test]

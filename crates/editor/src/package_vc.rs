@@ -309,16 +309,52 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
 }
 
 fn show_dry_run(app: &mut App) {
+    use crate::package_ui::{Status, Symbols, Text};
+    use forge_core::decoration::PackageFace;
+
     match dry_run_lines(app) {
         Ok(lines) => {
-            let mut text = String::from("Git package upgrade plan (no files changed)\n\n");
-            if lines.is_empty() {
-                text.push_str("No Git packages need upgrading.\n");
-            } else {
-                text.push_str(&lines.join("\n"));
-                text.push('\n');
+            let symbols = Symbols::for_app(app);
+            let mut text = Text::new();
+            text.push_face("Git Package Upgrade Plan", PackageFace::Title);
+            let note = "no files changed";
+            let width = app.win().width.max(40);
+            let gap = width.saturating_sub(
+                crate::package_ui::display_width("Git Package Upgrade Plan")
+                    + crate::package_ui::display_width(note),
+            );
+            if gap > 0 {
+                text.push(&" ".repeat(gap));
             }
-            app.show_special_buffer("*Package Upgrade Plan*", "special-mode", &text);
+            text.push_face(note, PackageFace::Heading);
+            text.newline();
+            text.newline();
+            if lines.is_empty() {
+                text.push("No Git packages need upgrading.\n");
+            } else {
+                for line in &lines {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("WARNING") {
+                        let message = trimmed
+                            .strip_prefix("WARNING: ")
+                            .or_else(|| trimmed.strip_prefix("WARNING"))
+                            .unwrap_or(trimmed);
+                        text.push("  ");
+                        text.push_status(Status::Warning, "warning", 10, false, symbols);
+                        text.push(" ");
+                        text.push(message);
+                    } else if let Some((name, rest)) = line.split_once(": ") {
+                        text.push("  ");
+                        text.push_face(name, PackageFace::Primary);
+                        text.push(": ");
+                        text.push(&rest.replace("->", symbols.arrow));
+                    } else {
+                        text.push(line);
+                    }
+                    text.newline();
+                }
+            }
+            text.show(app, "*Package Upgrade Plan*", "special-mode", None);
         }
         Err(error) => app.error(format!("Couldn't plan Git package upgrades: {error}")),
     }
@@ -1838,6 +1874,54 @@ fn append(app: &mut App, text: &str) {
         return;
     };
     crate::compile::append(app, id, text);
+    decorate_build(app, id);
+}
+
+/// Give the build buffer a title, its commands, and the failure words a
+/// face. The tool's raw output is otherwise left alone.
+fn decorate_build(app: &mut App, id: forge_core::BufferId) {
+    use forge_core::decoration::{DecoFace, DecoSpec, PackageFace};
+
+    let Some(b) = app.editor.state.get_buffer_mut(id) else {
+        return;
+    };
+    let mut decos = Vec::new();
+    for line in 0..b.line_count() {
+        let text = b.line(line);
+        if text.is_empty() {
+            continue;
+        }
+        let start = b.pos_to_offset(forge_core::Pos::new(line, 0));
+        let face = if line == 0 {
+            Some(PackageFace::Title)
+        } else if text.starts_with("$ ") {
+            Some(PackageFace::Primary)
+        } else if text.starts_with("Installed ") {
+            Some(PackageFace::Ok)
+        } else {
+            None
+        };
+        if let Some(face) = face {
+            decos.push(DecoSpec::new(
+                start,
+                start + text.chars().count(),
+                DecoFace::Package(face),
+            ));
+            continue;
+        }
+        for word in ["error", "failed", "couldn't"] {
+            if let Some(byte) = text.find(word) {
+                let at = start + text[..byte].chars().count();
+                decos.push(DecoSpec::new(
+                    at,
+                    at + word.chars().count(),
+                    DecoFace::Package(PackageFace::Error),
+                ));
+                break;
+            }
+        }
+    }
+    b.set_decorations("package-build", decos);
 }
 
 #[cfg(test)]

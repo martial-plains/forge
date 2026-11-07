@@ -207,6 +207,74 @@ fn package_compatibility_preflight_lists_and_refuses_unless_forced() {
 }
 
 #[test]
+fn package_screens_fit_eighty_and_two_hundred_columns() {
+    let _env = package_env();
+    let dir = std::env::temp_dir().join(format!("forge-pkg-wide-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let wasm = demo_plugin_file(&dir.join("repo"));
+    std::fs::write(
+        dir.join("repo/index.toml"),
+        forge_core::package::entry_for(&wasm, None).unwrap(),
+    )
+    .unwrap();
+    let mut app = app_with("");
+    app.plugin_cache = None;
+    app.packages.indexes = vec![dir.join("repo/index.toml").display().to_string()];
+    app.packages.plugin_dir = Some(dir.join("plugins"));
+
+    press(&mut app, "M-x package-install RET d TAB RET");
+    let init = dir.join("init.rhai");
+    std::fs::write(
+        &init,
+        r#"use_package("declared-demo", #{
+            git: "https://example.test/declared-demo.git",
+            commands: ["demo-command"]
+        });"#,
+    )
+    .unwrap();
+    app.init_path = Some(init);
+    app.load_init_file();
+
+    // The package browser lays out at the width of the last redisplay.
+    let _ = screen(&mut app, 80, 24);
+    press(&mut app, "M-x package-manager RET");
+    let narrow = screen(&mut app, 80, 24);
+    let _ = screen(&mut app, 200, 24);
+    press(&mut app, "M-x package-manager RET");
+    let wide = screen(&mut app, 200, 24);
+
+    for (label, shown, width) in [("80", narrow.as_str(), 80), ("200", wide.as_str(), 200)] {
+        assert!(shown.contains("Forge Packages"), "{label}:\n{shown}");
+        assert!(shown.contains("demo"), "{label}:\n{shown}");
+        assert!(shown.contains("declared-demo"), "{label}:\n{shown}");
+        assert!(shown.contains("loaded"), "{label}:\n{shown}");
+        assert!(shown.contains("not installed"), "{label}:\n{shown}");
+        assert!(
+            shown.contains("2 packages - 0 updates"),
+            "counts keep the separator readable at {label} columns:\n{shown}"
+        );
+        for line in shown.lines() {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(line.trim_end()) <= width,
+                "{label}-column line is wider than the screen: {line:?}"
+            );
+        }
+    }
+    assert!(
+        wide.contains("demo.wasm"),
+        "wide layout shows sources:\n{wide}"
+    );
+    assert!(
+        !narrow
+            .lines()
+            .any(|line| line.contains("Forge Packages") && line.contains("demo.wasm")),
+        "narrow layout keeps the source column quiet:\n{narrow}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn packages_install_list_and_delete() {
     let dir = std::env::temp_dir().join(format!("forge-pkg-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -563,15 +631,35 @@ fn packages_from_version_control() {
         text(&app)
     );
     assert!(
-        text(&app).contains("declared-demo >"),
+        text(&app)
+            .lines()
+            .any(|line| line.starts_with("| declared-demo") && line.contains("not installed")),
         "first plugin should be selected:\n{}",
         text(&app)
+    );
+    assert!(
+        app.buf_ref().decorations().iter().any(|d| {
+            d.face
+                == forge_core::decoration::DecoFace::Package(
+                    forge_core::decoration::PackageFace::Selected,
+                )
+        }),
+        "the selected row has its own face"
+    );
+    assert!(
+        app.buf_ref().decorations().iter().any(|d| {
+            d.face
+                == forge_core::decoration::DecoFace::Package(
+                    forge_core::decoration::PackageFace::Neutral,
+                )
+        }),
+        "status labels use the neutral badge"
     );
     press(&mut app, "j");
     assert!(
         text(&app)
             .lines()
-            .any(|line| line.starts_with("demo ") && line.contains(" >  loaded")),
+            .any(|line| line.starts_with("| demo") && line.contains("loaded")),
         "j should select the next plugin:\n{}",
         text(&app)
     );
