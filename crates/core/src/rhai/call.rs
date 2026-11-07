@@ -69,6 +69,30 @@ impl RhaiConfig {
         }
     }
 
+    /// Group candidates for `category` with the callback the script set
+    /// (`forge.completion.group`). Empty when none is registered.
+    pub fn group(
+        &self,
+        editor: &mut Editor,
+        category: &str,
+        candidates: &[String],
+    ) -> (Vec<String>, Outcome) {
+        let Some(callback) = self.shared.groups.borrow().get(category).cloned() else {
+            return (Vec::new(), Outcome::default());
+        };
+        let candidates: rhai::Array = candidates.iter().cloned().map(Dynamic::from).collect();
+        let (groups, out) = self.call(editor, || {
+            let d = callback.call_dynamic(self.engine(), (Dynamic::from(candidates.clone()),))?;
+            let list = d
+                .try_cast::<Vec<Dynamic>>()
+                .ok_or_else(|| err("the group callback must return an array of strings"))?;
+            list.iter()
+                .map(|v| as_string(v, "group name"))
+                .collect::<RhaiResult<Vec<_>>>()
+        });
+        (groups.unwrap_or_default(), out)
+    }
+
     /// Run a Rhai file (init.rhai).
     pub fn load_file(&self, editor: &mut Editor, path: &Path) -> Outcome {
         match std::fs::read_to_string(path) {
@@ -151,7 +175,22 @@ impl RhaiConfig {
 
     /// One line per use_package: loaded, deferred, or why it was skipped.
     pub fn use_package_report(&self) -> Vec<String> {
+        self.shared
+            .use_log
+            .borrow()
+            .iter()
+            .map(|report| report.message.clone())
+            .collect()
+    }
+
+    /// The structured form of `use_package_report()`.
+    pub fn use_reports(&self) -> Vec<crate::declare::UseReport> {
         self.shared.use_log.borrow().clone()
+    }
+
+    /// Is this configuration collecting declarations only?
+    pub fn is_collecting(&self) -> bool {
+        self.shared.collecting.get()
     }
 
     /// Run a command defined with `forge.command.create` or bound as a function.

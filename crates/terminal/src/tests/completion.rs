@@ -12,8 +12,8 @@ fn vertical_minibuffer_completion() {
     press(&mut app, "M-x");
     answer_typed(&mut app, "buf kill");
     let (rows, count) = crate::minibuffer::vertical_view(&mut app).unwrap();
-    assert_eq!(rows[0].0, "kill-buffer");
-    assert!(rows[0].2, "the first is selected");
+    assert_eq!(rows[0].text, "kill-buffer");
+    assert!(rows[0].selected, "the first is selected");
     assert!(count.starts_with("1/"), "{count}");
     // Moving and picking.
     app.minibuffer.as_mut().unwrap().input.clear();
@@ -746,6 +746,51 @@ fn completing_read_multiple_completes_and_validates_each_field() {
 }
 
 #[test]
+fn the_vertical_list_lets_a_multiple_prompt_finish_empty_or_after_a_few() {
+    let (mut app, dir) = app_with_init(
+        r#"
+        forge.command.create("pick-words", || {
+          forge.ui.select(["alpha", "beta", "gamma"],
+            #{ prompt: "Words: ", multiple: true },
+            |items| {
+              if items != () {
+                forge.buffer.current().insert("n=" + items.len().to_string() + ";");
+              }
+            });
+        });
+        "#,
+    );
+    app.editor.completion.vertical = Some((5, "list".into()));
+
+    // Nothing typed: RET answers with no fields, not with "alpha".
+    press(&mut app, "M-x pick-words RET");
+    press(&mut app, "RET");
+    assert!(app.minibuffer.is_none());
+    assert_eq!(text(&app), "n=0;");
+
+    // TAB takes the highlighted candidate and leaves a separator behind;
+    // a candidate already taken is no longer offered, so the next TAB
+    // takes the next one. RET on the empty field then answers.
+    press(&mut app, "M-x pick-words RET");
+    press(&mut app, "TAB");
+    assert_eq!(app.minibuffer.as_ref().unwrap().input, "alpha, ");
+    press(&mut app, "TAB");
+    assert_eq!(app.minibuffer.as_ref().unwrap().input, "alpha, beta, ");
+    press(&mut app, "RET");
+    assert!(app.minibuffer.is_none());
+    assert_eq!(text(&app), "n=0;n=2;");
+
+    // A field being typed is still completed by RET.
+    press(&mut app, "M-x pick-words RET");
+    answer_typed(&mut app, "alpha,ga");
+    press(&mut app, "RET");
+    assert!(app.minibuffer.is_none());
+    assert_eq!(text(&app), "n=0;n=2;n=2;");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_conditional_layer_takes_its_key_only_while_it_holds() {
     let mut app = app_with("one two\nthree\n");
     // A layer with no condition is never up, so binding into it by mistake
@@ -903,7 +948,7 @@ fn moving_a_completion_to_the_minibuffer_picks_and_inserts() {
     assert_eq!(mb.input, "alp", "the typed text carries into the prompt");
     // The list is up with no plugin listening, filtered by the input.
     let (rows, count) = crate::minibuffer::vertical_view(&mut app).unwrap();
-    let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    let names: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
     assert_eq!(names, ["alpha", "alpine", "alphabet"]);
     assert!(count.starts_with("1/3"), "{count}");
     // Pick the last (C-n twice) and RET: it replaces the word where it was.

@@ -10,6 +10,7 @@ pub mod buffer;
 mod buffer_ext;
 pub mod canvas;
 pub mod clipboard;
+pub mod collect;
 pub mod commands;
 pub mod completion;
 pub mod config;
@@ -35,6 +36,7 @@ pub mod grammar_install;
 pub mod help_faces;
 pub mod http;
 pub mod icons;
+pub mod init_review;
 pub mod keymap;
 pub mod kill_ring;
 pub mod kmacro;
@@ -60,8 +62,13 @@ pub mod org_table;
 pub mod org_time;
 pub mod org_work;
 pub mod package;
+pub mod package_doctor;
+pub mod package_journal;
+pub mod package_log;
+pub mod package_source;
 pub mod permissions;
 pub mod plugin;
+pub mod plugin_bisect;
 pub mod process;
 pub mod project;
 pub mod rect;
@@ -83,15 +90,22 @@ pub use app::{BufferId, Editor, EditorState};
 pub use buffer::{Buffer, Edit, Pos};
 pub use clipboard::{SaveInterprogramPasteBeforeKill, SelectionTarget};
 pub use commands::{CommandInfo, CommandRegistry, CommandSource};
-pub use declare::PluginUse;
+pub use declare::{
+    CollectedDeclaration, CollectedDeclarations, CollectionError, DeclarationState, DeferredCode,
+    PluginUse, SkipReason, SystemPackageNeed, UseOutcome, UseReport,
+};
 pub use keymap::{ActiveKeymaps, Keymap, Keymaps, Lookup, Origin, Scope};
 pub use kill_ring::KillRing;
 pub use kmacro::Kmacro;
 pub use links::{LinkSpan, LinkTarget};
-pub use lockfile::{LockEntry, LockFile};
+pub use lockfile::{LockCapabilities, LockEntry, LockFile, Snapshot, SnapshotChange};
 pub use messages::MessageLogMax;
 pub use modes::{ModeDef, ModeKind, ModeRegistry};
-pub use permissions::{GrantStore, Grants, Manifest, Setting, SettingKind};
+pub use package_journal::{Journal, JournalState, Recovery};
+pub use permissions::{
+    CapabilityChange, CapabilityDiff, GrantBinding, GrantStore, Grants, ImportMismatch, Manifest,
+    PermissionKind, Setting, SettingKind, format_grant_time, uncovered_imports,
+};
 pub use plugin::host::{Outcome, PluginFile, PluginHost, PluginRequest};
 pub use plugin::registry::PluginRegistry;
 pub use plugin::runtime::{Effect, LoadedPlugin, PluginMonitor, PluginRuntime, Question};

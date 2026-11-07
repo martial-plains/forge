@@ -43,6 +43,9 @@ pub enum DecoFace {
     Vc(VcFace),
     /// org-modern's labels and symbols (see [`ModernFace`]).
     Modern(ModernFace),
+    /// The package manager's titles, rows and status badges (see
+    /// [`PackageFace`]).
+    Package(PackageFace),
     /// A terminal cell's own colours and attributes (see [`TermFace`]).
     Term(TermFace),
 }
@@ -336,6 +339,117 @@ impl ModernFace {
     }
 }
 
+/// The package manager's faces: titles, table headings, selection,
+/// semantic status marks and quiet surfaces. Status labels stay in
+/// [`PackageFace::Neutral`]; the colored mark carries the meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PackageFace {
+    Title,
+    Heading,
+    /// A primary label such as a package name or command.
+    Primary,
+    /// The selected row's surface.
+    Selected,
+    /// The one-cell bar beside the selected row.
+    SelectedMarker,
+    /// A successful or up-to-date status mark.
+    Ok,
+    /// An update or review-needed status mark.
+    Warning,
+    /// A failed or incompatible status mark.
+    Error,
+    /// Work in progress: fetching, building, queued.
+    Info,
+    /// A status label or other quiet metadata.
+    Neutral,
+    /// A frozen, declined or queued row's surface.
+    Inactive,
+    /// A separator or rule.
+    Rule,
+    /// The filled title pill.
+    TitlePill,
+    /// The active tab's filled surface.
+    TabActive,
+    /// The one accent color: tab keys, progress fill and links.
+    Accent,
+    /// A warning badge with a quiet background.
+    BadgeWarning,
+    /// A frozen or inactive badge with a quiet background.
+    BadgeInactive,
+    /// An informational badge with a quiet background.
+    BadgeInfo,
+    /// An error badge with a quiet background.
+    BadgeError,
+    /// A full-width warning band.
+    BandWarning,
+    /// A full-width error band.
+    BandError,
+    /// A higher-risk label, never carried by color alone.
+    Risk,
+}
+
+impl PackageFace {
+    pub const ALL: [PackageFace; 22] = [
+        Self::Title,
+        Self::Heading,
+        Self::Primary,
+        Self::Selected,
+        Self::SelectedMarker,
+        Self::Ok,
+        Self::Warning,
+        Self::Error,
+        Self::Info,
+        Self::Neutral,
+        Self::Inactive,
+        Self::Rule,
+        Self::TitlePill,
+        Self::TabActive,
+        Self::Accent,
+        Self::BadgeWarning,
+        Self::BadgeInactive,
+        Self::BadgeInfo,
+        Self::BadgeError,
+        Self::BandWarning,
+        Self::BandError,
+        Self::Risk,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Title => "package-title",
+            Self::Heading => "package-heading",
+            Self::Primary => "package-primary",
+            Self::Selected => "package-selected",
+            Self::SelectedMarker => "package-selected-marker",
+            Self::Ok => "package-ok",
+            Self::Warning => "package-warning",
+            Self::Error => "package-error",
+            Self::Info => "package-info",
+            Self::Neutral => "package-neutral",
+            Self::Inactive => "package-inactive",
+            Self::Rule => "package-rule",
+            Self::TitlePill => "package-title-pill",
+            Self::TabActive => "package-tab-active",
+            Self::Accent => "package-accent",
+            Self::BadgeWarning => "package-badge-warning",
+            Self::BadgeInactive => "package-badge-inactive",
+            Self::BadgeInfo => "package-badge-info",
+            Self::BadgeError => "package-badge-error",
+            Self::BandWarning => "package-band-warning",
+            Self::BandError => "package-band-error",
+            Self::Risk => "package-risk",
+        }
+    }
+
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        Self::ALL.into_iter().map(Self::name)
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|f| f.name() == name)
+    }
+}
+
 /// What a display decoration shows in place of its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Display {
@@ -579,6 +693,7 @@ impl DecoFace {
             Self::Rainbow(f) => f.name(),
             Self::Vc(f) => f.name(),
             Self::Modern(f) => f.name(),
+            Self::Package(f) => f.name(),
             Self::Term(_) => "term",
         }
     }
@@ -600,6 +715,7 @@ impl DecoFace {
                 .or_else(|| RainbowFace::from_name(name).map(Self::Rainbow))
                 .or_else(|| VcFace::from_name(name).map(Self::Vc))
                 .or_else(|| ModernFace::from_name(name).map(Self::Modern))
+                .or_else(|| PackageFace::from_name(name).map(Self::Package))
             {
                 Some(f) => f,
                 None => {
@@ -1026,7 +1142,7 @@ mod tests {
         );
         assert!(DecoFace::from_name("rainbow-depth-0").is_err());
         assert!(DecoFace::from_name("rainbow-depth-10").is_err());
-        for n in RainbowFace::names() {
+        for n in RainbowFace::names().chain(PackageFace::names()) {
             assert_eq!(DecoFace::from_name(n).map(DecoFace::name), Ok(n));
         }
         assert_eq!(

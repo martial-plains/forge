@@ -16,8 +16,9 @@
 use crate::app::App;
 use crate::plugins;
 use forge_core::declare::order;
-use forge_core::{LockEntry, LockFile, Manifest, PluginUse};
-use std::path::Path;
+use forge_core::package::BuildRecipe;
+use forge_core::{LockCapabilities, LockEntry, LockFile, Manifest, PluginUse};
+use std::path::{Path, PathBuf};
 
 /// The plugin names init.rhai declared, in load order (`after` first).
 pub fn declared_order(app: &App) -> Vec<String> {
@@ -40,15 +41,19 @@ fn uses(app: &App) -> Vec<PluginUse> {
 }
 
 /// The lock file, next to init.rhai (in memory if there's no config dir).
-pub fn load_lock() -> LockFile {
-    forge_core::config::config_dir()
-        .map(|d| LockFile::load(&d))
-        .unwrap_or_else(LockFile::in_memory)
+pub fn load_lock() -> Result<LockFile, String> {
+    match forge_core::config::config_dir() {
+        Some(dir) => LockFile::load(&dir).map_err(|error| error.to_string()),
+        None => Ok(LockFile::in_memory()),
+    }
 }
 
 /// After init.rhai: load the declared plugins that are installed, and
 /// start installing the ones that aren't.
 pub fn resolve(app: &mut App) {
+    if let Err(error) = load_lock() {
+        return app.error(format!("Cannot read the package lock: {error}"));
+    }
     let uses = uses(app);
     if uses.is_empty() {
         return;
@@ -59,15 +64,9 @@ pub fn resolve(app: &mut App) {
         let Some(u) = by_name.get(name.as_str()) else {
             continue;
         };
-        let Some(dir) = forge_core::config::plugin_dir() else {
+        let Some(path) = component_path(u) else {
             break;
         };
-        let from_load_path = u.load_path.iter().find_map(|d| {
-            let d = forge_core::fileops::expand_file_name(d, None);
-            let p = std::path::PathBuf::from(d).join(format!("{name}.wasm"));
-            p.exists().then_some(p)
-        });
-        let path = from_load_path.unwrap_or_else(|| dir.join(format!("{name}.wasm")));
         if path.exists() {
             load_declared(app, u, &path);
             // Recorded one at a time: an install calls `record` itself, so
@@ -79,17 +78,53 @@ pub fn resolve(app: &mut App) {
     }
 }
 
+/// Where a declaration's component lives: a matching `load_path`, else
+/// `NAME.wasm` in the plugins directory.
+fn component_path(u: &PluginUse) -> Option<PathBuf> {
+    let from_load_path = u.load_path.iter().find_map(|dir| {
+        let dir = forge_core::fileops::expand_file_name(dir, None);
+        let path = PathBuf::from(dir).join(format!("{}.wasm", u.name));
+        path.exists().then_some(path)
+    });
+    let dir = forge_core::config::plugin_dir()?;
+    Some(from_load_path.unwrap_or_else(|| dir.join(format!("{}.wasm", u.name))))
+}
+
+/// Where a declared plugin's component lives, if `init.rhai` declares it.
+pub(crate) fn declared_component_path(app: &App, name: &str) -> Option<PathBuf> {
+    declared(app, name).and_then(|u| component_path(&u))
+}
+
 /// After installing a declared plugin, record it in the lock file so the
 /// next `init.rhai` + `forge-lock.toml` brings the same bytes.
-pub fn record(app: &App, name: &str, path: &Path) {
-    let Some(u) = uses(app).into_iter().find(|u| u.name == name) else {
-        return;
-    };
-    if let Some(entry) = lock_entry(&u, path) {
-        let mut lock = load_lock();
-        lock.set(name, entry);
-        let _ = lock.save();
+pub fn record(app: &mut App, name: &str, path: &Path) {
+    if let Err(error) = record_checked(app, name, path) {
+        app.error(format!("{name}: couldn't update lockfile: {error}"));
     }
+}
+
+pub fn record_checked(app: &App, name: &str, path: &Path) -> Result<(), String> {
+    let Some(u) = uses(app).into_iter().find(|u| u.name == name) else {
+        return Ok(());
+    };
+    let entry = lock_entry(app, &u, path)
+        .map_err(|error| format!("{name}: couldn't record lock entry: {error}"))?;
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("{name}: couldn't read component for lockfile: {error}"))?;
+    let mut lock = load_lock().map_err(|error| format!("{name}: {error}"))?;
+    lock.set(name, entry);
+    if let Some(dir) = lock.dir() {
+        LockFile::save_artifact(
+            dir,
+            lock.get(name)
+                .and_then(|e| e.artifact_sha256.as_deref())
+                .unwrap_or_default(),
+            &bytes,
+        )
+        .map_err(|error| format!("{name}: couldn't save the locked artifact: {error}"))?;
+    }
+    lock.save()
+        .map_err(|error| format!("{name}: couldn't update forge-lock.toml: {error}"))
 }
 
 /// Load one declared plugin: lazily when it named `on.commands` (and
@@ -111,13 +146,32 @@ fn load_declared(app: &mut App, u: &PluginUse, path: &Path) {
 
 /// The lock entry for an installed declaration: its source (from the
 /// installed record, or the declaration), and its manifest.
-pub fn lock_entry(u: &PluginUse, path: &Path) -> Option<LockEntry> {
-    let bytes = std::fs::read(path).ok()?;
+pub fn lock_entry(app: &App, u: &PluginUse, path: &Path) -> Result<LockEntry, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let artifact_sha256 = forge_core::package::sha256_hex(&bytes);
+    let previous = load_lock()
+        .map_err(|error| error.to_string())?
+        .get(&u.name)
+        .cloned();
+    let recipe = recipe_for(u, u.build.as_deref().unwrap_or(""))?;
     let mut e = LockEntry {
         git: u.git.clone(),
         rev: u.rev.clone(),
         url: u.url.clone(),
-        sha256: forge_core::package::sha256_hex(&bytes),
+        sha256: artifact_sha256.clone(),
+        artifact_sha256: Some(artifact_sha256),
+        spec_hash: Some(static_spec_hash(u)?),
+        tier: Some(
+            if u.git.is_some() {
+                "source"
+            } else {
+                "prebuilt"
+            }
+            .into(),
+        ),
+        recipe_hash: Some(recipe.hash()),
+        recipe: Some(recipe),
+        capabilities: LockCapabilities::default(),
         ..Default::default()
     };
     if let Some(dir) = forge_core::config::plugin_dir()
@@ -136,20 +190,103 @@ pub fn lock_entry(u: &PluginUse, path: &Path) -> Option<LockEntry> {
         }
         if !i.sha256.is_empty() {
             e.sha256 = i.sha256;
+            e.artifact_sha256 = Some(e.sha256.clone());
         }
+        if e.git.is_some() {
+            e.tier = Some("source".into());
+        }
+        e.build = i.build.clone();
+        if let Some(build) = i.build {
+            let recipe = recipe_for(u, &build)?;
+            e.recipe_hash = Some(recipe.hash());
+            e.recipe = Some(recipe);
+        }
+        e.version = Some(i.version);
     }
     if let Some(m) = Manifest::for_component(path, &bytes).ok().flatten() {
+        e.version = m.version.clone().or(e.version);
         e.commands = m.command_names();
         e.modes = m.modes;
         e.extensions = m.extensions;
         e.settings = m.settings;
-        e.permissions = m.permissions;
+        e.permissions = m.permissions.clone();
+        e.capabilities.permissions = m.permissions;
     }
-    Some(e)
+    e.capabilities.imports = if let Some(imports) = previous.as_ref().and_then(|old| {
+        (old.artifact_sha256
+            .as_deref()
+            .unwrap_or(old.sha256.as_str())
+            == e.sha256
+            && old.spec_hash.is_some())
+        .then(|| old.capabilities.imports.clone())
+    }) {
+        imports
+    } else if let Some(host) = app.plugin_host.as_ref() {
+        host.inspect_file(path)
+            .map_err(|e| format!("inspecting component imports: {e:#}"))?
+            .inspection
+            .imports
+    } else {
+        forge_core::PluginRuntime::new()
+            .map_err(|e| format!("starting component inspection: {e:#}"))?
+            .inspect(&u.name, &bytes)
+            .map_err(|e| format!("inspecting component imports: {e:#}"))?
+            .imports
+    };
+    Ok(e)
+}
+
+fn static_spec_hash(u: &PluginUse) -> Result<String, String> {
+    let static_spec = serde_json::json!({
+        "name": u.name,
+        "git": u.git,
+        "rev": u.rev,
+        "index": u.index,
+        "url": u.url,
+        "sha256": u.sha256,
+        "version": u.version,
+        "frozen": u.frozen,
+        "config": u.config,
+        "grants": u.grants,
+        "hooks": u.hooks,
+        "commands": u.on_commands,
+        "modes": u.on_modes,
+        "extensions": u.on_extensions,
+        "after": u.after,
+        "load_path": u.load_path,
+        "no_require": u.no_require,
+        "git_dir": u.git_dir,
+        "build": u.build,
+        "features": u.features,
+        "build_env": u.build_env,
+        "build_timeout_secs": u.build_timeout_secs,
+        "allow_history_rewrite": u.allow_rewrite,
+    });
+    serde_json::to_vec(&static_spec)
+        .map(|bytes| forge_core::package::sha256_hex(&bytes))
+        .map_err(|e| format!("serializing static declaration: {e}"))
+}
+
+fn recipe_for(u: &PluginUse, command: &str) -> Result<BuildRecipe, String> {
+    let root = forge_core::package::vc_dir(&u.name).map(|root| {
+        u.git_dir
+            .as_deref()
+            .map_or(root.clone(), |subdir| root.join(subdir))
+    });
+    let recipe = match root {
+        Some(root) => BuildRecipe::for_checkout(command, &u.features, &root),
+        None => BuildRecipe {
+            command: command.to_string(),
+            features: u.features.clone(),
+            target: forge_core::package::BUILD_TARGET.to_string(),
+            ..Default::default()
+        },
+    };
+    Ok(recipe)
 }
 
 /// Start installing a declared plugin that isn't installed yet.
-fn install(app: &mut App, u: &PluginUse) {
+pub(crate) fn install(app: &mut App, u: &PluginUse) {
     if let Some(git) = &u.git {
         app.msg(format!(
             "Installing declared plugin {} from {git}...",

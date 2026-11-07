@@ -11,6 +11,7 @@ sdks/lua/.cache/
 # Forge auto-save and backup files.
 \#*#
 *~
+forge-lock.local.toml
 
 # Build output anywhere (Rust crates, the GNOME frontend, plugins).
 target/

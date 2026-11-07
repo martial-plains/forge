@@ -826,6 +826,66 @@ impl QuickAction {
     }
 }
 
+/// How a plugin draws the minibuffer completion list. Since 0.1.31.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Layout {
+    /// One candidate per row, under the prompt.
+    #[default]
+    Vertical,
+    /// Every candidate on one line.
+    Flat,
+    /// Candidates in columns.
+    Grid,
+    /// Like vertical, last candidate first.
+    Reverse,
+    /// Only the selected candidate.
+    Unobtrusive,
+    /// The candidates in a *Completions* buffer.
+    Buffer,
+}
+
+impl Layout {
+    pub fn from_name(s: &str) -> Result<Self, String> {
+        Ok(match s {
+            "vertical" => Self::Vertical,
+            "flat" => Self::Flat,
+            "grid" => Self::Grid,
+            "reverse" => Self::Reverse,
+            "unobtrusive" => Self::Unobtrusive,
+            "buffer" => Self::Buffer,
+            _ => {
+                return Err(format!(
+                    "unknown layout {s:?}: use vertical, flat, grid, reverse, unobtrusive or buffer"
+                ));
+            }
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Vertical => "vertical",
+            Self::Flat => "flat",
+            Self::Grid => "grid",
+            Self::Reverse => "reverse",
+            Self::Unobtrusive => "unobtrusive",
+            Self::Buffer => "buffer",
+        }
+    }
+}
+
+/// A prompt a plugin suspended, as `completion.sessions` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptSession {
+    /// The completion category ("command", "file", ...).
+    pub category: String,
+    /// What the prompt asked.
+    pub prompt: String,
+    /// What was typed when it was suspended.
+    pub input: String,
+    /// How many candidates matched then.
+    pub total: u32,
+}
+
 /// The popup's tunable policy: what a completion plugin (corfu) chooses.
 /// Each field mirrors one of corfu's options; the frontend reads them as it
 /// draws and updates the popup.
@@ -946,6 +1006,16 @@ pub enum Control {
 pub struct Settings {
     /// Vertical minibuffer completion: how many lines (None: off).
     pub vertical: Option<(u32, String)>,
+    /// How the minibuffer list is drawn, and how many rows it takes.
+    /// Since 0.1.31.
+    pub layout: Option<(Layout, u32, String)>,
+    /// Category -> the plugin that groups its candidates.
+    /// Since 0.1.31.
+    pub groupers: BTreeMap<String, String>,
+    /// How a group heading is drawn; `%s` is the group name.
+    pub group_format: Option<(String, String)>,
+    /// Keys or names shown before the visible rows, one per row.
+    pub row_labels: Option<(Vec<String>, String)>,
     pub styles: Option<(Vec<Style>, String)>,
     /// Category -> the plugin that annotates it.
     pub annotators: BTreeMap<String, String>,
@@ -986,11 +1056,37 @@ pub struct Settings {
     /// Commands to run when the minibuffer list selection changes:
     /// (plugin, command) pairs.
     pub minibuffer_selection_commands: Vec<(String, String)>,
+    /// Commands to run when a prompt opens: (plugin, command) pairs.
+    /// Since 0.1.31.
+    pub minibuffer_open_commands: Vec<(String, String)>,
 }
 
 impl Settings {
     pub fn vertical_lines(&self) -> Option<u32> {
-        self.vertical.as_ref().map(|v| v.0)
+        self.layout
+            .as_ref()
+            .map(|l| l.1)
+            .or_else(|| self.vertical.as_ref().map(|v| v.0))
+    }
+
+    /// The minibuffer list's layout and row count. The old vertical flag
+    /// is a list that uses `Layout::Vertical`.
+    pub fn list_layout(&self) -> Option<(Layout, u32)> {
+        self.layout
+            .as_ref()
+            .map(|l| (l.0, l.1))
+            .or_else(|| self.vertical.as_ref().map(|v| (Layout::Vertical, v.0)))
+    }
+
+    /// How to draw a group heading; `%s` is replaced by the group name.
+    /// Empty means no heading rows.
+    pub fn group_format(&self) -> &str {
+        self.group_format.as_ref().map_or("%s", |g| g.0.as_str())
+    }
+
+    /// Labels for the visible candidate rows, in display order.
+    pub fn row_labels(&self) -> &[String] {
+        self.row_labels.as_ref().map_or(&[], |l| &l.0[..])
     }
 
     pub fn styles(&self) -> &[Style] {
@@ -1090,6 +1186,15 @@ impl Settings {
         if self.vertical.as_ref().is_some_and(|v| v.1 == plugin) {
             self.vertical = None;
         }
+        if self.layout.as_ref().is_some_and(|l| l.2 == plugin) {
+            self.layout = None;
+        }
+        if self.group_format.as_ref().is_some_and(|g| g.1 == plugin) {
+            self.group_format = None;
+        }
+        if self.row_labels.as_ref().is_some_and(|l| l.1 == plugin) {
+            self.row_labels = None;
+        }
         if self.styles.as_ref().is_some_and(|v| v.1 == plugin) {
             self.styles = None;
         }
@@ -1130,11 +1235,13 @@ impl Settings {
             self.auto_commands = None;
         }
         self.annotators.retain(|_, p| p != plugin);
+        self.groupers.retain(|_, p| p != plugin);
         self.sources.retain(|s| s.plugin != plugin);
         self.selection_commands.retain(|(p, _)| p != plugin);
         self.minibuffer_input_commands.retain(|(p, _)| p != plugin);
         self.minibuffer_selection_commands
             .retain(|(p, _)| p != plugin);
+        self.minibuffer_open_commands.retain(|(p, _)| p != plugin);
     }
 }
 

@@ -30,6 +30,7 @@ use crate::keymap::{Condition, Lookup, Origin, Scope, parse_keys};
 use crate::permissions::{Grants, expand_home};
 use crate::process::{ProcessEvent, ProcessId, Processes, Program};
 use anyhow::{Context, Result, anyhow, bail};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -167,6 +168,17 @@ pub enum Effect {
     /// it is defined (corfu-info-location). Carried out after the call
     /// returns, so a source can be asked without re-entering the host.
     Locate,
+    /// minibuffer.set-input: replace the open prompt's text.
+    SetPromptInput(String),
+    /// minibuffer.suspend: set the open prompt aside.
+    SuspendPrompt,
+    /// completion.resume: bring a suspended prompt back.
+    ResumeSession(u32),
+    /// completion.jump-to-row: highlight (and maybe accept) a visible row.
+    JumpToRow {
+        row: u32,
+        accept: bool,
+    },
 }
 
 pub(crate) const EVENT_KINDS: usize = 5;
@@ -756,6 +768,79 @@ impl forge::editor::completion::Host for PluginState {
         self.foreground_only("completion.set-minibuffer-ui")?;
         let name = self.name.clone();
         self.editor()?.completion.vertical = vertical.then(|| (lines.clamp(1, 50), name));
+        Ok(())
+    }
+
+    fn set_layout(
+        &mut self,
+        layout: forge::editor::completion::Layout,
+        lines: u32,
+    ) -> HostResult<()> {
+        self.foreground_only("completion.set-layout")?;
+        let layout = match layout {
+            forge::editor::completion::Layout::Vertical => crate::completion::Layout::Vertical,
+            forge::editor::completion::Layout::Flat => crate::completion::Layout::Flat,
+            forge::editor::completion::Layout::Grid => crate::completion::Layout::Grid,
+            forge::editor::completion::Layout::Reverse => crate::completion::Layout::Reverse,
+            forge::editor::completion::Layout::Unobtrusive => {
+                crate::completion::Layout::Unobtrusive
+            }
+            forge::editor::completion::Layout::Buffer => crate::completion::Layout::Buffer,
+        };
+        let name = self.name.clone();
+        self.editor()?.completion.layout = Some((layout, lines.clamp(1, 50), name));
+        Ok(())
+    }
+
+    fn group(&mut self, category: String) -> HostResult<()> {
+        self.foreground_only("completion.group")?;
+        let name = self.name.clone();
+        self.editor()?.completion.groupers.insert(category, name);
+        Ok(())
+    }
+
+    fn set_group_format(&mut self, format: String) -> HostResult<()> {
+        self.foreground_only("completion.set-group-format")?;
+        let name = self.name.clone();
+        self.editor()?.completion.group_format = Some((format, name));
+        Ok(())
+    }
+
+    fn set_row_labels(&mut self, labels: Vec<String>) -> HostResult<()> {
+        self.foreground_only("completion.set-row-labels")?;
+        let name = self.name.clone();
+        let labels = if labels.is_empty() {
+            None
+        } else {
+            Some((labels, name))
+        };
+        self.editor()?.completion.row_labels = labels;
+        Ok(())
+    }
+
+    fn jump_to_row(&mut self, row: u32, accept: bool) -> HostResult<()> {
+        self.foreground_only("completion.jump-to-row")?;
+        self.effects.push(Effect::JumpToRow { row, accept });
+        Ok(())
+    }
+
+    fn sessions(&mut self) -> HostResult<Vec<forge::editor::completion::PromptSession>> {
+        Ok(self
+            .editor()?
+            .completion_sessions
+            .iter()
+            .map(|s| forge::editor::completion::PromptSession {
+                category: s.category.clone(),
+                prompt: s.prompt.clone(),
+                input: s.input.clone(),
+                total: s.total,
+            })
+            .collect())
+    }
+
+    fn resume(&mut self, index: u32) -> HostResult<()> {
+        self.foreground_only("completion.resume")?;
+        self.effects.push(Effect::ResumeSession(index));
         Ok(())
     }
 
@@ -2711,6 +2796,45 @@ impl forge::editor::minibuffer::Host for PluginState {
         Ok(self.editor()?.prompt_input.clone())
     }
 
+    fn set_input(&mut self, text: String) -> HostResult<()> {
+        self.foreground_only("minibuffer.set-input")?;
+        let open = {
+            let ed = self.editor()?;
+            if ed.prompt_open {
+                ed.prompt_input = text.clone();
+                true
+            } else {
+                false
+            }
+        };
+        if open {
+            self.effects.push(Effect::SetPromptInput(text));
+        }
+        Ok(())
+    }
+
+    fn on_open(&mut self, command: String) -> HostResult<()> {
+        self.foreground_only("minibuffer.on-open")?;
+        let name = self.name.clone();
+        let ed = self.editor()?;
+        if !ed.commands.contains(&command) {
+            return Err(wasmtime::Error::msg(format!("no command named {command}")));
+        }
+        ed.completion
+            .minibuffer_open_commands
+            .retain(|(plugin, _)| plugin != &name);
+        ed.completion.minibuffer_open_commands.push((name, command));
+        Ok(())
+    }
+
+    fn suspend(&mut self) -> HostResult<()> {
+        self.foreground_only("minibuffer.suspend")?;
+        if self.editor()?.prompt_open {
+            self.effects.push(Effect::SuspendPrompt);
+        }
+        Ok(())
+    }
+
     fn on_input_changed(&mut self, command: String) -> HostResult<()> {
         self.foreground_only("minibuffer.on-input-changed")?;
         let name = self.name.clone();
@@ -3617,12 +3741,36 @@ fn start_ticker(engine: EngineWeak) {
         .expect("spawn the plugin ticker");
 }
 
+/// Interfaces whose functions the component's core modules import. This
+/// filters out interfaces that only appear in the component's type, such
+/// as the unreferenced process/http imports a Rust SDK component declares.
+fn used_imports(bytes: &[u8]) -> Vec<String> {
+    let mut imports = BTreeSet::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        let Ok(wasmparser::Payload::ImportSection(section)) = payload else {
+            continue;
+        };
+        for import in section.into_imports() {
+            let Ok(import) = import else {
+                continue;
+            };
+            let module = import.module;
+            if module.starts_with("forge:") || module.starts_with("wasi:") {
+                imports.insert(module.to_string());
+            }
+        }
+    }
+    imports.into_iter().collect()
+}
+
 pub struct PluginRuntime {
     engine: Engine,
     linker: Linker<PluginState>,
     executor: Arc<tokio::runtime::Runtime>,
     monitor: PluginMonitor,
     call_time_limit: Duration,
+    /// Kept so profiling can tell a cache hit from a compile.
+    cache: Option<wasmtime::Cache>,
 }
 
 /// A compiled component, looked at before anything in it runs.
@@ -3631,6 +3779,10 @@ pub struct Inspection {
     component: Component,
     /// Everything the component imports ("wasi:cli/stderr@0.2.3", ...).
     pub imports: Vec<String>,
+    /// The imports its core module actually references. A component type
+    /// can mention an interface without using it; this is what the
+    /// permission-mismatch check looks at.
+    pub used_imports: Vec<String>,
     /// Imports Forge doesn't provide: calling them traps.
     pub unsupported: Vec<String>,
     pub wasi: WasiVersion,
@@ -3650,6 +3802,9 @@ struct HttpHandler {
 /// A plugin's completion-handler export (world plugin-with-completion).
 struct CompletionHandler {
     annotate: TypedFunc<(String, Vec<String>), (Vec<String>,)>,
+    /// Group names (since 0.1.31). Optional: a plugin built against an
+    /// older interface doesn't export it.
+    group: Option<TypedFunc<(String, Vec<String>), (Vec<String>,)>>,
     complete: TypedFunc<(u32, String, u32, Position), ()>,
     /// The exit callback (since 0.1.16). Optional: a plugin built against
     /// an older interface doesn't export it.
@@ -3920,6 +4075,26 @@ impl LoadedPlugin {
         (self.end(r), out)
     }
 
+    /// Ask for group names (one per candidate; missing ones are "").
+    pub(crate) fn call_group(
+        &mut self,
+        category: &str,
+        candidates: &[String],
+    ) -> (CallResult, Vec<String>) {
+        let Some(f) = self.completion_handler.as_ref().and_then(|h| h.group) else {
+            return (Ok(Ok(())), Vec::new());
+        };
+        self.begin();
+        let exec = self.executor.clone();
+        let r = exec
+            .block_on(f.call_async(&mut self.store, (category.to_string(), candidates.to_vec())));
+        let (r, out) = match r {
+            Ok((v,)) => (Ok(Ok(())), v),
+            Err(e) => (Err(e), Vec::new()),
+        };
+        (self.end(r), out)
+    }
+
     pub(crate) fn call_complete(
         &mut self,
         request: u32,
@@ -4095,11 +4270,13 @@ impl PluginRuntime {
     /// set up is skipped: it's only a speed-up.
     pub fn with_cache(dir: Option<&std::path::Path>) -> Result<Self> {
         let mut config = Config::new();
+        let mut cache = None;
         if let Some(dir) = dir {
             let mut cc = wasmtime::CacheConfig::new();
             cc.with_directory(dir);
-            if let Ok(cache) = wasmtime::Cache::new(cc) {
-                config.cache(Some(cache));
+            if let Ok(c) = wasmtime::Cache::new(cc) {
+                config.cache(Some(c.clone()));
+                cache = Some(c);
             }
         }
         config.wasm_component_model(true);
@@ -4135,6 +4312,7 @@ impl PluginRuntime {
             executor: Arc::new(executor),
             monitor,
             call_time_limit: CALL_TIME_LIMIT,
+            cache,
         })
     }
 
@@ -4145,6 +4323,13 @@ impl PluginRuntime {
     /// Change the per-call time limit (tests use a short one).
     pub fn set_call_time_limit(&mut self, limit: Duration) {
         self.call_time_limit = limit;
+    }
+
+    /// Cache hits and misses so far, if compiled plugins are cached.
+    pub fn cache_counts(&self) -> Option<(usize, usize)> {
+        self.cache
+            .as_ref()
+            .map(|cache| (cache.cache_hits(), cache.cache_misses()))
     }
 
     /// Compile a component and look at what it imports. Nothing runs.
@@ -4172,6 +4357,7 @@ impl PluginRuntime {
         } else {
             WasiVersion::None
         };
+        let used_imports = used_imports(bytes);
         let unsupported = imports
             .iter()
             .filter(|i| !is_supported_import(i))
@@ -4181,9 +4367,65 @@ impl PluginRuntime {
             name: name.to_string(),
             component,
             imports,
+            used_imports,
             unsupported,
             wasi,
         })
+    }
+
+    /// What this Forge is missing for an inspected component's
+    /// `forge:editor` imports, if anything. This only type-checks the
+    /// component against the linker; no plugin code runs.
+    pub fn missing_forge_functions(&self, inspection: &Inspection) -> Vec<String> {
+        let Err(error) = self.pre_instantiate(
+            &inspection.component,
+            &inspection.imports,
+            &inspection.unsupported,
+        ) else {
+            return Vec::new();
+        };
+        let text = format!("{error:#}");
+        if !text.contains("forge:editor") {
+            return Vec::new();
+        }
+        missing_function_names(&text)
+    }
+
+    /// A user-facing compatibility problem, or `None` when the component
+    /// can link against this Forge.
+    pub fn compatibility_problem(&self, inspection: &Inspection) -> Option<String> {
+        let missing = self.missing_forge_functions(inspection);
+        if missing.is_empty() {
+            return None;
+        }
+        let names = missing
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some(format!("needs a newer Forge (missing {names})"))
+    }
+
+    fn pre_instantiate(
+        &self,
+        component: &Component,
+        imports: &[String],
+        unsupported: &[String],
+    ) -> Result<wasmtime::component::InstancePre<PluginState>> {
+        match self.linker.instantiate_pre(component) {
+            Ok(pre) => Ok(pre),
+            Err(e) => {
+                let text = format!("{e:#}");
+                if unsupported.is_empty() || text.contains("forge:editor") {
+                    return Err(explain_link_error(e.into(), imports));
+                }
+                let mut linker = self.linker.clone();
+                linker.define_unknown_imports_as_traps(component)?;
+                linker
+                    .instantiate_pre(component)
+                    .map_err(|e| explain_link_error(e.into(), imports))
+            }
+        }
     }
 
     /// Instantiate an inspected component with the given grants. This runs
@@ -4196,25 +4438,13 @@ impl PluginRuntime {
             imports,
             unsupported,
             wasi,
+            ..
         } = inspection;
         // Everything the plugin can use must link. Imports Forge doesn't
         // provide at all (wasi:http, ...) become traps, except that a
         // missing forge:editor function is an error now (see the
         // compatibility rules in docs/plugin-api.md).
-        let pre = match self.linker.instantiate_pre(&component) {
-            Ok(pre) => pre,
-            Err(e) => {
-                let text = format!("{e:#}");
-                if unsupported.is_empty() || text.contains("forge:editor") {
-                    return Err(explain_link_error(e.into(), &imports));
-                }
-                let mut linker = self.linker.clone();
-                linker.define_unknown_imports_as_traps(&component)?;
-                linker
-                    .instantiate_pre(&component)
-                    .map_err(|e| explain_link_error(e.into(), &imports))?
-            }
-        };
+        let pre = self.pre_instantiate(&component, &imports, &unsupported)?;
         let pre = PluginPre::new(pre)?;
 
         let stdout = MemoryOutputPipe::new(OUTPUT_LIMIT);
@@ -4346,6 +4576,9 @@ fn process_handler(
     }))
 }
 
+/// The newest 0.1.x version of the plugin API this build knows.
+pub const WIT_VERSION: u32 = 31;
+
 /// The export `iface` at the newest 0.1.x from `since` on, if any.
 fn find_export(
     store: &mut Store<PluginState>,
@@ -4353,7 +4586,7 @@ fn find_export(
     iface: &str,
     since: u32,
 ) -> Option<String> {
-    (since..30)
+    (since..=WIT_VERSION)
         .rev()
         .map(|v| format!("forge:editor/{iface}@0.1.{v}"))
         .find(|n| instance.get_export(&mut *store, None, n).is_some())
@@ -4402,8 +4635,11 @@ fn completion_handler(
     };
     let annotate = func(store, "annotate")?;
     let complete = func(store, "complete")?;
-    // The exit and location callbacks are optional, so a plugin from
-    // before 0.1.16 / 0.1.17 loads.
+    // Grouping is optional (0.1.31), like the exit and location callbacks
+    // from 0.1.16 / 0.1.17.
+    let group = func(store, "group")
+        .ok()
+        .and_then(|f| instance.get_typed_func(&mut *store, f).ok());
     let commit = func(store, "commit")
         .ok()
         .and_then(|f| instance.get_typed_func(&mut *store, f).ok());
@@ -4419,6 +4655,7 @@ fn completion_handler(
             .get_typed_func(&mut *store, complete)
             .map_err(anyhow::Error::from)
             .with_context(|| format!("{name}.complete"))?,
+        group,
         commit,
         resolve_location,
     }))
@@ -4428,6 +4665,30 @@ fn completion_handler(
 /// different "layer" there.
 fn is_core_module(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[0..4] == b"\0asm" && bytes[4..8] == [1, 0, 0, 0]
+}
+
+/// The function names Wasmtime says are missing from an imported instance.
+/// Its wording is "instance export `NAME` has the wrong type: function
+/// implementation is missing", which is also what loading the plugin says.
+fn missing_function_names(text: &str) -> Vec<String> {
+    if !text.contains("function implementation is missing") {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut rest = text;
+    const PREFIX: &str = "instance export `";
+    while let Some(i) = rest.find(PREFIX) {
+        rest = &rest[i + PREFIX.len()..];
+        let Some(j) = rest.find('`') else {
+            break;
+        };
+        let name = &rest[..j];
+        if !name.is_empty() && !out.iter().any(|n| n == name) {
+            out.push(name.to_string());
+        }
+        rest = &rest[j + 1..];
+    }
+    out
 }
 
 /// Point at the import that couldn't be satisfied.
@@ -4869,6 +5130,20 @@ mod tests {
                 .expect("should fail")
         );
         assert!(err.contains("flush"), "{err}");
+
+        // A fixture with the same import: preflight names the missing
+        // function without running any of the component's code.
+        let bytes = component_against(
+            &newer,
+            world,
+            include_str!("../../../../tests/fixtures/incompatible-plugin.wat"),
+        );
+        let inspection = rt.inspect("incompatible", &bytes).unwrap();
+        assert_eq!(rt.missing_forge_functions(&inspection), ["flush"]);
+        assert_eq!(
+            rt.compatibility_problem(&inspection).as_deref(),
+            Some("needs a newer Forge (missing `flush`)")
+        );
     }
 
     #[test]

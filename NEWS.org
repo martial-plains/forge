@@ -1,4 +1,211 @@
 #+title: Forge NEWS
+* 0.1.0
+** Tabbed package manager
+=M-x package-manager= now opens a tabbed dashboard: Home, Install, Update,
+Check, Log, Restore, Profile, Doctor and Help. Home lists each package once
+under Updates, Problems, Loaded and Not loaded, with problems first. =RET=
+or =TAB= expands a row, =i= installs, =U= starts updates and switches to the
+Update view, and clicking a tab only switches views. The Update view shows
+queued, running, finished, skipped and failed packages with elapsed time
+and a progress bar. New faces =package-title-pill=, =package-tab-active=,
+=package-accent=, =package-badge-warning= and =package-badge-inactive= make
+the dashboard restylable without changing status semantics.
+** Plugin reviews share the package visual language
+Plugin permission prompts, import-mismatch reports, upgrade capability
+reviews, the plugin list and =describe-plugin= now use the same title,
+rule, section, badge and band system as the package manager. Permission
+imports fold after four entries with RET or TAB; =y=, =n=, =C-g= and
+=revoke-plugin-permissions= behave as before. The list separates Loaded,
+Not started and Needs attention, shows grant sources, and supports RET/TAB
+expand, =j=/=k= selection, =r= revoke and =d= describe. Upgrade reviews
+mark additions, removals and unchanged capabilities, flag risk in words,
+and keep unattended upgrades stopped until confirmed. New faces
+=package-badge-info=, =package-badge-error=, =package-band-warning=,
+=package-band-error= and =package-risk= complete the palette; the default
+16-colour badge pairs measure 19.56:1 (yellow), 16.75:1 (cyan), 5.25:1
+(red) and 5.32:1 (dark gray).
+** Package screens use restrained status badges
+The package manager, package list, doctor, operation log, upgrade plan,
+snapshot diff and build header now share a quiet table style. Titles and
+rows use the theme's text colors; status is a labelled badge with a
+semantic mark, not color alone. The package faces are restylable through
+=forge.theme.set=, including =package-title=, =package-selected=,
+=package-ok=, =package-warning=, =package-error=, =package-info= and
+=package-neutral=.
+** Headless package commands collect declarations
+=forge package declarations [--json]= evaluates =init.rhai= and theme
+files without running closures, prompting, installing system packages,
+loading plugins or writing files. Conditional declarations and deferred
+=preface=, =init=, =config= and =when= code are reported for later steps.
+The old headless package options are now =forge package doctor=,
+=forge package snapshot diff BEFORE AFTER= and
+=forge package lockfile diff BEFORE AFTER=; the old flag spellings are
+not accepted.
+** Headless package sync
+=forge package sync [--json]= installs exactly what =init.rhai= declares,
+using the commits and artifact hashes in =forge-lock.toml=. On a fresh
+machine, only =init.rhai= and =forge-lock.toml= are needed: locked
+artifacts missing from the local cache are fetched from the locked URL or
+Git commit, and the result must match the locked sha256. It never prompts.
+Builds, new capabilities and plugin permissions need =--allow-build=,
+=--allow-capabilities= or =--allow-grants= (or the matching
+=forge.opt["package_allow_build"]=, =package_allow_capabilities= and
+=package_allow_grants=); otherwise sync stops with exit status 3. Success is
+0, other failures are 1, and bad usage is 2.
+** Package checks run in CI
+=docs/command-line.md= has a GitHub Actions example that builds Forge,
+stages the offline fixture in =tests/fixtures/ci-packages=, runs
+=forge package doctor --json= and =forge --profile-startup --json=, and
+fails when the startup budget is exceeded. The repository CI runs the same
+job, with every action pinned to a commit SHA.
+** Package sources can be allowlisted
+Set =forge.opt["package_allowed_sources"]= to restrict package indexes,
+downloads and Git repositories to exact hosts, =*.example.org= suffixes,
+exact URLs or paths, and directory prefixes. Unset leaves sources
+unrestricted; an empty list denies all. Allowing an index does not
+authorize the packages it lists. Denied sources are refused before any
+read or network request.
+** Optional GitHub repository checks
+Set =forge.opt["package_repository_checks"] = true= to ask GitHub whether
+a Git package's repository is archived or now belongs to another owner or
+name. The checks run in the background and only add warnings; failures and
+warnings never block an install or upgrade. They are off by default.
+** Package indexes can be signed
+A package index can now have a detached Minisign signature,
+=index.toml.minisig=, beside it. Set =forge.opt["package_index_keys"]= to
+the trusted public keys; Forge verifies the exact downloaded bytes before
+parsing the TOML. A signature from any listed key is accepted, so keys can
+be rotated without a gap. Set =forge.opt["package_index_strict"] = true= to
+also refuse unsigned indexes; without strict mode they still load when no
+signature is present. Tampered indexes and signatures are always refused.
+** Forge exits when its terminal goes away
+Closing the terminal no longer leaves Forge spinning at 100% CPU. The input
+loop now notices a hung-up tty, auto-saves, and exits.
+** Git upgrades warn about rewritten history and moved tags
+Dry runs and upgrade reviews now warn when a Git package's new commit is
+not a descendant of the locked commit (a force-push or rewritten upstream
+history), and when a pinned tag now points somewhere else. Dry runs check
+ancestry in a scratch repository, so they never fetch into or change the
+real checkout. Warnings do not block interactive upgrades. Unattended
+upgrades (=--batch= and =--headless=) stop before installing a rewritten
+history; set =allow_history_rewrite: true= in the declaration to opt in.
+Moved-tag warnings remain informational.
+** Package builds get a scrubbed environment and a time limit
+Source builds no longer inherit the whole process environment. Only
+=PATH=, =HOME=, =USER=, =LOGNAME=, =LANG=, =LC_*=, temporary-directory
+variables, Rust toolchain variables, Windows system variables and
+proxy/certificate variables are passed by default; tokens and
+=SSH_AUTH_SOCK= are dropped. Add names or =PREFIX_*= patterns with
+=build_env= and set =build_timeout_secs= in a declaration. Builds now
+time out after 30 minutes (killed and reported as timed out), and
+=*Package Build*= lists the variable names that were passed through,
+never their values. JavaScript plugins now build with
+=npm ci --ignore-scripts= and must commit a lockfile; =npx --no-install=
+will not download an unlisted =forge-plugin=. Because lifecycle scripts
+are disabled, a dependency that needs =postinstall= (native modules) will
+not build; a reviewed =build = "..."= in the declaration still overrides
+the plan.
+** Sharing safety and init review
+The manual now documents the configuration-sharing policy and ships a
+=.gitignore= snippet for a config repository: share =init.rhai= and
+=forge-lock.toml=, but keep =plugin-grants.toml=, =session.toml=, the
+=plugins/= directory and authinfo/netrc credentials out. =M-x package-doctor=
+warns when those paths are inside a Git work tree and are not ignored, and
+prints the exact rules to add. Set =forge.opt["init_review"] = true= to
+review an =init.rhai= that changed outside Forge; if it adds a grant,
+process, network request or writable directory, Forge shows the diff before
+evaluating it, and declining starts with the same behavior as =-q=.
+** Interactive plugin approvals are machine-local and binary-bound
+Plugin grants now live in =~/.local/state/forge/plugin-grants.toml=, following
+the platform state-directory convention, instead of beside =init.rhai=. An
+older config-directory =plugin-grants.toml= is migrated once, atomically and
+idempotently, without dropping or widening any decision; it is then ignored so
+a revoked grant cannot come back from a stale copy. Each interactive approval
+records the component's source and SHA-256. If the same plugin name later
+loads different bytes, the old approval is forgotten and Forge asks again
+with "same name, different binary." =forge.plugin.grant= in =init.rhai= stays
+an explicit pre-grant and applies regardless of the binary. Existing grant
+files still load, and unknown root or binding fields survive a rewrite.
+** Package operation log
+=M-x package-log= shows structured fetch, build, install, upgrade and
+rollback records with timings, source/revision details, commands and errors.
+=M-x package-log-export= writes the same records as JSON lines. Records use
+the additive versioned =forge.package.operation= schema, live in the state
+directory, rotate at 1 MiB, and survive a killed append. URL credentials,
+sensitive query values, authentication headers and tokens are redacted;
+environment values are never recorded.
+** Plugin startup profiling
+=M-x plugin-profile= shows how long each plugin spent looking in the cache,
+compiling on a cache miss, running =init=, starting lazily, and in every
+command, event, answer, completion and process/HTTP call (count, total and
+longest). =forge --profile-startup= prints the same report without a terminal
+and accepts =--json=. Set =forge.opt["startup_budget_ms"]= in =init.rhai= to
+warn in =*Messages*= when plugin startup is too slow; batch and headless runs
+exit nonzero, and =--profile-startup= does too when the report is over budget.
+Profiling is off by default, where each hot path only checks one atomic flag.
+** Plugins can replace the text in an open prompt
+The plugin API's =minibuffer.set-input= (0.1.31) replaces what is typed in
+the prompt that is open, leaving the cursor at the end. Rhai gets the same
+call as =forge.minibuffer.set_input=.
+** Plugins can group, label and lay out prompt lists
+=completion.set-layout= (0.1.31) draws the minibuffer list top-down, flat,
+in a grid, reversed, as just the selection, or in the *Completions*
+buffer. =completion.group= with =set-group-format= adds headings,
+=set-row-labels= and =jump-to-row= add vertico-quick style labels and
+picks, and the same calls are =forge.completion.*= in Rhai. Older plugins
+keep the vertical list they had.
+** Plugins can suspend and resume prompts
+=minibuffer.suspend= hides the open prompt without answering it,
+=completion.sessions= lists the prompts a plugin put aside and
+=completion.resume= brings one back (0.1.31). Rhai gets the same calls as
+=forge.minibuffer.suspend= and =forge.completion.sessions= /
+=forge.completion.resume=.
+** Plugins run a command when a prompt opens
+=minibuffer.on-open= (0.1.31) runs one of the plugin's commands after a
+prompt opens, so it can read or replace the input and look at the
+selection. Rhai gets =forge.minibuffer.on_open=.
+** Plugins can copy text to the kill ring
+=kill-ring.push= (0.1.29) puts text on the kill ring and the clipboard as
+=M-w= does; Rhai's =forge.kill= is the same call. A list plugin can copy
+the candidate under the cursor without simulating a region.
+** Package upgrades ask about new capabilities
+Before an upgrade is applied, Forge compares the capabilities recorded in
+=forge-lock.toml= with the new manifest. New network, HTTP, environment,
+directory, process or memory access is listed in =*Package Upgrade Review*=
+and needs explicit confirmation; capabilities the plugin no longer asks for
+are listed for information. Unattended upgrades (=--batch= and =--headless=)
+stop with an error instead of applying such an upgrade, leaving the installed
+component and lock entry unchanged.
+** Safer package upgrades
+Package upgrades can be previewed with =package-upgrade-all-dry-run= or
+=C-u= on upgrade commands, and one installed package can be upgraded with
+=package-upgrade=. Index declarations support semver requirements and
+=freeze: true=; pins are held from automatic updates. Forge shows index
+release notes or Git commit subjects before applying an update, smoke-tests
+the candidate plugin in an isolated editor, and restores the previous
+artifact, installed record and lock entry if building, smoke testing or lock
+recording fails. Updates keep a durable journal: an interrupted update is
+rolled back on the next start, and =package-upgrade-all= rolls back every
+package in the run when one fails. Dry runs now inspect the remote Git
+revision's own build metadata instead of reusing the installed command.
+A no-op doctor-check seam is in place for the later package diagnostics work.
+** Package locks can be snapshotted and restored
+Lock entries now record the declaration and build-recipe hashes, artifact hash,
+source tier and component capabilities, while preserving unknown fields and
+loading existing lockfiles. Machine-local lock overrides stay out of the
+shared lockfile. A malformed lock file is now an error naming the file and
+parse problem instead of loading as an empty lock, and Forge does not rewrite
+it. Save, list, diff and restore named package snapshots, restore locked
+artifacts from the local content store, and compare snapshots or arbitrary
+lockfiles from the command line with optional JSON output. Snapshot saves
+include plugins loaded from a custom =load_path=. Restoring the lock or a
+snapshot now removes package-managed plugins that it does not list, so the
+installed set matches it. Repeated restores after interruption converge to the
+same files and lockfile.
+** Package-manager extension audit
+Added the Phase 0 source audit and the phased package-manager extension
+specification. The audit records current implementation and differences from
+the proposed roadmap.
 ** Forge is MIT OR Apache-2.0
 Added =LICENSE-MIT=, =LICENSE-APACHE=, =NOTICE=, =THIRD_PARTY_NOTICES.md= and
 =LICENSING.md=; source files carry SPDX headers. The third-party-derived data is
@@ -20,12 +227,6 @@ went to the shell, and a key sequence longer than two keys (C-x 4 b, C-x r b,
 M-g g, C-u 3 ...) lost its last keys to the program. A sequence Forge has
 started is now always finished by Forge. M-x, M-:, M-! and M-& stay Forge's;
 other Meta keys (M-f, M-b, M-d, M-.) still go to the shell.
-** consult-line previews live
-=consult-line= and =consult-line-multi= used to ask for a pattern first and
-only then show a list, so nothing was previewed while you typed. They are one
-prompt now, as in consult: every line is a candidate, typing narrows the list
-with your completion style, and point follows the selection (C-g puts it back).
-Rebuild the consult plugin to get it.
 ** .gpg files are decrypted and encrypted for you
 Visiting =notes.org.gpg= decrypts it into the buffer (the mode comes from
 =notes.org=); saving encrypts it again, to the recipients the file already had
@@ -33,8 +234,6 @@ or with a passphrase if it had none, using =gpg= and its agent. A new =.gpg=
 file uses a passphrase unless =forge.opt["epa_file_encrypt_to"]= names key ids
 or addresses. A buffer visiting one is never auto-saved, so no plaintext
 reaches the disk, and a failed encryption leaves the file as it was.
-** The macOS menu bar no longer flickers to a View-only bar
-An empty answer from the editor (a timeout) no longer replaces the menus.
 ** use_package has use-package keywords
 =disabled=, =when= / ="if"= / =unless=, =requires=, =preface=, =init=, =config=
 (settings or a function), =custom=, ="catch"=, =bind=, =bind_mode=, =mode=,
@@ -58,22 +257,6 @@ wait; =C-x #= finishes a file you waited for), evaluates code (=-e=, =-u=), and
 takes =-s NAME=, =-f FILE=, =-a EDITOR= (empty: start a daemon), =-q=. Forge
 has one frame per process, so there is no =-c= or =-t=: files open in the
 running editor.
-** Canvases drawn by the frontend; widgets
-A frontend can now draw canvases itself (CoreGraphics, Compose, Cairo, Win2D)
-from a display list instead of showing a PNG: sharp at any size, in the system
-fonts, with no pixel work in the editor (docs/native-drawing.md). Plugins can
-describe an interface as a tree of widgets (cards, lists, boards, buttons,
-text) with =canvas.show-widgets=; Forge lays it out and draws it, in the
-terminal and in every window, and reports clicks by widget id.
-** Canvases no longer stall the editor
-Cards, kanban boards, graphs and canvases are drawn on their own thread:
-scrolling or zooming quickly asks for the newest view only, the previous
-picture stays up until the next is ready, and Forge no longer says it is
-busy. Scenes now name colour roles (card, line, fg, accent1 ...) rather than
-hex codes, and Forge picks the colours when it draws, so a change of theme or
-of the system's light/dark mode recolours every canvas at once, with no help
-from the plugin that made it (an old plugin's fixed colours are unchanged;
-rebuild plugins to get this). SVG and PNG exports use the current theme.
 ** Files and directories
 New commands: =make-directory= (=mkdir=), =make-empty-file=, =copy-directory=,
 =delete-directory= (asks before deleting a directory with files in it) and
@@ -86,92 +269,6 @@ lists it itself, so it works on Windows too). Plugin API: =files.make-directory=
 (file-expand-wildcards), and the file-name functions (=name-directory=,
 =name-nondirectory=, =name-extension=, =name-base=, =expand-name=,
 =relative-name= and so on). Rebuild plugins after updating (the API grew).
-** Cards look like Obsidian's
-Card text is measured, so a long title no longer runs into the properties
-under it. A card shows its picture across the top (the view's =image=
-property, or a property called cover, image, poster, thumbnail, banner and the
-like; =imageAspectRatio= and =imageFit: cover|contain= are honoured), then the
-bold title, then each property as a label and its value. A picture can be a
-file in the vault, =![[x.png]]=, =![](x.png)=, or a web address (fetched into
-the cache unless =org_display_remote_inline_images= is =skip=).
-** Canvases, Bases and graphs follow your theme
-Page, cards, lanes, lines and text take their colours from your theme (light
-or dark, and the system's mode when the theme doesn't set one) and redraw
-when it changes. Kanban cards can be dragged with the mouse again.
-** Graph on huge vaults
-Vaults of 300,000 notes and more open. The first time every note is read
-(one at a time, their text isn't kept); after that the index is kept in the
-graph plugin's cache folder and the global graph opens from a small saved
-picture of the dots, in a fraction of a second whatever the vault's size.
-Notes you save in Forge are folded in; =g= checks the disk for changes made
-elsewhere (and it happens by itself after a day, =rescan_hours=). A recursive
-folder listing is no longer cut off at 20,000 files, linking notes up is
-about twice as fast, and the global graph draws the best-connected notes
-rather than the first files found and says how many it left out; narrow it
-with a folder or tag filter to see the rest.
-Plugin API: =files.list-dir-info= (a listing with sizes and times) and
-=files.cache-dir= (a folder of the plugin's own that needs no permission).
-** Graph
-The graph uses a d3-style force simulation (what Obsidian uses): smaller
-dots, hairline links, labels only where they fit, loose notes drawn in near
-the rest. A hub note's local graph draws its 250 best-connected neighbours
-and says how many it left out. Dragging a dot runs the physics (its
-neighbours follow and spring back) and settles when you let go; nothing runs
-while the graph is idle, so it costs no battery. Building the global graph no
-longer re-checks every link against every other. The macOS app no longer
-draws pictures over completion popups, key hints or the busy label.
-The app id is com.isaiahharvey.forge (GNOME).
-** Canvases are faster
-Only the part of a canvas on screen is drawn, the PNG is compressed for
-speed, and the drawing libraries stay optimised in debug builds (they were
-the reason big Kanban boards and graphs crawled there). Touch: a swipe
-scrolls a page (sideways too), a press-and-hold on a card picks it up;
-sideways wheel and trackpad travel scroll as well. Bases and Graph find
-notes when the vault is written as ~/org. 
-** Kanban
-A new board: lanes share the window's width with a coloured header and
-count, cards are sized to what they show (title, tags as chips, three
-properties), and the board scrolls. On a phone a lane is nearly the width
-of the screen and the next one peeks in; swipe sideways. Dragging a card to
-another lane still sets the property. Cards are content-sized too.
-
-** Bases
-Cards are a page that scrolls (wheel, drag or finger), as wide as the
-window, so a long list is readable on a phone as on a desktop; a click
-opens a note when the button comes up. Tables fit the window: the title
-column narrows and columns that don't fit are left off. Titles are
-underlined links. Right-click (or the context menu key) a note for Open,
-Open in other window, Copy link, Copy file path, Sort by this column,
-Filter, Choose view and more. Picture buffers (canvases, Image mode) no
-longer show line numbers. New plugin functions: ~canvas.set-scroll~,
-~menus.popup~, ~kill-ring.push~.
-
-** Dashboard
-The dashboard now follows the dashboard's window layout: a centred emblem
-(redrawn as a clean badge), title and buttons, with the lists at the left
-edge and the footer centred; it centres on the window's real width.
-Entries and buttons are drawn as links (underlined), so you can see what is
-selectable. Pressing Enter on a recent file, bookmark or project opens it
-without a directory grant: what you choose is yours to open
-(~buffers.open-path~). New plugin functions: ~buffers.open-path~,
-~environment.frame-width~, ~images.set-centered~.
-#+author: The Forge contributors
-
-Release notes for Forge.  Each top-level heading is one release, newest
-first.  The text under each release is written by hand; the block between
-=#+begin_generated= and =#+end_generated= is rewritten by
-=cargo xtask news= from the documentation registry (commands, options,
-modes and so on whose =:since:= property names the release), so it always
-matches what the build actually contains.
-
-Read these inside the editor with =M-x view-news= (and =C-h n=), which
-opens the newest release in a help buffer with its links live.
-
-* 0.1.0
-#+begin_generated
-No documented items carry =:since: 0.1.0= yet.
-#+end_generated
-
 The first release.  Forge is a terminal text editor in the Forge
 tradition: keys run named commands, every command and option is
 documented in the same structured form the help buffers and manual are
@@ -188,22 +285,10 @@ Highlights:
   WIT interface, with Rust and Python SDKs.
 - A built-in canvas: plugins describe a drawing (shapes with ids, text,
   paths, pictures, groups) and Forge draws it, tells them what was
-  clicked, and exports it as PNG or SVG. Plugins built on it: =canvas=
-  (Obsidian's JSON Canvas boards), =bases= (Obsidian Bases tables, lists, kanban boards, maps
-  and cards over your notes) and =graph= (local and global link graphs).
-- Canvases render on the GPU (wgpu, with a CPU fallback); Bases gained
-  Kanban and Map layouts beside Table, List and Cards.
-- Bases read Org property drawers (the top of the file and under the
-  first heading, with its tags), and writing a property from a Kanban
-  board puts it in that drawer. Starter Bases for notes and for movies,
-  shows, books and games are in =plugins/bases/examples=.
+  clicked, and exports it as PNG or SVG.
+- Canvases render on the GPU (wgpu, with a CPU fallback)
 - Open a file or folder, or save as, with the system file picker
   (=find-file-dialog=, =find-directory-dialog=, =write-file-dialog=).
-- In a window the dashboard shows the Forge logo picture and symbols by
-  its headings, as dashboard does in a GUI (=banner: "logo"=,
-  =icons=); the terminal keeps the text banner. A canvas now takes the
-  shape of its window, so a board fills it instead of being cut off at
-  the picture's edge.
 - Frontends for GNOME (GTK 4), Windows (WinUI 3) (Jetpack
   Compose), alongside the macOS app.
 

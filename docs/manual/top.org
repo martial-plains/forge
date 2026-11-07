@@ -60,3 +60,135 @@ The manual uses the same notation as the rest of Forge:
 
 When a paragraph describes a command you have not met, follow its link or
 run ~C-h f~ on it before reading on.
+
+** Updating plugins safely
+   :PROPERTIES:
+   :ID:       package-updates
+   :CUSTOM_ID: package-updates
+   :SUMMARY:  Review and roll back package updates
+   :END:
+
+Use =M-x package-manager= to browse declared, installed, and indexed
+plugins. The manager and =*Packages*= show status as a labelled badge:
+=ok= for loaded and up-to-date packages, =update= for upgrades and
+review-needed packages, =building= and =fetching= for work in progress,
+=error= for failures and incompatible packages, and =available=, =frozen=,
+or =source= for the rest. The mark carries the color and the label says
+what it means, so the state is readable without color.
+
+The manager opens on =Home=, which lists each package once under
+=Updates=, =Problems=, =Loaded=, and =Not loaded=. Problems come first so a
+broken package is never hidden by an available update. The other views are
+=Install=, =Update=, =Check=, =Log=, =Restore=, =Profile=, =Doctor=, and
+=Help=; switch with the tab keys =H=, =I=, =U=, =C=, =L=, =R=, =P=, =D=, and
+=?=, or click a tab. Narrow frames collapse inactive tabs to their keys
+instead of wrapping.
+
+In a package list, =RET= or =TAB= expands the selected row, =i= installs,
+=u= upgrades, =U= starts every update and switches to the =Update= view, =v=
+shows details in a separate buffer, =d= deletes, =f= filters, and =g=
+refreshes. Clicking the =Update= tab only shows the view; pressing =U=
+starts updates and switches there. The =Update= view reports queued,
+running, finished, skipped, and failed packages with elapsed time and a
+progress bar. A failure names the package and reason before the batch rolls
+back.
+
+=M-x package-upgrade NAME= reviews and updates one package;
+=M-x package-upgrade-all= reviews available index release notes and Git
+commit subjects before applying updates. =C-u M-x package-upgrade-all= or
+=M-x package-upgrade-all-dry-run= shows the proposed versions, commits, and
+build commands without modifying plugin or data files. A failed build,
+smoke test, or lock update restores the previous installed artifact. Mark a
+declaration with =freeze: true= to exclude it from automatic upgrades; =pin=
+also freezes it and selects the pinned Git revision.
+
+The package screens have their own faces: =package-title=,
+=package-heading=, =package-primary=, =package-selected=,
+=package-selected-marker=, =package-ok=, =package-warning=,
+=package-error=, =package-info=, =package-neutral=, =package-inactive=,
+=package-rule=, =package-title-pill=, =package-tab-active=,
+=package-accent=, =package-badge-warning=, =package-badge-inactive=,
+=package-badge-info=, =package-badge-error=, =package-band-warning=,
+=package-band-error=, and =package-risk=.
+Restyle them with ~forge.theme.set~; unset fields keep the frontend's light
+and dark defaults. =package-accent= is reserved for tab keys, progress fill,
+and links; status badges stay quiet. Danger is never carried by color alone:
+risk labels also say "higher risk", and bands carry a mark and text. Leave
+the badge faces unset on 16-colour terminals; the labels and marks still
+carry the meaning. The default 16-colour badge pairs measure 19.56:1
+(yellow), 16.75:1 (cyan), 5.25:1 (red), and 5.32:1 (dark gray).
+
+** Package operation log
+   :PROPERTIES:
+   :ID:       package-log
+   :CUSTOM_ID: package-log
+   :SUMMARY:  View and export the structured package operation log
+   :END:
+
+~M-x package-log~ shows structured fetch, build, install, upgrade, and
+rollback records with timings, source and revision details, and errors.
+Status badges follow the same rules as the package manager, and the raw
+build output keeps its own text. ~M-x package-log-export~ writes the same
+records as JSON lines. The log is
+rotated in the state directory, and credentials in URLs, query strings, and
+authentication headers are redacted. Environment values are never recorded.
+
+** Plugin startup profiling
+   :PROPERTIES:
+   :ID:       plugin-profiling
+   :CUSTOM_ID: plugin-profiling
+   :SUMMARY:  Find slow plugins and enforce a startup budget
+   :END:
+
+~M-x plugin-profile~ shows where plugin startup and later calls spent their
+time: per plugin, the cache lookup, a compile on a cache miss, =init=, lazy
+start, and each command, event, answer, completion and process/HTTP callback
+(count, total and longest). =forge --profile-startup= prints the same report
+from the command line and exits, and =--json= makes it machine-readable.
+
+Set ~forge.opt["startup_budget_ms"]~ in =init.rhai= to be warned in
+=*Messages*= when plugin startup takes longer. Batch and headless runs fail
+with a nonzero exit status when the budget is exceeded; so does
+=forge --profile-startup= for a report over budget. Profiling is off by
+default, and while it is off the cost is one atomic flag check per call: no
+clock read, lock or label allocation.
+
+** Sharing your configuration
+   :PROPERTIES:
+   :ID:       sharing
+   :CUSTOM_ID: sharing
+   :SUMMARY:  Share settings without committing credentials or machine-local state
+   :END:
+
+Forge's configuration directory can be a Git repository, so settings and
+package declarations travel between machines. Share =init.rhai= and
+=forge-lock.toml=. Keep the files Forge writes for this machine, and the
+credentials that auth-source reads, out of the repository:
+=plugin-grants.toml=, =session.toml=, the =plugins/= directory,
+=~/.authinfo.gpg=, =~/.authinfo= and =~/.netrc=. The state directory may be
+outside the configuration directory; if it is inside the same repository,
+ignore its files too.
+
+A .gitignore for a repository rooted at the configuration directory:
+
+#+begin_src gitignore
+# Shared explicitly: init.rhai and forge-lock.toml.
+# Machine-local approvals and session state:
+plugin-grants.toml
+session.toml
+# Installed plugins are rebuilt from forge-lock.toml:
+plugins/
+# Credentials read by auth-source:
+.authinfo
+.authinfo.gpg
+.netrc
+#+end_src
+
+=M-x package-doctor= warns when one of those paths is inside a Git work
+tree and is not ignored, and prints the exact lines to add.
+
+To review an =init.rhai= that changed outside Forge, set
+~forge.opt["init_review"] = true~. If the new file adds a plugin grant,
+process, network request or writable directory, Forge shows the diff and
+asks before evaluating it. Declining evaluates nothing and behaves like
+starting with =-q=: no init file, grants or plugins directory.

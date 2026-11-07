@@ -44,6 +44,47 @@ enum Theme {
     static let modeLine = NSColor.quaternaryLabelColor
     static let modeLineInactive = NSColor.quaternaryLabelColor.withAlphaComponent(0.4)
 
+    /// A color that follows the system's light or dark appearance.
+    static func dynamic(dark: String, light: String) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(hex: isDark ? dark : light) ?? .textColor
+        }
+    }
+
+    // Package manager palette (docs/design/forge-packages-mockup.html):
+    // quiet ink colours for status, soft tints behind badges and bands, one
+    // accent. Each follows the system's light or dark appearance.
+    static let packageAccent = dynamic(dark: "#7aa2f7", light: "#2f62d0")
+    static let packageAccentInk = dynamic(dark: "#12151b", light: "#ffffff")
+    static let packageDim = dynamic(dark: "#8a90a0", light: "#626878")
+    static let packageSelected = dynamic(dark: "#242831", light: "#eceef3")
+    static let packageRule = dynamic(dark: "#2e323b", light: "#dcdde1")
+
+    /// A status colour on the plain background.
+    static func packageInk(dark: String, light: String) -> FaceStyle {
+        FaceStyle(foreground: dynamic(dark: dark, light: light))
+    }
+
+    /// Coloured text on a soft tint of the same hue.
+    static func packageTint(
+        ink: (dark: String, light: String),
+        tint: (dark: String, light: String)
+    ) -> FaceStyle {
+        FaceStyle(
+            foreground: dynamic(dark: ink.dark, light: ink.light),
+            background: dynamic(dark: tint.dark, light: tint.light)
+        )
+    }
+
+    static let packageWarnInk = (dark: "#dbb56f", light: "#8f6200")
+    static let packageWarnTint = (dark: "#3a3222", light: "#f6ead0")
+    static let packageErrInk = (dark: "#e68080", light: "#b3342c")
+    static let packageErrTint = (dark: "#3b2427", light: "#f6dcda")
+    static let packageInfoInk = (dark: "#82b4dc", light: "#1f6496")
+    static let packageInfoTint = (dark: "#1f2c3a", light: "#dfeaf5")
+    static let packageQuietTint = (dark: "#22252d", light: "#e9ebf0")
+
     static func syntax(_ name: String) -> FaceStyle? {
         switch name {
         case "keyword": FaceStyle(foreground: .systemPurple)
@@ -156,6 +197,30 @@ enum Theme {
         case "paren-match": return FaceStyle(background: NSColor.systemTeal.withAlphaComponent(0.35))
         case "paren-mismatch": return FaceStyle(background: NSColor.systemRed.withAlphaComponent(0.5))
         case "trailing-whitespace": return FaceStyle(background: NSColor.systemRed.withAlphaComponent(0.35))
+        case "package-title": return FaceStyle(foreground: .labelColor, bold: true)
+        case "package-heading", "package-primary":
+            return FaceStyle(foreground: .labelColor, bold: true)
+        case "package-selected":
+            return FaceStyle(background: packageSelected, bold: true)
+        case "package-selected-marker": return FaceStyle(foreground: packageAccent, bold: true)
+        case "package-ok": return packageInk(dark: "#86c28f", light: "#2b7a47")
+        case "package-warning": return packageInk(dark: packageWarnInk.dark, light: packageWarnInk.light)
+        case "package-error": return packageInk(dark: packageErrInk.dark, light: packageErrInk.light)
+        case "package-info": return packageInk(dark: packageInfoInk.dark, light: packageInfoInk.light)
+        case "package-neutral": return FaceStyle()
+        case "package-inactive": return FaceStyle(foreground: packageDim)
+        case "package-rule": return FaceStyle(foreground: packageRule)
+        case "package-title-pill", "package-tab-active":
+            return FaceStyle(foreground: packageAccentInk, background: packageAccent, bold: true)
+        case "package-accent": return FaceStyle(foreground: packageAccent)
+        case "package-badge-warning", "package-band-warning", "package-risk":
+            return packageTint(ink: packageWarnInk, tint: packageWarnTint)
+        case "package-badge-error", "package-band-error":
+            return packageTint(ink: packageErrInk, tint: packageErrTint)
+        case "package-badge-info":
+            return packageTint(ink: packageInfoInk, tint: packageInfoTint)
+        case "package-badge-inactive":
+            return packageTint(ink: (dark: "#8a90a0", light: "#626878"), tint: packageQuietTint)
         case "error", "spell-error": return underlined(.systemRed)
         case "warning": return underlined(.systemOrange)
         case "info": return underlined(.systemBlue)

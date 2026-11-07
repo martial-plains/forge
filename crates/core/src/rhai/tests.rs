@@ -128,6 +128,8 @@ fn options_keymaps_and_remaps() {
             electric_indent: Some(false),
             wrap: None,
             package_index: None,
+            package_index_keys: None,
+            package_allowed_sources: None,
             message_log_max: None,
             save_interprogram_paste_before_kill: None,
             flags: Default::default(),
@@ -443,6 +445,92 @@ fn options_are_checked_where_they_are_set() {
     );
     let out = load(&rhai, &mut ed, r#"let x = forge.opt["colour"];"#);
     assert!(out.errors[0].contains("unknown option"), "{:?}", out.errors);
+}
+
+#[test]
+fn package_allowed_sources_options() {
+    let mut ed = editor();
+    let rhai = RhaiConfig::new().unwrap();
+    ok(&load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_allowed_sources"] = ["github.com", "https://e.org/forge/"];
+           forge.opt["package_repository_checks"] = true;
+           assert(forge.opt["package_allowed_sources"] == ["github.com", "https://e.org/forge/"]);
+           assert(forge.opt["package_repository_checks"] == true);"#,
+    ));
+    let st = rhai.settings();
+    assert_eq!(
+        st.package_allowed_sources,
+        Some(vec![
+            "github.com".to_string(),
+            "https://e.org/forge/".to_string()
+        ])
+    );
+    assert_eq!(st.flags.get("package_repository_checks"), Some(&true));
+
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_allowed_sources"] = ["https://e.org/*"];"#,
+    );
+    assert!(
+        out.errors[0].contains("invalid source rule"),
+        "{:?}",
+        out.errors
+    );
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_allowed_sources"] = 1;"#,
+    );
+    assert!(
+        out.errors[0].contains("is a host, URL, path"),
+        "{:?}",
+        out.errors
+    );
+}
+
+#[test]
+fn package_index_trust_options() {
+    let mut ed = editor();
+    let rhai = RhaiConfig::new().unwrap();
+    ok(&load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_index"] = ["https://e.org/index.toml"];
+           forge.opt["package_index_keys"] = ["key-one", "key-two"];
+           forge.opt["package_index_strict"] = true;
+           assert(forge.opt["package_index_keys"] == ["key-one", "key-two"]);
+           assert(forge.opt["package_index_strict"] == true);"#,
+    ));
+    let st = rhai.settings();
+    assert_eq!(
+        st.package_index,
+        Some(vec!["https://e.org/index.toml".to_string()])
+    );
+    assert_eq!(
+        st.package_index_keys,
+        Some(vec!["key-one".to_string(), "key-two".to_string()])
+    );
+    assert_eq!(st.flags.get("package_index_strict"), Some(&true));
+
+    let out = load(&rhai, &mut ed, r#"forge.opt["package_index_keys"] = 1;"#);
+    assert!(
+        out.errors[0].contains("Minisign public key"),
+        "{:?}",
+        out.errors
+    );
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"forge.opt["package_index_strict"] = "yes";"#,
+    );
+    assert!(
+        out.errors[0].contains("must be true or false"),
+        "{:?}",
+        out.errors
+    );
 }
 
 #[test]
@@ -931,6 +1019,8 @@ fn plugin_use_from_init_rhai() {
               hook: #{ "org-mode": "org-modern-mode" },
               on: #{ commands: ["org-modern-mode"], extensions: "org" },
               after: ["org"],
+              build_env: ["NPM_TOKEN", "MY_*"],
+              build_timeout_secs: 120,
             });
             "#,
     ));
@@ -940,6 +1030,11 @@ fn plugin_use_from_init_rhai() {
     assert_eq!(u.name, "org-modern");
     assert_eq!(u.rev.as_deref(), Some("v0.2.0"));
     assert!(u.grants.network);
+    assert_eq!(u.build_env, ["NPM_TOKEN", "MY_*"]);
+    assert_eq!(u.build_timeout_secs, Some(120));
+    let policy = u.build_policy();
+    assert!(policy.env_allow.contains(&"NPM_TOKEN".to_string()));
+    assert_eq!(policy.timeout, std::time::Duration::from_secs(120));
     assert_eq!(
         u.hooks,
         [("org-mode".to_string(), "org-modern-mode".into())]
@@ -1082,6 +1177,12 @@ fn use_package_conditions_code_and_modes() {
         "catch logged: {report}"
     );
     assert!(report.contains("base: deferred"), "{report}");
+    let (first, out) = rhai.eval(&mut ed, "use_package_report()[0]");
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    assert!(
+        first.unwrap_or_default().contains("off: skipped, disabled"),
+        "the Rhai function still returns strings"
+    );
 
     ok(&load(
         &rhai,
@@ -1096,6 +1197,7 @@ fn use_package_conditions_code_and_modes() {
           magic: #{ "^%FANCY": "text-mode" },
           custom_face: #{ "comment": #{ italic: true } },
         });
+        use_package("bounded", #{ index: "theme", version: "^1.2", freeze: true });
         "#,
     ));
     let u = rhai
@@ -1104,6 +1206,7 @@ fn use_package_conditions_code_and_modes() {
         .find(|u| u.name == "fancy")
         .unwrap();
     assert_eq!(u.rev.as_deref(), Some("v1"));
+    assert!(u.frozen);
     assert_eq!(u.load_path, ["~/dev/e"]);
     assert!(u.no_require);
     assert_eq!(u.on_commands, ["fancy-go"]);
@@ -1123,7 +1226,8 @@ fn use_package_conditions_code_and_modes() {
         &rhai,
         &mut ed,
         r#"use_package("built", #{ vc: #{ url: "https://example.com/b", rev: "main",
-             make: "cargo build -p b", lisp_dir: "crates/b", features: ["fast"] } });"#,
+             make: "cargo build -p b", lisp_dir: "crates/b", features: ["fast"] },
+             build_env: ["NPM_TOKEN", "MY_*"], build_timeout_secs: 90 });"#,
     ));
     let b = rhai
         .plugin_uses()
@@ -1135,6 +1239,27 @@ fn use_package_conditions_code_and_modes() {
     assert_eq!(b.build.as_deref(), Some("cargo build -p b"));
     assert_eq!(b.git_dir.as_deref(), Some("crates/b"));
     assert_eq!(b.features, ["fast"]);
+    assert_eq!(b.build_env, ["NPM_TOKEN", "MY_*"]);
+    assert_eq!(b.build_timeout_secs, Some(90));
+    let out = load(
+        &rhai,
+        &mut ed,
+        r#"use_package("slow", #{ build_timeout_secs: 0 });"#,
+    );
+    assert!(
+        out.errors[0].contains("build_timeout_secs"),
+        "{:?}",
+        out.errors
+    );
+    let bounded = rhai
+        .plugin_uses()
+        .into_iter()
+        .find(|u| u.name == "bounded")
+        .unwrap();
+    assert_eq!(bounded.version.as_deref(), Some("^1.2"));
+    assert!(bounded.frozen);
+    let out = load(&rhai, &mut ed, r#"use_package("bad", #{ freeze: "yes" });"#);
+    assert!(out.errors[0].contains("freeze"), "{:?}", out.errors);
     let out = load(
         &rhai,
         &mut ed,

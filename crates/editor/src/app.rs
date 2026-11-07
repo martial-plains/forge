@@ -157,14 +157,21 @@ pub struct App {
     pub prefix_help_delay: Duration,
     /// init.rhai; None when started with -q.
     pub init_path: Option<PathBuf>,
+    /// Plugin loading and mode hooks held back for an init review.
+    pub(crate) pending_startup: Option<crate::init_review::PendingStartup>,
     /// The Rhai state init.rhai ran in (its commands live here).
     pub rhai: Option<RhaiConfig>,
+    /// Errors from the last init.rhai/theme load (used by the package doctor).
+    pub init_errors: Vec<String>,
     /// ESC was pressed; the next key gets Meta.
     pub meta_pending: bool,
     pub minibuffer: Option<Minibuffer>,
     /// The prompt a `completing-read-over` question took over (suspended
     /// while its question runs, then restored).
     pub suspended_prompt: Option<Minibuffer>,
+    /// Prompts a plugin suspended with minibuffer.suspend, newest first.
+    /// completion.sessions lists them and completion.resume brings one back.
+    pub suspended_prompts: Vec<Minibuffer>,
     /// Echo-area message, cleared on the next key.
     pub message: Option<String>,
     /// Name of the *Messages* buffer.
@@ -288,8 +295,16 @@ pub struct App {
     pub wdired: std::collections::HashMap<forge_core::BufferId, Vec<(usize, std::path::PathBuf)>>,
     /// Loaded plugins (the runtime starts with the first one).
     pub plugin_host: Option<PluginHost>,
+    /// M-x plugin-bisect in progress.
+    pub plugin_bisect: Option<crate::plugin_bisect::Session>,
     /// Where compiled plugins and their summaries are cached (None: no cache).
     pub plugin_cache: Option<std::path::PathBuf>,
+    /// forge.opt.startup_budget_ms: warn when plugin startup takes longer.
+    pub startup_budget: Option<Duration>,
+    /// Plugin startup took longer than `startup_budget`.
+    pub startup_budget_exceeded: bool,
+    /// No person is present to answer prompts (--batch, --headless).
+    pub unattended: bool,
     /// Plugin questions waiting for the minibuffer.
     pub pending_questions: VecDeque<PendingQuestion>,
     /// Plugin commands currently running each other (loop guard).
@@ -298,6 +313,8 @@ pub struct App {
     pub grants: GrantStore,
     /// A plugin waiting for the permission question to be answered.
     pub pending_grant: Option<PendingGrant>,
+    /// What the plugin permission and list buffers are showing.
+    pub plugin_ui: plugins::PluginUi,
     /// Plugin files waiting for that question to be over.
     pub pending_loads: VecDeque<PathBuf>,
     /// Projects whose init.rhai has been asked about (or run) this session,
@@ -583,6 +600,48 @@ impl App {
             forge_docs::Kind::Option,
             forge_docs::Source::Config,
         ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_index_keys",
+            "Trusted Minisign keys for package index signatures.\n\nValues: a key or a list of keys",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_index_strict",
+            "Refuse unsigned package indexes; needs package_index_keys.\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allowed_sources",
+            "Hosts, URLs and paths packages and indexes may come from.\n\nValues: a host, URL, absolute path, or a list of them",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_repository_checks",
+            "Ask GitHub whether a repository is archived or renamed; only warns.\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allow_build",
+            "Let headless package commands build plugins without asking (like --allow-build).\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allow_capabilities",
+            "Let headless package commands accept new capabilities (--allow-capabilities).\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
+        docs.add(crate::docs_bridge::legacy_to_doc_kind(
+            "package_allow_grants",
+            "Let headless package commands grant plugin permissions (like --allow-grants).\n\nValues: true or false",
+            forge_docs::Kind::Option,
+            forge_docs::Source::Config,
+        ));
         docs.add(crate::docs_bridge::legacy_to_doc_kind("electric_indent", "RET indents the new line; a closing bracket re-indents its line.\n\nValues: true or false", forge_docs::Kind::Option, forge_docs::Source::Config));
         docs.add(crate::docs_bridge::legacy_to_doc_kind("line_numbers", "Line numbers in buffers that don't choose their own.\n\nValues: off, absolute or relative", forge_docs::Kind::Option, forge_docs::Source::Config));
         docs.add(crate::docs_bridge::legacy_to_doc_kind(
@@ -764,10 +823,13 @@ impl App {
             show_prefix_hints: false,
             prefix_help_delay: DEFAULT_PREFIX_HELP_DELAY,
             init_path: None,
+            pending_startup: None,
             rhai: None,
+            init_errors: Vec::new(),
             meta_pending: false,
             minibuffer: None,
             suspended_prompt: None,
+            suspended_prompts: Vec::new(),
             message: None,
             messages_buffer_name: "*Messages*".to_string(),
             message_log_max: forge_core::MessageLogMax::default(),
@@ -829,11 +891,16 @@ impl App {
             tooltip_mode: true,
             wdired: Default::default(),
             plugin_host: None,
+            plugin_bisect: None,
             plugin_cache: None,
+            startup_budget: None,
+            startup_budget_exceeded: false,
+            unattended: false,
             pending_questions: VecDeque::new(),
             plugin_depth: 0,
             grants: GrantStore::in_memory(),
             pending_grant: None,
+            plugin_ui: plugins::PluginUi::default(),
             pending_loads: VecDeque::new(),
             projects_asked: std::collections::HashSet::new(),
             watch: Watch::default(),
@@ -969,6 +1036,11 @@ impl App {
 
     pub fn prompt(&mut self, prompt: impl Into<String>, purpose: Purpose) {
         self.minibuffer = Some(Minibuffer::new(prompt, purpose));
+        // minibuffer.on-open: run plugin hooks once the prompt is up, after
+        // this key (or plugin call) has finished.
+        for (_, command) in self.editor.completion.minibuffer_open_commands.clone() {
+            self.deferred_commands.push((command, None));
+        }
     }
 
     /// Mirror the open prompt into the core editor, so a plugin can read it
@@ -2311,6 +2383,8 @@ impl App {
         self.horizontal_scroll_bar = false;
         self.scroll_bar_drag = None;
         self.plugin_auto_reload = true;
+        self.startup_budget = None;
+        self.startup_budget_exceeded = false;
         self.line_numbers = Default::default();
         self.electric_indent = true;
         self.wrap = Default::default();
@@ -2348,6 +2422,7 @@ impl App {
         forge_core::backup::set_config(Default::default());
         crate::vc::set_config(Default::default());
         self.rhai = None;
+        self.init_errors.clear();
 
         let Some(path) = self.init_path.clone() else {
             self.sync_docs();
@@ -2369,16 +2444,20 @@ impl App {
         let rhai = match RhaiConfig::new() {
             Ok(l) => l,
             Err(e) => {
+                self.init_errors.push(format!("Can't start Rhai: {e}"));
                 self.sync_docs();
                 return self.error(format!("Can't start Rhai: {e}"));
             }
         };
         let out = rhai.load_file(&mut self.editor, &path);
+        self.init_errors = out.errors.clone();
         // Theme files load next and only define themes; `forge.theme.load`
         // in init.rhai or in one of them applies one.
         let mut theme_outs = Vec::new();
         for theme_path in forge_core::config::theme_files() {
-            theme_outs.push(rhai.load_file(&mut self.editor, &theme_path));
+            let out = rhai.load_file(&mut self.editor, &theme_path);
+            self.init_errors.extend(out.errors.iter().cloned());
+            theme_outs.push(out);
         }
         self.watch.set_rhai_monitor(Some(rhai.monitor()));
         self.rhai = Some(rhai);
@@ -2391,6 +2470,7 @@ impl App {
         // init.rhai is where a project's own init.rhai binds, so now that
         // there is a Rhai state the file on screen can be asked about.
         crate::project::load_if_granted(self);
+        forge_core::init_review::record(&path);
     }
 
     /// The compiled `sentence-end` regexp, or `None` when it is unset.
@@ -2429,9 +2509,47 @@ impl App {
             self.message_log_max = m;
         }
         self.packages.indexes = settings.package_index.clone().unwrap_or_default();
+        self.packages.index_keys = settings.package_index_keys.clone().unwrap_or_default();
+        self.packages.allowed_sources = settings.package_allowed_sources.as_ref().map(|entries| {
+            forge_core::package_source::SourceAllowlist::new(entries)
+                .unwrap_or_else(|_| forge_core::package_source::SourceAllowlist::default())
+        });
+        self.packages.index_strict = settings
+            .flags
+            .get("package_index_strict")
+            .copied()
+            .unwrap_or(false);
+        self.packages.vc.set_repository_checks(
+            settings
+                .flags
+                .get("package_repository_checks")
+                .copied()
+                .unwrap_or(false),
+        );
+        self.packages.approvals = crate::packages::Approvals {
+            build: settings
+                .flags
+                .get("package_allow_build")
+                .copied()
+                .unwrap_or(false),
+            capabilities: settings
+                .flags
+                .get("package_allow_capabilities")
+                .copied()
+                .unwrap_or(false),
+            grants: settings
+                .flags
+                .get("package_allow_grants")
+                .copied()
+                .unwrap_or(false),
+        };
         if let Some(r) = settings.plugin_auto_reload {
             self.plugin_auto_reload = r;
         }
+        self.startup_budget = settings
+            .numbers
+            .get("startup_budget_ms")
+            .map(|ms| Duration::from_secs_f64(ms / 1000.0));
         if let Some(l) = settings.line_numbers {
             self.line_numbers = l;
         }

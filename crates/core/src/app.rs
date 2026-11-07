@@ -147,6 +147,9 @@ pub struct Editor {
     /// The completion popup's session, kept up to date by the frontend so
     /// a plugin can drive it (`completion.current`).
     pub completion_session: Option<crate::completion::Session>,
+    /// Prompts the frontend suspended, newest first (`completion.sessions`).
+    /// The frontend keeps the full prompts; this is what a plugin may read.
+    pub completion_sessions: Vec<crate::completion::PromptSession>,
     /// Requests from plugins to drive the popup (`completion.next` etc.);
     /// the frontend drains them (drained after every key).
     pub completion_control: Vec<crate::completion::Control>,
@@ -225,6 +228,7 @@ impl Default for Editor {
             org_indent_per_level: 2,
             selection: None,
             completion_session: None,
+            completion_sessions: Vec::new(),
             completion_control: Vec::new(),
             transients: Vec::new(),
             prompt: None,

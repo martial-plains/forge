@@ -101,8 +101,21 @@ async function buildPlugin(entry, out) {
   const tmp = mkdtempSync(path.join(tmpdir(), 'forge-plugin-'));
   try {
     const bundle = path.join(tmp, 'plugin.js');
+    const perms = pkg.forge?.permissions ?? {};
     // A plugin allowed to run programs gets their output (Forge 0.1.2).
-    const processes = (pkg.forge?.permissions?.processes ?? []).length > 0;
+    const processes = (perms.processes ?? []).length > 0;
+    // Environment and HTTP are not part of the callback SDK; a plugin that
+    // declares them may import the raw interfaces, so it needs the full world.
+    const rawPermissions = Boolean(perms.environment || perms.http);
+    // Use the narrow worlds when possible: the full world imports process,
+    // environment and HTTP interfaces even when the plugin never calls them.
+    const worldName = processes
+      ? rawPermissions
+        ? 'plugin-with-processes'
+        : 'plugin-with-processes-basic'
+      : rawPermissions
+        ? 'plugin'
+        : 'plugin-basic';
     const extra = processes ? `export { processHandler } from '@forge-editor/plugin/process';\n` : '';
     // The entry, plus the exports Forge calls (from the SDK).
     await build({
@@ -126,7 +139,7 @@ async function buildPlugin(entry, out) {
     const { component } = await componentize({
       sourcePath: bundle,
       witPath: path.join(sdk, 'wit'),
-      worldName: processes ? 'plugin-with-processes' : 'plugin',
+      worldName,
       // No fetch(): Forge doesn't provide wasi:http.
       disableFeatures: ['http', 'fetch-event'],
     });

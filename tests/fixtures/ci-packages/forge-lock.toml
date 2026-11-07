@@ -1,0 +1,9 @@
+# Offline fixture for the CI example in docs/command-line.md.
+# Keep this in sync with plugins/demo.wasm.
+
+lock_version = 1
+
+[packages.demo]
+url = "plugins/demo.wasm"
+sha256 = "28193fb9076dda2e67d3efaf991915a21e2c2a6a11c6c6c1c215a5884edc69c2"
+artifact_sha256 = "28193fb9076dda2e67d3efaf991915a21e2c2a6a11c6c6c1c215a5884edc69c2"

@@ -8,6 +8,13 @@ use forge_core::{Origin, Scope};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::sync::{Mutex, MutexGuard};
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
 
 mod clipboard;
 mod commands;
@@ -23,6 +30,8 @@ mod menu;
 mod messages;
 mod mouse;
 mod packaging;
+mod plugin_bisect;
+mod plugin_repro;
 mod plugins;
 mod rhai;
 mod term;
@@ -389,6 +398,30 @@ fn left_click(app: &mut App, column: u16, row: u16) {
 
 /// Build tests/fixtures/demo-plugin.wat into a component file.
 pub(crate) fn demo_plugin_file(dir: &std::path::Path) -> std::path::PathBuf {
+    plugin_file_from_wat(
+        dir,
+        "demo",
+        include_str!("../../../../tests/fixtures/demo-plugin.wat"),
+    )
+}
+
+/// Build a test plugin from WAT source into `NAME.wasm`.
+pub(crate) fn plugin_file_from_wat(
+    dir: &std::path::Path,
+    name: &str,
+    source: &str,
+) -> std::path::PathBuf {
+    plugin_file_from_wit(dir, name, None, source)
+}
+
+/// Build a plugin from WAT against a custom world, for imports the usual
+/// test world doesn't have (WASI sockets, filesystem, ...).
+pub(crate) fn plugin_file_from_wit(
+    dir: &std::path::Path,
+    name: &str,
+    world_wit: Option<&str>,
+    source: &str,
+) -> std::path::PathBuf {
     use wit_component::{ComponentEncoder, StringEncoding};
     let mut resolve = wit_parser::Resolve::default();
     let pkg = resolve
@@ -397,9 +430,25 @@ pub(crate) fn demo_plugin_file(dir: &std::path::Path) -> std::path::PathBuf {
             "/../../tests/fixtures/wit-0.1.0/forge-editor.wit"
         ))
         .unwrap();
-    let world = resolve.select_world(&[pkg], Some("plugin")).unwrap();
-    let mut module =
-        wat::parse_str(include_str!("../../../../tests/fixtures/demo-plugin.wat")).unwrap();
+    let world = match world_wit {
+        None => resolve.select_world(&[pkg], Some("plugin")).unwrap(),
+        Some(wit) => {
+            for (i, dep) in [
+                include_str!("../../../../tests/fixtures/wasi-0.2/io.wit"),
+                include_str!("../../../../tests/fixtures/wasi-0.2/clocks.wit"),
+                include_str!("../../../../tests/fixtures/wasi-0.2/filesystem.wit"),
+                include_str!("../../../../tests/fixtures/wasi-0.2/sockets.wit"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                resolve.push_str(format!("dep{i}.wit"), dep).unwrap();
+            }
+            let world_pkg = resolve.push_str("test.wit", wit).unwrap();
+            resolve.select_world(&[world_pkg], None).unwrap()
+        }
+    };
+    let mut module = wat::parse_str(source).unwrap();
     wit_component::embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
         .unwrap();
     let bytes = ComponentEncoder::default()
@@ -408,7 +457,7 @@ pub(crate) fn demo_plugin_file(dir: &std::path::Path) -> std::path::PathBuf {
         .encode()
         .unwrap();
     std::fs::create_dir_all(dir).unwrap();
-    let path = dir.join("demo.wasm");
+    let path = dir.join(format!("{name}.wasm"));
     std::fs::write(&path, bytes).unwrap();
     path
 }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 use super::*;
+use crate::declare::{DeferredCode, SkipReason, SystemPackageNeed, UseOutcome, UseReport};
 use crate::theme::{FaceStyle, NamedTheme, all_faces, parse_color};
+use rhai::NativeCallContext;
 use std::cell::OnceCell;
 use std::rc::{Rc, Weak};
 
@@ -18,6 +20,8 @@ api!(OptApi);
 api!(KeymapApi);
 api!(CommandApi);
 api!(UiApi);
+api!(MinibufferApi);
+api!(CompletionApi);
 api!(BufferApi);
 api!(ModeApi);
 #[cfg(feature = "tree-sitter")]
@@ -82,6 +86,14 @@ impl RhaiConfig {
         Ok(cfg)
     }
 
+    /// A configuration for collecting declarations: closures are recorded
+    /// but not run, and nothing may prompt, install or write.
+    pub fn collecting() -> RhaiResult<Self> {
+        let cfg = Self::new()?;
+        cfg.shared.collecting.set(true);
+        Ok(cfg)
+    }
+
     fn install_api(&mut self, engine: &mut Engine, engine_cell: Weak<OnceCell<Engine>>) {
         let shared = self.shared.clone();
 
@@ -91,6 +103,8 @@ impl RhaiConfig {
         engine.register_type_with_name::<KeymapApi>("Keymap");
         engine.register_type_with_name::<CommandApi>("Command");
         engine.register_type_with_name::<UiApi>("Ui");
+        engine.register_type_with_name::<MinibufferApi>("Minibuffer");
+        engine.register_type_with_name::<CompletionApi>("Completion");
         engine.register_type_with_name::<BufferApi>("Buffers");
         engine.register_type_with_name::<ModeApi>("Mode");
         #[cfg(feature = "tree-sitter")]
@@ -112,6 +126,8 @@ impl RhaiConfig {
         engine.register_get("keymap", |_: &mut Forge| KeymapApi);
         engine.register_get("command", |_: &mut Forge| CommandApi);
         engine.register_get("ui", |_: &mut Forge| UiApi);
+        engine.register_get("minibuffer", |_: &mut Forge| MinibufferApi);
+        engine.register_get("completion", |_: &mut Forge| CompletionApi);
         engine.register_get("buffer", |_: &mut Forge| BufferApi);
         engine.register_get("mode", |_: &mut Forge| ModeApi);
         #[cfg(feature = "tree-sitter")]
@@ -273,6 +289,8 @@ impl RhaiConfig {
         self.install_keymap(engine);
         self.install_command(engine);
         self.install_ui(engine);
+        self.install_minibuffer(engine);
+        self.install_completion(engine);
         self.install_buffer(engine);
         self.install_mode(engine);
         #[cfg(feature = "tree-sitter")]
@@ -472,6 +490,182 @@ impl RhaiConfig {
         );
     }
 
+    fn install_minibuffer(&self, engine: &mut Engine) {
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_input",
+            move |_: &mut MinibufferApi, text: ImmutableString| -> RhaiResult<()> {
+                let open = s.with_editor(|ed| {
+                    if ed.prompt_open {
+                        ed.prompt_input = text.to_string();
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                })?;
+                if open {
+                    s.effects
+                        .borrow_mut()
+                        .push(Effect::SetPromptInput(text.to_string()));
+                }
+                Ok(())
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn("active", move |_: &mut MinibufferApi| -> RhaiResult<bool> {
+            s.with_editor(|ed| Ok(ed.prompt_open))
+        });
+        let s = self.shared.clone();
+        engine.register_fn(
+            "input",
+            move |_: &mut MinibufferApi| -> RhaiResult<String> {
+                s.with_editor(|ed| Ok(ed.prompt_input.clone()))
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "history_kind",
+            move |_: &mut MinibufferApi| -> RhaiResult<Dynamic> {
+                s.with_editor(|ed| {
+                    Ok(ed
+                        .prompt_history
+                        .clone()
+                        .map(Dynamic::from)
+                        .unwrap_or(Dynamic::UNIT))
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "on_open",
+            move |_: &mut MinibufferApi, command: ImmutableString| -> RhaiResult<()> {
+                let name = SOURCE;
+                s.with_editor(|ed| {
+                    if !ed.commands.contains(&command) {
+                        return Err(format!("no command named {command}"));
+                    }
+                    ed.completion
+                        .minibuffer_open_commands
+                        .retain(|(p, _)| p != name);
+                    ed.completion
+                        .minibuffer_open_commands
+                        .push((name.to_string(), command.to_string()));
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn("suspend", move |_: &mut MinibufferApi| -> RhaiResult<()> {
+            let open = s.with_editor(|ed| Ok(ed.prompt_open))?;
+            if open {
+                s.effects.borrow_mut().push(Effect::SuspendPrompt);
+            }
+            Ok(())
+        });
+    }
+
+    fn install_completion(&self, engine: &mut Engine) {
+        let s = self.shared.clone();
+        engine.register_fn(
+            "group",
+            move |_: &mut CompletionApi,
+                  category: ImmutableString,
+                  then: FnPtr|
+                  -> RhaiResult<()> {
+                let callback = Callback::new(&s, then)?;
+                s.groups.borrow_mut().insert(category.to_string(), callback);
+                s.with_editor(|ed| {
+                    ed.completion
+                        .groupers
+                        .insert(category.to_string(), SOURCE.to_string());
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_group_format",
+            move |_: &mut CompletionApi, format: ImmutableString| -> RhaiResult<()> {
+                s.with_editor(|ed| {
+                    ed.completion.group_format = Some((format.to_string(), SOURCE.to_string()));
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_layout",
+            move |_: &mut CompletionApi, layout: ImmutableString, lines: i64| -> RhaiResult<()> {
+                let layout = crate::completion::Layout::from_name(&layout).map_err(err)?;
+                s.with_editor(|ed| {
+                    ed.completion.layout =
+                        Some((layout, lines.clamp(1, 50) as u32, SOURCE.to_string()));
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "set_row_labels",
+            move |_: &mut CompletionApi, labels: Vec<Dynamic>| -> RhaiResult<()> {
+                let labels = labels
+                    .iter()
+                    .map(|l| as_string(l, "row label"))
+                    .collect::<RhaiResult<Vec<_>>>()?;
+                s.with_editor(|ed| {
+                    ed.completion.row_labels = if labels.is_empty() {
+                        None
+                    } else {
+                        Some((labels.clone(), SOURCE.to_string()))
+                    };
+                    Ok(())
+                })
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "jump_to_row",
+            move |_: &mut CompletionApi, row: i64, accept: bool| -> RhaiResult<()> {
+                let open = s.with_editor(|ed| Ok(ed.prompt_open))?;
+                if open {
+                    s.effects.borrow_mut().push(Effect::JumpToRow {
+                        row: row.max(0) as u32,
+                        accept,
+                    });
+                }
+                Ok(())
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "sessions",
+            move |_: &mut CompletionApi| -> RhaiResult<rhai::Array> {
+                let sessions = s.with_editor(|ed| Ok(ed.completion_sessions.clone()))?;
+                Ok(sessions
+                    .into_iter()
+                    .map(|session| {
+                        let mut m = Map::new();
+                        m.insert("category".into(), Dynamic::from(session.category));
+                        m.insert("prompt".into(), Dynamic::from(session.prompt));
+                        m.insert("input".into(), Dynamic::from(session.input));
+                        m.insert("total".into(), Dynamic::from(session.total as i64));
+                        Dynamic::from_map(m)
+                    })
+                    .collect())
+            },
+        );
+        let s = self.shared.clone();
+        engine.register_fn(
+            "resume",
+            move |_: &mut CompletionApi, index: i64| -> RhaiResult<()> {
+                s.effects
+                    .borrow_mut()
+                    .push(Effect::ResumeSession(index.max(0) as u32));
+                Ok(())
+            },
+        );
+    }
+
     fn install_buffer(&self, engine: &mut Engine) {
         let s = self.shared.clone();
         engine.register_fn(
@@ -658,6 +852,7 @@ impl RhaiConfig {
         engine.register_fn(
             "grant",
             move |_: &mut PluginApi, name: ImmutableString, spec: Map| -> RhaiResult<()> {
+                s.deny_while_collecting("forge.plugin.grant")?;
                 let g = parse_grants(&spec)?;
                 s.grants
                     .borrow_mut()
@@ -696,8 +891,14 @@ impl RhaiConfig {
         let cell = engine_cell.clone();
         engine.register_fn(
             "use_package",
-            move |name: ImmutableString, spec: Map| -> RhaiResult<()> {
-                use_package_spec(&s, &cell, name.to_string(), &spec)
+            move |ctx: NativeCallContext, name: ImmutableString, spec: Map| -> RhaiResult<()> {
+                use_package_spec(
+                    &s,
+                    &cell,
+                    name.to_string(),
+                    &spec,
+                    ctx.call_position().line(),
+                )
             },
         );
         let s = self.shared.clone();
@@ -705,16 +906,25 @@ impl RhaiConfig {
             s.use_log
                 .borrow()
                 .iter()
-                .cloned()
-                .map(Dynamic::from)
+                .map(|report| Dynamic::from(report.message.clone()))
                 .collect()
         });
         let s = self.shared.clone();
         let cell = engine_cell;
         engine.register_fn(
             "use_package",
-            move |_: &mut PluginApi, name: ImmutableString, spec: Map| -> RhaiResult<()> {
-                use_package_spec(&s, &cell, name.to_string(), &spec)
+            move |ctx: NativeCallContext,
+                  _: &mut PluginApi,
+                  name: ImmutableString,
+                  spec: Map|
+                  -> RhaiResult<()> {
+                use_package_spec(
+                    &s,
+                    &cell,
+                    name.to_string(),
+                    &spec,
+                    ctx.call_position().line(),
+                )
             },
         );
     }
@@ -761,6 +971,7 @@ impl RhaiConfig {
                   text: ImmutableString,
                   then: FnPtr|
                   -> RhaiResult<u32> {
+                s.deny_while_collecting("forge.fs.write")?;
                 if s.project.borrow().is_some() {
                     return Err(err(
                         "forge.fs.write isn't available in project init.rhai files",
@@ -1175,8 +1386,14 @@ const USE_PACKAGE_KEYS: &[&str] = &[
     "grant",
     // Carried over from use-package.
     "pin",
+    "freeze",
+    "version",
     "load_path",
     "no_require",
+    // Forge extensions.
+    "build_env",
+    "build_timeout_secs",
+    "allow_history_rewrite",
     "magic",
     "magic_fallback",
     "interpreter",
@@ -1187,21 +1404,36 @@ const USE_PACKAGE_KEYS: &[&str] = &[
 ];
 
 const USE_PACKAGE_DECLARATION_KEYS: &[&str] = &[
-    "git", "rev", "index", "url", "sha256", "grant", "hook", "on", "after",
+    "git",
+    "rev",
+    "index",
+    "url",
+    "sha256",
+    "grant",
+    "hook",
+    "on",
+    "after",
+    "version",
+    "freeze",
+    "allow_history_rewrite",
 ];
 
-/// Is a `when`/`if`/`unless` value true? A function is called.
+/// Is a `when`/`if`/`unless` value true? A function is called, except while
+/// collecting declarations: then it is left unevaluated (`None`).
 fn use_condition(
     s: &std::rc::Rc<Shared>,
     engine_cell: &Weak<OnceCell<Engine>>,
     value: &Dynamic,
     what: &str,
-) -> RhaiResult<bool> {
+) -> RhaiResult<Option<bool>> {
     if let Some(f) = value.clone().try_cast::<FnPtr>() {
+        if s.collecting.get() {
+            return Ok(None);
+        }
         let r = call_now(s, engine_cell, f, ())?;
-        as_bool(&r, what)
+        as_bool(&r, what).map(Some)
     } else {
-        as_bool(value, what)
+        as_bool(value, what).map(Some)
     }
 }
 
@@ -1223,9 +1455,11 @@ fn use_code(
     match call_now(s, engine_cell, func, ()) {
         Ok(_) => Ok(()),
         Err(e) if catch => {
-            s.use_log
-                .borrow_mut()
-                .push(format!("{name}: {key} failed: {e}"));
+            s.use_log.borrow_mut().push(UseReport::note(
+                name.to_string(),
+                None,
+                format!("{name}: {key} failed: {e}"),
+            ));
             Ok(())
         }
         Err(e) => Err(e),
@@ -1273,9 +1507,9 @@ fn exe_on_path(exe: &str) -> bool {
 
 /// `ensure_system_package`: a name ("rg"), a list, or a map of
 /// executable (or a file path) to a package name or an install command.
-/// Anything missing is installed in the background; returns the commands
-/// started.
-fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
+/// Anything missing is installed in the background unless `spawn` is false;
+/// returns what was wanted either way.
+fn ensure_system_packages(value: &Dynamic, spawn: bool) -> RhaiResult<Vec<SystemPackageNeed>> {
     let mut wanted: Vec<(String, Option<String>)> = Vec::new();
     if let Some(m) = value.clone().try_cast::<Map>() {
         for (exe, how) in &m {
@@ -1289,9 +1523,14 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
             wanted.push((exe, None));
         }
     }
-    let mut started = Vec::new();
+    let mut needs = Vec::new();
     for (exe, how) in wanted {
         if exe_on_path(&exe) {
+            needs.push(SystemPackageNeed {
+                executable: exe,
+                command: None,
+                present: true,
+            });
             continue;
         }
         let command = match how {
@@ -1299,10 +1538,9 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
             Some(package) => system_install_command(&package),
             None => system_install_command(&exe),
         };
-        let Some(command) = command else {
-            continue;
-        };
-        #[cfg(not(test))]
+        if spawn
+            && !cfg!(test)
+            && let Some(command) = &command
         {
             let (shell, flag) = if cfg!(windows) {
                 ("cmd", "/C")
@@ -1310,15 +1548,19 @@ fn ensure_system_packages(value: &Dynamic) -> RhaiResult<Vec<String>> {
                 ("sh", "-c")
             };
             let _ = std::process::Command::new(shell)
-                .args([flag, &command])
+                .args([flag, command])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn();
         }
-        started.push(command);
+        needs.push(SystemPackageNeed {
+            executable: exe,
+            command,
+            present: false,
+        });
     }
-    Ok(started)
+    Ok(needs)
 }
 
 /// `use_package(name, spec)`: a `forge.plugin.declare` plus the keys and
@@ -1338,9 +1580,22 @@ fn use_package_spec(
     engine_cell: &Weak<OnceCell<Engine>>,
     name: String,
     spec: &Map,
+    line: Option<usize>,
 ) -> RhaiResult<()> {
     for key in spec.keys() {
         if !USE_PACKAGE_KEYS.contains(&key.as_str()) {
+            let where_ = line.map(|n| format!(" (line {n})")).unwrap_or_default();
+            let message = format!("{name}: skipped, unknown key {key:?}{where_}");
+            s.use_log.borrow_mut().push(UseReport {
+                name: name.clone(),
+                line,
+                message,
+                outcome: UseOutcome::Error {
+                    message: format!("unknown key {key:?}"),
+                },
+                deferred: Vec::new(),
+                system_packages: Vec::new(),
+            });
             return Err(err(format!(
                 "unknown key {key:?} in use_package (known: {})",
                 USE_PACKAGE_KEYS.join(", ")
@@ -1350,6 +1605,7 @@ fn use_package_spec(
     // spellings: autoload is commands, diminish is delight, bind*
     // is bind (Forge has no override map), pin is the git tag/branch/commit.
     let mut spec = spec.clone();
+    let pinned = spec.contains_key("pin");
     for (from, to) in [
         ("autoload", "commands"),
         ("diminish", "delight"),
@@ -1387,38 +1643,89 @@ fn use_package_spec(
         Some(v) => as_bool(v, "catch")?,
         None => false,
     };
-    let skip = |why: &str| {
-        s.use_log
-            .borrow_mut()
-            .push(format!("{name}: skipped, {why}"));
+    let collecting = s.collecting.get();
+    let mut deferred = Vec::new();
+    let mut system_packages = Vec::new();
+    let mut conditional = None;
+    let skip = |why: &str, reason: SkipReason| {
+        let message = format!("{name}: skipped, {why}");
+        s.use_log.borrow_mut().push(UseReport {
+            name: name.clone(),
+            line,
+            message,
+            outcome: UseOutcome::Skipped { reason },
+            deferred: Vec::new(),
+            system_packages: Vec::new(),
+        });
     };
 
     // Whether to use it at all.
     if let Some(v) = spec.get("disabled")
         && as_bool(v, "disabled")?
     {
-        skip("disabled");
+        skip("disabled", SkipReason::Disabled);
         return Ok(());
     }
     for key in ["when", "if"] {
-        if let Some(v) = spec.get(key)
-            && !use_condition(s, engine_cell, v, key)?
-        {
-            skip(&format!("{key} was false"));
-            return Ok(());
+        if let Some(v) = spec.get(key) {
+            match use_condition(s, engine_cell, v, key)? {
+                Some(true) => {}
+                Some(false) => {
+                    skip(
+                        &format!("{key} was false"),
+                        if key == "when" {
+                            SkipReason::WhenFalse
+                        } else {
+                            SkipReason::IfFalse
+                        },
+                    );
+                    return Ok(());
+                }
+                None => {
+                    conditional = Some(key.to_string());
+                    if !deferred.contains(&DeferredCode::Condition) {
+                        deferred.push(DeferredCode::Condition);
+                    }
+                }
+            }
         }
     }
-    if let Some(v) = spec.get("unless")
-        && use_condition(s, engine_cell, v, "unless")?
-    {
-        skip("unless was true");
-        return Ok(());
+    if let Some(v) = spec.get("unless") {
+        match use_condition(s, engine_cell, v, "unless")? {
+            Some(false) => {}
+            Some(true) => {
+                skip("unless was true", SkipReason::UnlessTrue);
+                return Ok(());
+            }
+            None => {
+                conditional = Some("unless".to_string());
+                if !deferred.contains(&DeferredCode::Condition) {
+                    deferred.push(DeferredCode::Condition);
+                }
+            }
+        }
     }
-    if let Some(v) = spec.get("requires") {
+    let requires = match spec.get("requires") {
+        Some(v) => name_or_names(v, "requires")?,
+        None => Vec::new(),
+    };
+    {
         let declared: Vec<String> = s.uses.borrow().iter().map(|u| u.name.clone()).collect();
-        for need in name_or_names(v, "requires")? {
-            if !declared.contains(&need) {
-                skip(&format!("requires {need}, which isn't declared"));
+        for need in &requires {
+            if !declared.contains(need) {
+                let where_ = line.map(|n| format!(" (line {n})")).unwrap_or_default();
+                let message =
+                    format!("{name}: skipped, requires {need}, which isn't declared{where_}");
+                s.use_log.borrow_mut().push(UseReport {
+                    name: name.clone(),
+                    line,
+                    message,
+                    outcome: UseOutcome::Skipped {
+                        reason: SkipReason::MissingRequires(need.clone()),
+                    },
+                    deferred: Vec::new(),
+                    system_packages: Vec::new(),
+                });
                 return Ok(());
             }
         }
@@ -1432,24 +1739,49 @@ fn use_package_spec(
         && spec.get("index").is_none()
     {
         // ensure: false with nothing to fetch: a built-in or hand-installed one.
-        s.use_log
-            .borrow_mut()
-            .push(format!("{name}: not installed by Forge (ensure: false)"));
+        s.use_log.borrow_mut().push(UseReport::note(
+            name.clone(),
+            line,
+            format!("{name}: not installed by Forge (ensure: false)"),
+        ));
     }
 
     if let Some(v) = spec.get("ensure_system_package") {
-        for c in ensure_system_packages(v)? {
+        system_packages = ensure_system_packages(v, !collecting)?;
+        for need in &system_packages {
+            let Some(command) = &need.command else {
+                continue;
+            };
+            let message = if collecting {
+                format!("{name}: would install a system package: {command}")
+            } else {
+                format!("{name}: installing a system package: {command}")
+            };
             s.use_log
                 .borrow_mut()
-                .push(format!("{name}: installing a system package: {c}"));
+                .push(UseReport::note(name.clone(), line, message));
         }
     }
 
     if let Some(v) = spec.get("preface") {
-        use_code(s, engine_cell, &name, "preface", v, catch)?;
+        if collecting {
+            if !v.is::<FnPtr>() {
+                return Err(err("use_package: preface is a function, like || { ... }"));
+            }
+            deferred.push(DeferredCode::Preface);
+        } else {
+            use_code(s, engine_cell, &name, "preface", v, catch)?;
+        }
     }
     if let Some(init) = spec.get("init") {
-        use_code(s, engine_cell, &name, "init", init, catch)?;
+        if collecting {
+            if !init.is::<FnPtr>() {
+                return Err(err("use_package: init is a function, like || { ... }"));
+            }
+            deferred.push(DeferredCode::Init);
+        } else {
+            use_code(s, engine_cell, &name, "init", init, catch)?;
+        }
     }
     if let Some(custom) = spec.get("custom") {
         for (opt, value) in as_map(custom.clone(), "custom")? {
@@ -1484,6 +1816,17 @@ fn use_package_spec(
             declaration.insert((*key).into(), value.clone());
         }
     }
+    let frozen = match spec.get("freeze") {
+        Some(value) => as_bool(value, "freeze")?,
+        None => false,
+    };
+    if pinned || frozen {
+        declaration.insert("freeze".into(), Dynamic::from(true));
+    }
+    if let Some(allow) = spec.get("allow_history_rewrite") {
+        let allow = as_bool(allow, "allow_history_rewrite")?;
+        declaration.insert("allow_history_rewrite".into(), Dynamic::from(allow));
+    }
     // vc: a url, or #{ url, rev, make, lisp_dir, features } as :vc.
     let (mut git_dir, mut build, mut features) = (None, None, Vec::new());
     if let Some(vc) = spec.get("vc") {
@@ -1513,7 +1856,14 @@ fn use_package_spec(
         }
     }
     let config_fn = match spec.get("config") {
-        Some(c) if c.is::<FnPtr>() => Some(c.clone()),
+        Some(c) if c.is::<FnPtr>() => {
+            if collecting {
+                deferred.push(DeferredCode::Config);
+                None
+            } else {
+                Some(c.clone())
+            }
+        }
         Some(c) => {
             declaration.insert("config".into(), c.clone());
             None
@@ -1607,12 +1957,30 @@ fn use_package_spec(
             Some(v) => as_bool(v, "no_require")?,
             None => false,
         };
+        let build_env = match spec.get("build_env") {
+            Some(v) => name_or_names(v, "build_env")?,
+            None => Vec::new(),
+        };
+        let build_timeout_secs = match spec.get("build_timeout_secs") {
+            Some(v) => {
+                let secs = as_int(v, "build_timeout_secs")?;
+                if secs <= 0 {
+                    return Err(err("build_timeout_secs must be positive"));
+                }
+                Some(secs as u64)
+            }
+            None => None,
+        };
         if let Some(u) = s.uses.borrow_mut().iter_mut().find(|u| u.name == name) {
             u.load_path = load_path;
             u.no_require = no_require;
             u.git_dir = git_dir;
             u.build = build;
             u.features = features;
+            u.build_env = build_env;
+            u.build_timeout_secs = build_timeout_secs;
+            u.requires = requires;
+            u.line = line;
         }
     }
     let lazy = s
@@ -1621,14 +1989,29 @@ fn use_package_spec(
         .iter()
         .find(|u| u.name == name)
         .is_some_and(|u| u.lazy());
-    s.use_log.borrow_mut().push(format!(
-        "{name}: {}",
-        if lazy {
-            "deferred until used"
-        } else {
-            "loads at startup"
-        }
-    ));
+    let message = if let Some(key) = &conditional {
+        format!("{name}: conditional on {key}, not evaluated")
+    } else {
+        format!(
+            "{name}: {}",
+            if lazy {
+                "deferred until used"
+            } else {
+                "loads at startup"
+            }
+        )
+    };
+    s.use_log.borrow_mut().push(UseReport {
+        name: name.clone(),
+        line,
+        message,
+        outcome: match &conditional {
+            Some(key) => UseOutcome::Conditional { key: key.clone() },
+            None => UseOutcome::Collected { lazy },
+        },
+        deferred,
+        system_packages,
+    });
 
     for (ext, mode) in &associations {
         s.with_editor(|ed| ed.modes.associate(ext, mode).map_err(|e| e.to_string()))?;
@@ -1752,6 +2135,16 @@ fn opt_get(settings: &Settings, name: &str) -> RhaiResult<Dynamic> {
             .as_ref()
             .map(|list| Dynamic::from_array(list.iter().cloned().map(Dynamic::from).collect()))
             .unwrap_or(Dynamic::UNIT),
+        "package_index_keys" => settings
+            .package_index_keys
+            .as_ref()
+            .map(|list| Dynamic::from_array(list.iter().cloned().map(Dynamic::from).collect()))
+            .unwrap_or(Dynamic::UNIT),
+        "package_allowed_sources" => settings
+            .package_allowed_sources
+            .as_ref()
+            .map(|list| Dynamic::from_array(list.iter().cloned().map(Dynamic::from).collect()))
+            .unwrap_or(Dynamic::UNIT),
         "message_log_max" => match settings.message_log_max {
             Some(MessageLogMax::Unlimited) => Dynamic::from(true),
             Some(MessageLogMax::Off) => Dynamic::from(false),
@@ -1868,6 +2261,44 @@ fn opt_set(settings: &mut Settings, name: &str, value: Dynamic) -> RhaiResult<()
                     "forge.opt.package_index is a location (path or URL) or a list of them",
                 ));
             }
+        }
+        "package_index_keys" => {
+            if is_nil {
+                settings.package_index_keys = None;
+            } else if value.is::<ImmutableString>() {
+                settings.package_index_keys = Some(vec![as_string(&value, "package_index_keys")?]);
+            } else if value.is::<Vec<Dynamic>>() {
+                let list = as_array(value, "package_index_keys")?
+                    .iter()
+                    .map(|d| as_string(d, "package_index_keys"))
+                    .collect::<RhaiResult<Vec<_>>>()?;
+                settings.package_index_keys = Some(list);
+            } else {
+                return Err(err(
+                    "forge.opt.package_index_keys is a Minisign public key or a list of them",
+                ));
+            }
+        }
+        "package_allowed_sources" => {
+            let list = if is_nil {
+                None
+            } else if value.is::<ImmutableString>() {
+                Some(vec![as_string(&value, "package_allowed_sources")?])
+            } else if value.is::<Vec<Dynamic>>() {
+                Some(
+                    as_array(value, "package_allowed_sources")?
+                        .iter()
+                        .map(|d| as_string(d, "package_allowed_sources"))
+                        .collect::<RhaiResult<Vec<_>>>()?,
+                )
+            } else {
+                return Err(err(
+                    "forge.opt.package_allowed_sources is a host, URL, path, or a list of them",
+                ));
+            };
+            crate::package_source::SourceAllowlist::new(list.as_deref().unwrap_or_default())
+                .map_err(err)?;
+            settings.package_allowed_sources = list;
         }
         "message_log_max" => {
             if is_nil {
@@ -2164,6 +2595,7 @@ fn keymap_remap(
 }
 
 fn command_run(s: &std::rc::Rc<Shared>, name: &str, arg: Option<i64>) -> RhaiResult<()> {
+    s.deny_while_collecting("forge.command.run")?;
     if !s.with_editor(|ed| Ok(ed.commands.contains(name)))? {
         if s.in_init.get() {
             s.effects
@@ -2181,6 +2613,7 @@ fn command_run(s: &std::rc::Rc<Shared>, name: &str, arg: Option<i64>) -> RhaiRes
 }
 
 fn ui_input(s: &std::rc::Rc<Shared>, opts: Option<Map>, then: FnPtr) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.ui.input")?;
     let (prompt, default) = match opts {
         Some(o) => (map_string(&o, "prompt")?, map_string(&o, "default")?),
         None => (None, None),
@@ -2201,6 +2634,7 @@ fn ui_select(
     opts: Option<Map>,
     then: FnPtr,
 ) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.ui.select")?;
     let items = items
         .iter()
         .map(|d| as_string(d, "select item"))
@@ -2359,6 +2793,7 @@ fn process_run(
     then: FnPtr,
 ) -> RhaiResult<u32> {
     use std::time::Duration;
+    s.deny_while_collecting("forge.process.run")?;
     if s.project.borrow().is_some() {
         return Err(err(
             "forge.process.run isn't available in project init.rhai files",
@@ -2468,6 +2903,7 @@ fn http_get(
     headers: Option<Map>,
     then: FnPtr,
 ) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.http.get")?;
     if s.project.borrow().is_some() {
         return Err(err(
             "forge.http.get isn't available in project init.rhai files",
@@ -2495,6 +2931,7 @@ fn http_request(
     opts: Option<Map>,
     then: FnPtr,
 ) -> RhaiResult<u32> {
+    s.deny_while_collecting("forge.http.request")?;
     if s.project.borrow().is_some() {
         return Err(err(
             "forge.http.request isn't available in project init.rhai files",
@@ -2532,6 +2969,7 @@ fn env_set(
     value: Dynamic,
     substitute: bool,
 ) -> RhaiResult<()> {
+    s.deny_while_collecting("forge.env.set")?;
     let value = if value.is_unit() {
         None
     } else if let Some(text) = value.clone().try_cast::<ImmutableString>() {

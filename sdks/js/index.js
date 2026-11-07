@@ -2,7 +2,7 @@
 //
 // A plugin is a WebAssembly component for the `forge:editor/plugin` world
 // (wit/forge-editor.wit). The raw API is importable as ES modules
-// ('forge:editor/buffers@0.1.30', ...); this module adds the plumbing that
+// ('forge:editor/buffers@0.1.31', ...); this module adds the plumbing that
 // makes the callback style pleasant, like the Rust SDK:
 //
 //   import { plugin, command, readString, Buffer } from '@forge-editor/plugin';
@@ -22,14 +22,14 @@
 // arrives, and prompts, messages and commands.run take effect after the
 // current call returns. Functions that can fail throw an Error.
 
-import * as commands from 'forge:editor/commands@0.1.30';
-import * as events from 'forge:editor/events@0.1.30';
-import * as minibuffer from 'forge:editor/minibuffer@0.1.30';
-import { log as hostLog } from 'forge:editor/log@0.1.30';
-export { Buffer } from 'forge:editor/buffers@0.1.30';
-export * as keymap from 'forge:editor/keymap@0.1.30';
-export * as modes from 'forge:editor/modes@0.1.30';
-export * as decorations from 'forge:editor/decorations@0.1.30';
+import * as commands from 'forge:editor/commands@0.1.31';
+import * as events from 'forge:editor/events@0.1.31';
+import * as minibuffer from 'forge:editor/minibuffer@0.1.31';
+import { log as hostLog } from 'forge:editor/log@0.1.31';
+export { Buffer } from 'forge:editor/buffers@0.1.31';
+export * as keymap from 'forge:editor/keymap@0.1.31';
+export * as modes from 'forge:editor/modes@0.1.31';
+export * as decorations from 'forge:editor/decorations@0.1.31';
 export { commands, events, minibuffer };
 
 const commandFns = new Map();

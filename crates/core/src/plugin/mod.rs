@@ -12,6 +12,7 @@
 
 pub mod api;
 pub mod host;
+pub mod profile;
 pub mod registry;
 pub mod runtime;
 pub mod summary;

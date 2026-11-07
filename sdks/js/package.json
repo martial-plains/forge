@@ -16,7 +16,7 @@
   "scripts": {
     "types": "jco guest-types wit --world-name plugin-with-processes -o types"
   },
-  "forgeWit": "0.1.30",
+  "forgeWit": "0.1.31",
   "dependencies": {
     "@bytecodealliance/componentize-js": "^0.23.0",
     "@bytecodealliance/preview2-shim": "^0.26.0",

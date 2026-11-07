@@ -222,7 +222,7 @@ editor. So a request returns at once and its answer arrives later:
 
 A `response` is `{ status: u16, headers: list<tuple<string, string>>, body:
 list<u8> }`, and `headers` is a list of `(name, value)` pairs. A 4xx or 5xx
-status comes back as an `Err` (like `curl --fail`), as do connection
+status comes back as an `Err`, as do connection
 failures and a request the server doesn't answer in time. Forge sends its
 own `User-Agent` unless you pass one.
 
@@ -244,6 +244,36 @@ interface covers both kinds.
 - `set-minibuffer-ui(vertical, lines)` lists candidates under every prompt
   that has them (M-x, C-x b, C-x C-f, plugin questions). C-n / C-p move,
   RET picks, TAB inserts, and M-RET takes the input as typed.
+- `set-layout(layout, lines)` (0.1.31) says how to draw that list:
+  `vertical` (the default, top-down), `flat` (every candidate on one row),
+  `grid` (fill up to `lines` rows across), `reverse` (the selection sits
+  near the bottom, the way vertico-reverse reads), `unobtrusive` (show only
+  the selected candidate) or `buffer` (list in the `*Completions*` buffer
+  in another window, as TAB does). `lines` is clamped to 1..50 and also
+  updates the count `set-minibuffer-ui` chose.
+- `group(category)` (0.1.31) has Forge call this plugin's
+  `completion-handler.group(category, candidates)` once per list and show
+  the matching headings; an empty name leaves a candidate ungrouped.
+  `set-group-format("-- %s --")` changes the heading, `%s` being the group
+  name, and `""` hides headings. Grouping applies to the vertical layouts
+  (`reverse` included); `flat`, `grid`, `unobtrusive` and `buffer` draw no
+  headings. Row labels follow the rows whichever layout draws.
+- `set-row-labels(["a", "s", "d"])` (0.1.31) shows a short label before
+  each visible row, in order, for commands like vertico-quick; an empty
+  list clears them. `jump-to-row(row, accept)` selects the candidate on
+  visible row `row` (0 is the top), taking it as RET would when `accept`
+  is true. Labels are a display aid: a list longer than the labels simply
+  leaves the rest unlabeled.
+- `minibuffer.suspend()` (0.1.31) hides the open prompt without answering
+  it, `sessions()` lists the prompts this plugin suspended (newest first,
+  as `{category, prompt, input, total}`), and `resume(index)` brings one
+  back, suspending the open prompt first. A plugin uses this to offer a
+  picker from inside a picker without nesting prompts.
+- `minibuffer.set-input(text)` (0.1.31) replaces what is typed in the open
+  prompt, leaving the cursor at the end; it does nothing when no prompt is
+  open. `minibuffer.on-open(command)` (0.1.31) runs one of the plugin's own
+  commands after a prompt opens, so a command can read `input`/`selected`
+  and adjust it.
 - `set-minibuffer-cycle(true)` makes C-n at the last candidate wrap around
   to the first (and C-p at the first to the last), and similarly for page
   moves. Off by default (vertico-cycle); a plugin that isn't loaded leaves
@@ -505,7 +535,7 @@ plugin takes its menu and its items away again.
   Rhai state as your init.rhai. **It only runs once the user has granted
   it.** That is the `.dir-locals` problem, answered: code from a directory
   you may have just cloned is the user's decision, not Forge's.
-  It is asked for and remembered in `~/.config/forge/plugin-grants.toml`,
+  It is asked for and remembered in `~/.local/state/forge/plugin-grants.toml`,
   but in a section of its own rather than as one of a plugin's
   capabilities — a manifest can't ask for it, and it isn't one:
 
@@ -689,8 +719,9 @@ wrong types before loading.
 When a plugin asks for something it hasn't been granted, Forge shows the
 request and every interface the component imports, and asks: `y` grants
 and loads, `n` loads it without those permissions, `C-g` doesn't load it.
-Answers are kept in `~/.config/forge/plugin-grants.toml`; Forge asks again
-only when a plugin wants something new. Users can also grant in init.rhai,
+Answers are kept in `~/.local/state/forge/plugin-grants.toml`, bound to the
+plugin's binary; Forge asks again when a plugin wants something new or the
+same name points at a different binary. Users can also grant in init.rhai,
 and then aren't asked at all:
 
 ```rhai
@@ -707,6 +738,38 @@ errors WASI defines for that (no preopened directories, `access-denied`),
 not a crash, so it can carry on without the feature. Granted directories
 appear under their real paths. Stdout and stderr always work; they go to
 `*Messages*`. Clocks and random numbers are always available.
+
+## Sharing your configuration
+
+When syncing a Forge configuration, share `init.rhai` and `forge-lock.toml`.
+Keep per-machine approvals, installed plugin binaries, saved sessions and
+credential files private. Interactive plugin approvals are stored in
+`~/.local/state/forge/plugin-grants.toml`; an older config-directory file is
+migrated on first use.
+
+| Share | Keep local |
+|---|---|
+| `init.rhai`, `forge-lock.toml` | `plugin-grants.toml`, authinfo/netrc, `plugins/`, `session.toml` |
+
+Add these rules to the `.gitignore` for a configuration or plugin workspace:
+
+```gitignore
+# Forge machine-local state and credentials
+forge-lock.local.toml
+plugin-grants.toml
+plugins/
+session.toml
+authinfo
+.authinfo
+.authinfo.gpg
+netrc
+.netrc
+```
+
+Treat an unfamiliar `init.rhai` like executable code, not passive settings.
+Read it before running or copying it: it can run programs, load plugins and
+request access to files, processes or the network. Review the referenced
+plugin sources and lock entries as well.
 
 ## The environment (0.1.13)
 
@@ -760,6 +823,7 @@ version = "0.1.0"
 description = "Language Server Protocol client"
 url = "lsp-0.1.0.wasm"      # relative to the index, or a full URL
 sha256 = "9f2c..."
+release_notes = "Fixes reconnect handling."
 ```
 
 `forge --package-entry lsp.wasm [--url URL]` prints the entry for a
@@ -770,6 +834,47 @@ Point Forge at one or more indexes in init.rhai:
 forge.opt["package_index"] = "https://example.org/forge/index.toml";   // or a list
 ```
 
+An index can have a detached [Minisign](https://jedisct1.github.io/minisign/)
+signature beside it, named `index.toml.minisig` (Forge adds `.minisig`
+to the index location, before any query or fragment). Put the public
+keys in `package_index_keys`; Forge verifies the exact downloaded bytes
+before parsing the TOML and accepts a signature from any listed key, so
+you can add a new key before removing the old one:
+
+```rhai
+forge.opt["package_index_keys"] = ["RWQ...", "RWQ..."];   // or one key
+forge.opt["package_index_strict"] = true;                 // optional
+```
+
+When keys are configured, a signature that is present must verify; an
+unsigned index is still accepted unless strict mode is on. Strict mode
+refuses unsigned indexes and needs at least one key. Sign an index with
+`minisign -S -s secret.key -m index.toml`; the signature is written as
+`index.toml.minisig`.
+
+To restrict where indexes and packages may come from, set
+`package_allowed_sources`. An unset option leaves sources unrestricted; an
+empty list denies all. Entries are exact hosts (`github.com`, any scheme or
+port), subdomain suffixes (`*.example.org`, not the apex), exact sources
+(`https://example.org/forge/index.toml`), or directory prefixes ending in
+`/` (`https://example.org/forge/`, `/srv/forge/pkgs/`, `file:///srv/forge/`).
+A URL matches the same scheme, host and port; an exact index URL also covers
+its `.minisig` sibling, and HTTP redirect targets must match the same list.
+Allowing an index does not implicitly allow the packages it lists, so use a
+host or directory-prefix rule for those.
+
+```rhai
+forge.opt["package_allowed_sources"] = [
+  "github.com",
+  "https://example.org/forge/",
+];
+```
+
+For Git packages, `package_repository_checks` (off by default) asks GitHub
+whether the repository is archived or has moved to another owner/name. The
+checks are advisory: failures are ignored and warnings never block an
+install or upgrade.
+
 The commands:
 
 - `M-x list-packages` shows what's available and installed. In that
@@ -777,11 +882,23 @@ The commands:
   upgrades everything.
 - `M-x package-install`, `package-delete`, `package-upgrade-all` and
   `package-refresh-contents` do the same from anywhere.
+- `M-x package-upgrade NAME` upgrades one installed package after showing
+  index release notes and asking for confirmation. If the new manifest asks
+  for capabilities the lockfile did not record, the review lists the
+  additions and asks again; removals are only listed.
+- `M-x package-upgrade-all-dry-run` lists changed versions or commits and
+  the build commands at the new revision without changing plugin or data
+  files. `C-u M-x package-upgrade-all` shows the same plan.
+- Automatic upgrades skip declarations with `pin` or `freeze: true`.
+  Index declarations may select a semver range, for example
+  `version: "^1.2"`.
 
-Downloads use curl, in the background. A download whose sha256 doesn't
+Downloads happen in the background. A download whose sha256 doesn't
 match the index isn't installed. Installed plugins go in the plugins
 directory, recorded in `packages.toml` there, and load like any other:
-Forge asks for their permissions.
+Forge asks for their permissions. An unattended upgrade (`--batch` or
+`--headless`) stops when it would add capabilities: it reports what changed
+and leaves the installed plugin and lockfile as they were.
 
 There is no central index yet: any static file host (a Git repository's
 raw files, GitHub Pages, S3) can serve one.
@@ -812,19 +929,126 @@ How it's built, in order:
 2. An executable `build.sh`, run as `./build.sh -o "$OUT"`. That's what
    the Lua and C SDKs' scripts take.
 3. `Cargo.toml`: `cargo build --release --target wasm32-wasip2`.
-4. `package.json` with a `"forge"` field: `npm install`, then the JS
-   SDK's `forge-plugin build`.
+4. `package.json` with a `"forge"` field: `npm ci --ignore-scripts`
+   (the repository must commit `package-lock.json` or
+   `npm-shrinkwrap.json`), then `npx --no-install forge-plugin build`.
 5. Exactly one `.wasm` at the top or in `dist/`, used as is.
 
 A build runs code from the repository with your rights, so Forge shows
 the command and asks first. It asks again only if the command changes.
 Git's and the build's output go to `*Package Build*`.
 
+Builds get a scrubbed environment. By default they inherit only `PATH`,
+`HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, the temporary-directory
+variables, the Rust toolchain variables (`CARGO_HOME`, `RUSTUP_HOME`),
+the Windows system variables, and proxy/certificate variables such as
+`HTTP(S)_PROXY` and `NODE_EXTRA_CA_CERTS`. Tokens such as `NPM_TOKEN` and
+`SSH_AUTH_SOCK` are not passed. A declaration can add names or `PREFIX_*`
+patterns with `build_env` and change the limit with
+`build_timeout_secs` (default 30 minutes); a build that runs longer is
+killed and reported as timed out. `*Package Build*` lists the variable
+names passed through, never their values. Files under `HOME` are still
+readable. Because `npm ci` runs with `--ignore-scripts`, a package whose
+dependencies need a `postinstall` step (native modules) will not build;
+the author can commit a reviewed `build = "..."` instead.
+
 `M-x package-vc-upgrade` and `package-vc-upgrade-all` fetch, check out
 the same rev again (a branch moves on, a tag stays unless it was moved)
-and rebuild only if the commit changed. `package-upgrade-all` includes
-them. `package-delete` removes the clone too. `packages.toml` records
-the repository, rev, commit and build command of each.
+and rebuild only if the commit changed. Forge shows commit subjects before
+applying and flags `BREAKING` markers. It also warns when the new commit is
+not a descendant of the locked commit (a force-push or rewritten history)
+and when a pinned tag now points to a different commit. These warnings do
+not block an interactive upgrade. Unattended runs stop on a rewritten
+history before installing anything unless the declaration sets
+`allow_history_rewrite: true`; moved-tag warnings are informational.
+Ancestry needs commit objects, so Forge fetches old and new commits into a
+scratch repository rather than changing the real checkout. Before
+installing the built component it applies the same capability diff as an
+index upgrade. Unattended runs also stop on capability additions; a
+checkout and build may already exist, but the installed component and lock
+entry are not replaced. `C-u` on either Git upgrade command shows a plan
+using `git ls-remote` for revisions and tags and a scratch repository for
+ancestry, without fetching into or changing the real checkout, and detects
+the build command in the remote revision rather than reusing the installed
+one. Failed builds, smoke tests or lock recording restore the previous
+artifact, installed record and lock entry. A smoke test loads the candidate
+in an isolated editor, runs its `init`, and checks that manifest commands
+registered. `package-upgrade-all` includes Git packages and rolls back the
+whole run if any package fails; `package-delete` removes the clone too.
+`packages.toml` records the repository, rev, commit and build command of
+each.
+
+Updates keep a journal beside the Forge data directory. If Forge exits
+before an update finishes, the next start restores the previous artifact,
+installed record and lock entry. A failed recovery keeps the journal and
+blocks further package updates until it is repaired.
+
+An index entry can include a `release_notes` string; Forge displays it in
+the review buffer before asking to apply an update. Semver requirements use
+standard Rust semver syntax (`^1.2`, `~1.2.3`, or an exact comparator).
+
+### Package operation log
+
+`M-x package-log` shows one line per completed package operation: fetch,
+build, install, upgrade, and rollback, with its duration and any recorded
+source, revision, commit, version, command or error. `M-x package-log-export`
+shows the same records as JSON lines and asks where to write them.
+
+Records use the additive schema `forge.package.operation`, version `1`.
+Readers should ignore unknown fields. Environment values are never recorded.
+URL credentials, sensitive query values, authentication headers, and known
+token shapes are redacted before a line is written.
+
+The log lives in the state directory as `package-operations.jsonl`
+(`$XDG_STATE_HOME/forge` or `~/.local/state/forge` by default). When it
+reaches 1 MiB, it rotates to `package-operations.jsonl.1`; both files are
+read for the buffer and export. Each record is appended as one JSON line.
+A partial final line left by a killed process is dropped before the next
+append.
+
+### Lockfiles and snapshots
+
+`forge-lock.toml` next to `init.rhai` records each declared plugin's
+resolved source, commit and artifact hash, plus its declaration hash,
+source-build recipe hash, tier and capabilities. Older lockfiles without
+`lock_version` continue to load. Unknown fields are retained when Forge
+rewrites a lockfile. A malformed shared or local lock file is reported with
+the file name and parse problem, and Forge leaves the file untouched.
+
+An optional ignored `forge-lock.local.toml` in the same directory overlays
+shared entries by plugin name. Keep machine-specific changes there rather
+than changing the shared lockfile.
+
+- `M-x package-snapshot-save` saves the shared lock and its verified
+  installed artifacts under a name, including components loaded from a
+  custom `load_path`.
+- `M-x package-snapshot-list`, `package-snapshot-diff` and
+  `package-snapshot-restore` list, compare and restore saved snapshots.
+  Restoring a snapshot also removes package-managed plugins installed
+  after it.
+- `M-x package-restore` puts locked artifacts back from Forge's local
+  content-addressed artifact store. It reports when a resolved commit or
+  artifact hash differs. If an artifact is not available locally, restore
+  stops with an error rather than resolving a different version. It also
+  removes package-managed plugins that `forge-lock.toml` does not list;
+  hand-copied plugins are left alone. A rerun after an interrupted restore
+  converges to the same files and lockfile.
+- `forge package declarations [--json]` collects `use_package`
+  declarations without starting the editor; closures are reported, not
+  run.
+- `forge package sync [--json]` installs what `init.rhai` declares,
+  honoring the commits and artifact hashes in `forge-lock.toml`, without
+  prompting. A locked package is fetched at its locked commit or URL when
+  it is not in the artifact cache, and the result must match the locked
+  sha256. Operations that need consent stop with exit status 3 unless
+  `--allow-build`, `--allow-capabilities` or `--allow-grants` is given.
+  The same approvals can be set with `forge.opt["package_allow_build"]`,
+  `forge.opt["package_allow_capabilities"]` and
+  `forge.opt["package_allow_grants"]`.
+- `forge package snapshot diff BEFORE AFTER --json` compares snapshots
+  without starting the editor and emits JSON.
+- `forge package lockfile diff BEFORE AFTER --json` compares two
+  lockfiles by path, without local overlays, and emits JSON.
 
 ## Limits
 
@@ -874,7 +1098,7 @@ per declaration saying whether it was skipped, deferred or loads at startup.
 `docs/init.example.rhai` describes each. The remaining use-package keywords
 work under their underscore names: `pin` (the git revision; `use_package` has no `rev` or `on` key, those are `forge.plugin.declare`'s), `load_path`, `no_require`,
 `autoload`, `diminish`, `bind_star`, `interpreter`, `magic`, `magic_fallback`,
-`custom_face`. `vc` is a git url or a map like `:vc`: `#{ url, rev, make, lisp_dir, features }`, where `make` is the build command (given `$OUT`), `lisp_dir` the subdirectory to build in, and `features` cargo features to turn on. The build still asks before it first runs.
+`custom_face`. `vc` is a git url or a map like `:vc`: `#{ url, rev, make, lisp_dir, features }`, where `make` is the build command (given `$OUT`), `lisp_dir` the subdirectory to build in, and `features` cargo features to turn on. `build_env` (names or `PREFIX_*` patterns) and `build_timeout_secs` are top-level keys on the same declaration. The build still asks before it first runs.
 
 A plugin declared with `use_package` or `forge.plugin.declare` can say the
 same up front, with `on` (see the plugin API), so it starts lazily without
@@ -887,6 +1111,25 @@ plugin lazily if its init did nothing but register things. One that shows
 a message, asks a question, runs a command, creates a buffer or binds keys
 in a single buffer always starts at startup. So does one whose manifest
 says `startup = true`. Deleting `~/.cache/forge` is always safe.
+
+### Profiling plugin startup
+
+`M-x plugin-profile` shows where the time went: for each plugin, the cache
+lookup, a compile on a cache miss, `init`, lazy start, and every command,
+event, answer, completion and process/HTTP callback it handled (count, total
+and longest). The same report is printed by `forge --profile-startup`, which
+exits without opening a terminal; add `--json` for the machine-readable
+report. Profiling starts with the plugin-loading phase, after init.rhai.
+
+Set `forge.opt["startup_budget_ms"] = 250` in init.rhai to warn in
+`*Messages*` when plugin startup exceeds that many milliseconds. Batch and
+headless runs exit nonzero when the budget is exceeded, and
+`forge --profile-startup` exits nonzero for a report over budget.
+
+Profiling is off by default, including when a budget is not set. While it is
+off the hot paths only read one atomic boolean: no clock is read, no lock is
+taken and no label is allocated. Tests use a manual clock, so a fixture's
+report is deterministic.
 
 **Reloading.** `M-x reload-plugin` loads a plugin again from its file.
 Forge also watches the files of loaded plugins and reloads one when it's
@@ -930,7 +1173,7 @@ load and the message says why, so a typo isn't silent. Later
 
 ## Versions and compatibility
 
-The package is `forge:editor@0.1.29`. 0.1.1 added buffer options,
+The package is `forge:editor@0.1.31`. 0.1.1 added buffer options,
 `indent-line` and the `decorations` interface; 0.1.2 added `processes`,
 the `process-handler` export (world `plugin-with-processes`) and
 `buffer.visit`, and background calls (`commands.register-background`,
@@ -1073,8 +1316,22 @@ string, and a command bound in the `isearch` prompt map runs without
 ending the search, with the pick resuming it. All are additions, so a
 plugin built against an earlier 0.1.x loads unchanged.
 0.1.29 adds `menus.define-for-mode`, so a menu can be tied to a major mode
-and hidden while that mode is off. It is an addition, so a plugin built
-against an earlier 0.1.x loads unchanged.
+and hidden while that mode is off, and `kill-ring.push`, which puts text
+on the kill ring and the clipboard as M-w does (Rhai's `forge.kill` is the
+same call). It is an addition, so a plugin built against an earlier 0.1.x
+loads unchanged.
+0.1.30 adds `minibuffer.on-input-changed` and
+`completion.on-selection-changed`, so a plugin's command runs whenever the
+text or the selected candidate in an open prompt changes.
+0.1.31 lets a plugin shape the prompt list itself:
+`completion.set-layout` (vertical, flat, grid, reverse, unobtrusive or
+buffer), `completion.group` with `completion.set-group-format`,
+`completion.set-row-labels` and `completion.jump-to-row`, and
+`completion.sessions` with `completion.resume` so prompts can be suspended
+and brought back. `minibuffer.set-input` replaces the open prompt's text,
+`minibuffer.suspend` hides it, and `minibuffer.on-open` runs a command
+after a prompt opens. All are additions, so a plugin built against an
+earlier 0.1.x loads unchanged.
 
 Completing in the minibuffer and moving a popup completion there need no
 WIT either: both build on the prompt list (which

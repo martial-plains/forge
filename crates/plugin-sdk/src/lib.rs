@@ -62,7 +62,7 @@ pub use wasip3;
 
 pub use bindings::forge::editor::buffers::Buffer;
 pub use bindings::forge::editor::completion::{
-    Candidate, DecoratedCandidate, DetailedCandidate, Location, Options, Selection,
+    Candidate, DecoratedCandidate, DetailedCandidate, Location, Options, PromptSession, Selection,
     SessionInfo as Session,
 };
 pub use bindings::forge::editor::decorations::{Decoration, Region, Replacement};
@@ -92,6 +92,7 @@ type OutputFn = Box<dyn FnMut(&[u8])>;
 type ExitFn = Box<dyn FnOnce(Option<i32>)>;
 type ProcessFns = (Option<OutputFn>, Option<ExitFn>);
 type AnnotateFn = Box<dyn Fn(&[String]) -> Vec<String>>;
+type GroupFn = Box<dyn Fn(&[String]) -> Vec<String>>;
 type SourceFn = Box<dyn Fn(CompletionRequest)>;
 type CommitFn = Box<dyn Fn(&str, &str)>;
 type LocateFn = Box<dyn Fn(&Selection)>;
@@ -103,6 +104,7 @@ thread_local! {
     static EVENTS: RefCell<Vec<(EventKind, std::rc::Rc<EventFn>)>> = const { RefCell::new(Vec::new()) };
     static PROCESSES: RefCell<HashMap<u32, ProcessFns>> = RefCell::new(HashMap::new());
     static ANNOTATORS: RefCell<HashMap<String, std::rc::Rc<AnnotateFn>>> = RefCell::new(HashMap::new());
+    static GROUPERS: RefCell<HashMap<String, std::rc::Rc<GroupFn>>> = RefCell::new(HashMap::new());
     static SOURCES: RefCell<HashMap<String, std::rc::Rc<SourceFn>>> = RefCell::new(HashMap::new());
     static COMMIT: RefCell<Option<CommitFn>> = const { RefCell::new(None) };
     static LOCATE: RefCell<Option<LocateFn>> = const { RefCell::new(None) };
@@ -623,6 +625,64 @@ pub fn annotate(category: &str, f: impl Fn(&[String]) -> Vec<String> + 'static) 
     completion::annotate_category(category);
 }
 
+/// Group the candidates of a minibuffer `category` ("command", "buffer",
+/// ...): `f` gets the list once, returns one group name per candidate (""
+/// for none). Group headings are drawn by [`set_group_format`]. Needs Forge
+/// 0.1.31.
+pub fn group(category: &str, f: impl Fn(&[String]) -> Vec<String> + 'static) {
+    GROUPERS.with(|g| {
+        g.borrow_mut()
+            .insert(category.to_string(), std::rc::Rc::new(Box::new(f)))
+    });
+    completion::group(category);
+}
+
+/// Draw group headings with `format`; `%s` is the group name, and "" hides
+/// them. Needs Forge 0.1.31.
+pub fn set_group_format(format: &str) {
+    completion::set_group_format(format);
+}
+
+/// Draw the minibuffer list as `layout`: "vertical", "flat", "grid",
+/// "reverse", "unobtrusive" or "buffer", up to `lines` rows (clamped to
+/// 1..50, and also updating the count from `set_minibuffer_ui`). Needs
+/// Forge 0.1.31.
+pub fn set_layout(layout: &str, lines: u32) {
+    let layout = match layout {
+        "flat" => completion::Layout::Flat,
+        "grid" => completion::Layout::Grid,
+        "reverse" => completion::Layout::Reverse,
+        "unobtrusive" => completion::Layout::Unobtrusive,
+        "buffer" => completion::Layout::Buffer,
+        _ => completion::Layout::Vertical,
+    };
+    completion::set_layout(layout, lines);
+}
+
+/// Show `labels` before the visible candidate rows, in order (vertico-quick
+/// style). An empty slice clears them. Needs Forge 0.1.31.
+pub fn set_row_labels(labels: &[&str]) {
+    let labels: Vec<String> = labels.iter().map(|s| s.to_string()).collect();
+    completion::set_row_labels(&labels);
+}
+
+/// Select the candidate on visible row `row` (0 is the top), optionally
+/// taking it as RET would. Needs Forge 0.1.31.
+pub fn jump_to_row(row: u32, accept: bool) {
+    completion::jump_to_row(row, accept);
+}
+
+/// Prompts the plugin suspended, newest first. Needs Forge 0.1.31.
+pub fn sessions() -> Vec<PromptSession> {
+    completion::sessions()
+}
+
+/// Resume suspended prompt `index`, setting the open one aside first.
+/// Needs Forge 0.1.31.
+pub fn resume(index: u32) {
+    completion::resume(index);
+}
+
 /// Run `command` (one this plugin defined with [`command`]) whenever the
 /// selection in an open list changes, so it can preview candidates as the
 /// cursor moves over them (consult's live preview). Needs Forge 0.1.20.
@@ -644,6 +704,24 @@ pub fn on_minibuffer_input_changed(command: &str) {
 /// 0.1.30.
 pub fn on_minibuffer_selection_changed(command: &str) {
     minibuffer::on_selection_changed(command);
+}
+
+/// Replace the text in the open prompt, leaving the cursor at the end.
+/// Does nothing when no prompt is open. Needs Forge 0.1.31.
+pub fn set_input(text: &str) {
+    minibuffer::set_input(text);
+}
+
+/// Run `command` whenever a prompt opens. The command can read the prompt
+/// with `minibuffer::input` and `completion::selected`. Needs Forge 0.1.31.
+pub fn on_prompt_open(command: &str) {
+    minibuffer::on_open(command);
+}
+
+/// Set the open prompt aside without answering it; [`resume`] brings it
+/// back. Does nothing when no prompt is open. Needs Forge 0.1.31.
+pub fn suspend_prompt() {
+    minibuffer::suspend();
 }
 
 /// How matching candidates are ordered: "length" (shortest first, then
@@ -1007,6 +1085,13 @@ pub mod dispatch {
         out
     }
 
+    pub fn group(category: String, candidates: Vec<String>) -> Vec<String> {
+        let f = GROUPERS.with(|g| g.borrow().get(&category).cloned());
+        let mut out = f.map(|f| f(&candidates)).unwrap_or_default();
+        out.resize(candidates.len(), String::new());
+        out
+    }
+
     pub fn complete(request: u32, source: String, buffer: u32, point: Position) {
         if let Some(f) = SOURCES.with(|s| s.borrow().get(&source).cloned()) {
             f(CompletionRequest {
@@ -1101,6 +1186,12 @@ macro_rules! forge_plugin {
                 candidates: ::std::vec::Vec<::std::string::String>,
             ) -> ::std::vec::Vec<::std::string::String> {
                 $crate::dispatch::annotate(category, candidates)
+            }
+            fn group(
+                category: ::std::string::String,
+                candidates: ::std::vec::Vec<::std::string::String>,
+            ) -> ::std::vec::Vec<::std::string::String> {
+                $crate::dispatch::group(category, candidates)
             }
             fn complete(
                 request: u32,

@@ -3,7 +3,7 @@
 //
 //   "forge": { "permissions": { "processes": ["pyright-langserver"] } }
 //
-// forge-plugin build then targets the plugin-with-processes world and
+// forge-plugin build then targets a world with the process handler and
 // exports the handler below. Output arrives when the editor is idle.
 //
 //   import { spawn } from '@forge-editor/plugin/process';
@@ -11,7 +11,7 @@
 //   p.write('some text');
 //   p.closeInput();
 
-import * as processes from 'forge:editor/processes@0.1.30';
+import * as processes from 'forge:editor/processes@0.1.31';
 
 const handlers = new Map();
 const decoder = new TextDecoder();

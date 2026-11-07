@@ -5,7 +5,8 @@
 use crate::app::App;
 use crate::caps::TermCaps;
 use forge_core::decoration::{
-    ANNOTATE_AGES, DecoFace, DiredFace, ModernFace, RAINBOW_DEPTHS, RainbowFace, VcFace,
+    ANNOTATE_AGES, DecoFace, DiredFace, ModernFace, PackageFace, RAINBOW_DEPTHS, RainbowFace,
+    VcFace,
 };
 use forge_core::display::{self, Face, Span as CoreSpan};
 use forge_core::syntax::SyntaxFace;
@@ -65,6 +66,7 @@ fn style(face: Face, caps: TermCaps, theme: &forge_core::theme::Theme) -> Style 
                 DecoFace::Rainbow(f) => rainbow_style(f),
                 DecoFace::Vc(f) => vc_style(f),
                 DecoFace::Modern(f) => modern_style(f, base),
+                DecoFace::Package(f) => package_style(f),
                 DecoFace::Term(t) => term_style(t),
             }
         }
@@ -146,6 +148,70 @@ fn style(face: Face, caps: TermCaps, theme: &forge_core::theme::Theme) -> Style 
         }
     }
     out
+}
+
+/// The soft surface behind the current line and a selected package row.
+/// A dim palette gray, so it sits quietly under text instead of the
+/// bright block reverse video makes.
+const SELECTION_BG: Color = Color::Indexed(236);
+
+/// Package manager: quiet titles and headings, a selected row on a soft
+/// surface, and semantic status marks in the terminal's own palette.
+/// Status labels use [`PackageFace::Neutral`], so they stay readable when
+/// a terminal's green, yellow or cyan is too light for small text.
+fn package_style(f: PackageFace) -> Style {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    match f {
+        PackageFace::Title | PackageFace::Heading | PackageFace::Primary => bold,
+        PackageFace::Selected => bold.bg(SELECTION_BG),
+        PackageFace::SelectedMarker => Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Ok => Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Warning => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Error => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        PackageFace::Info => Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Neutral => Style::default().add_modifier(Modifier::REVERSED),
+        PackageFace::Inactive => Style::default().add_modifier(Modifier::DIM),
+        PackageFace::Rule => Style::default().fg(Color::DarkGray),
+        PackageFace::TitlePill | PackageFace::TabActive => Style::default()
+            .fg(Color::White)
+            .bg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Accent => Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeWarning => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeInactive => Style::default()
+            .fg(Color::Black)
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeInfo => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeError => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BandWarning | PackageFace::Risk => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BandError => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
 /// org-modern: labels as blocks of background color, in grays and the
@@ -557,14 +623,16 @@ pub fn render_with(
                 }
             }
         }
-        // hl-line-mode: point's line gets a background.
+        // hl-line-mode: point's line gets a background. Cells a face has
+        // already tinted keep their colour; unstyled cells carry the
+        // terminal's `Reset`, which counts as no background.
         for &row in &v.hl_rows {
             let y = text.y + row;
             if y < text.y + text.height {
                 for x in text.x + v.gutter..text.x + text.width {
                     let cell = &mut f.buffer_mut()[(x, y)];
-                    if cell.style().bg.is_none() {
-                        cell.set_bg(Color::Indexed(236));
+                    if matches!(cell.style().bg, None | Some(Color::Reset)) {
+                        cell.set_bg(SELECTION_BG);
                     }
                 }
             }
@@ -931,6 +999,58 @@ mod tests {
     }
 
     #[test]
+    fn package_faces_mark_status_and_keep_rows_quiet() {
+        let package = |face| deco(DecoFace::Package(face), true);
+        assert_eq!(package(PackageFace::Ok).fg, Some(Color::Green));
+        assert_eq!(package(PackageFace::Warning).fg, Some(Color::Yellow));
+        assert_eq!(package(PackageFace::Error).fg, Some(Color::Red));
+        assert_eq!(package(PackageFace::Info).fg, Some(Color::Cyan));
+        assert!(
+            package(PackageFace::Neutral)
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "status labels are badges without tinting their text"
+        );
+        let selected = package(PackageFace::Selected);
+        assert_eq!(selected.bg, Some(SELECTION_BG));
+        assert!(
+            selected.add_modifier.contains(Modifier::BOLD),
+            "the selected row stays bold on a soft surface"
+        );
+        assert!(
+            !selected.add_modifier.contains(Modifier::REVERSED),
+            "the selected row is dim, not reversed"
+        );
+        assert_eq!(package(PackageFace::SelectedMarker).fg, Some(Color::Blue));
+        assert!(
+            package(PackageFace::Inactive)
+                .add_modifier
+                .contains(Modifier::DIM)
+        );
+        for face in [PackageFace::TitlePill, PackageFace::TabActive] {
+            let style = package(face);
+            assert_eq!(style.fg, Some(Color::White), "{face:?}");
+            assert_eq!(style.bg, Some(Color::Blue), "{face:?}");
+            assert!(style.add_modifier.contains(Modifier::BOLD), "{face:?}");
+        }
+        assert_eq!(package(PackageFace::Accent).fg, Some(Color::Blue));
+        for (face, fg, bg) in [
+            (PackageFace::BadgeWarning, Color::Black, Color::Yellow),
+            (PackageFace::BadgeInactive, Color::Black, Color::DarkGray),
+            (PackageFace::BadgeInfo, Color::Black, Color::Cyan),
+            (PackageFace::BadgeError, Color::Black, Color::Red),
+            (PackageFace::BandWarning, Color::Black, Color::Yellow),
+            (PackageFace::BandError, Color::Black, Color::Red),
+            (PackageFace::Risk, Color::Black, Color::Yellow),
+        ] {
+            let style = package(face);
+            assert_eq!(style.fg, Some(fg), "{face:?}");
+            assert_eq!(style.bg, Some(bg), "{face:?}");
+            assert!(style.add_modifier.contains(Modifier::BOLD), "{face:?}");
+        }
+    }
+
+    #[test]
     fn rainbow_depths_are_distinct() {
         let colors: Vec<_> = (1..=RAINBOW_DEPTHS)
             .map(|n| rainbow_style(RainbowFace::Depth(n)).fg)
@@ -1019,6 +1139,57 @@ mod tests {
         assert_eq!(
             style(Face::Syntax(SyntaxFace::Keyword), caps, &theme).fg,
             Some(Color::Magenta)
+        );
+    }
+
+    #[test]
+    fn package_faces_use_palette_colors_and_theme_overrides() {
+        use forge_core::theme::{FaceStyle, Rgb, Theme};
+        let caps = TermCaps {
+            underline_color: true,
+            graphics: GraphicsProto::Off,
+        };
+        for face in PackageFace::ALL {
+            let styled = style(
+                Face::Decoration(DecoFace::Package(face), None),
+                caps,
+                &Theme::new(),
+            );
+            for color in [styled.fg, styled.bg].into_iter().flatten() {
+                assert!(
+                    !matches!(color, Color::Rgb(..)),
+                    "{face:?} should use a terminal palette color, not {color:?}"
+                );
+            }
+        }
+
+        let mut theme = Theme::new();
+        theme
+            .set(
+                "package-error",
+                FaceStyle {
+                    fg: Some(Rgb(1, 2, 3)),
+                    bg: Some(Rgb(4, 5, 6)),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let styled = style(
+            Face::Decoration(DecoFace::Package(PackageFace::Error), None),
+            caps,
+            &theme,
+        );
+        assert_eq!(styled.fg, Some(Color::Rgb(1, 2, 3)));
+        assert_eq!(styled.bg, Some(Color::Rgb(4, 5, 6)));
+        assert_eq!(
+            style(
+                Face::Decoration(DecoFace::Package(PackageFace::Warning), None),
+                caps,
+                &theme,
+            )
+            .fg,
+            Some(Color::Yellow),
+            "other package faces keep their palette colors"
         );
     }
 }

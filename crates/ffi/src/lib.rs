@@ -41,21 +41,31 @@ pub use grid::{Grid, GridDialog, GridPicture, GridRun};
 /// last frame as busy.
 const FRAME_WAIT: Duration = Duration::from_millis(100);
 
+/// How long a one-off query or action waits. These aren't redrawn every
+/// frame, so returning an empty answer because an idle hook ran long is
+/// worse than making the caller wait.
+const ANSWER_WAIT: Duration = Duration::from_secs(2);
+
 /// Wait up to [`FRAME_WAIT`] for the editor thread's answer, without
-/// holding the thread that polls the future. The app awaits these calls, but
-/// a Swift `async` call can run its Rust poll on the main thread (the
-/// caller's actor), and a plain `recv_timeout` there blocked the window
+/// holding the thread that polls the future.
+fn answer<T: Send + 'static>(rx: mpsc::Receiver<T>) -> Answer<T> {
+    answer_within(rx, FRAME_WAIT)
+}
+
+/// Wait up to `wait` for the editor thread's answer. The app awaits these
+/// calls, but a Swift `async` call can run its Rust poll on the main thread
+/// (the caller's actor), and a plain `recv_timeout` there blocked the window
 /// until the editor had worked through every key queued ahead of the
 /// request. The wait happens on a short-lived thread instead and wakes the
 /// future when it ends.
-fn answer<T: Send + 'static>(rx: mpsc::Receiver<T>) -> Answer<T> {
+fn answer_within<T: Send + 'static>(rx: mpsc::Receiver<T>, wait: Duration) -> Answer<T> {
     let shared = Arc::new(Mutex::new(AnswerState {
         value: None,
         waker: None,
     }));
     let for_thread = Arc::clone(&shared);
     std::thread::spawn(move || {
-        let value = rx.recv_timeout(FRAME_WAIT);
+        let value = rx.recv_timeout(wait);
         let mut state = for_thread.lock().expect("answer lock");
         state.value = Some(value);
         if let Some(waker) = state.waker.take() {
@@ -1048,6 +1058,7 @@ impl Forge {
             plugin_files: Vec::new(),
             // The macOS app draws the tool bar, unlike the terminal.
             graphical,
+            profile_startup: false,
         };
         let (tx, rx) = mpsc::channel::<Request>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<Watch, String>>();
@@ -1432,7 +1443,7 @@ impl Forge {
     pub async fn close_tab(&self, frame: u32, tab: u32) -> bool {
         let (tx, rx) = mpsc::channel();
         self.send(Request::CloseTab(frame, tab, tx));
-        answer(rx).await.unwrap_or(false)
+        answer_within(rx, ANSWER_WAIT).await.unwrap_or(false)
     }
 
     /// Delete a frame because its window was closed. False when it was
@@ -1440,7 +1451,7 @@ impl Forge {
     pub async fn close_frame(&self, id: u32) -> bool {
         let (tx, rx) = mpsc::channel();
         self.send(Request::CloseFrame(id, tx));
-        answer(rx).await.unwrap_or(false)
+        answer_within(rx, ANSWER_WAIT).await.unwrap_or(false)
     }
 
     /// C-g for a plugin or init.rhai that's running long.
@@ -1475,7 +1486,7 @@ impl Forge {
     pub async fn menu_bar(&self) -> Vec<MenuGroup> {
         let (tx, rx) = mpsc::channel();
         self.send(Request::Menus(tx));
-        answer(rx).await.unwrap_or_default()
+        answer_within(rx, ANSWER_WAIT).await.unwrap_or_default()
     }
 
     /// The context menu while it is open (right-click, or S-F10), with
@@ -1484,7 +1495,7 @@ impl Forge {
     pub async fn context_menu(&self) -> Option<ContextMenuFrame> {
         let (tx, rx) = mpsc::channel();
         self.send(Request::ContextMenu(tx));
-        answer(rx).await.ok().flatten()
+        answer_within(rx, ANSWER_WAIT).await.ok().flatten()
     }
 
     /// What a click would do at a screen cell: the stretch of text, and its
@@ -1492,7 +1503,7 @@ impl Forge {
     pub async fn hover(&self, column: u16, row: u16) -> Option<HoverInfo> {
         let (tx, rx) = mpsc::channel();
         self.send(Request::Hover(column, row, tx));
-        answer(rx).await.ok().flatten()
+        answer_within(rx, ANSWER_WAIT).await.ok().flatten()
     }
 
     /// Close the context menu, as dismissing its native popup does.
@@ -1504,7 +1515,7 @@ impl Forge {
     pub async fn theme(&self) -> Vec<ThemeEntry> {
         let (tx, rx) = mpsc::channel();
         self.send(Request::Theme(tx));
-        answer(rx).await.unwrap_or_default()
+        answer_within(rx, ANSWER_WAIT).await.unwrap_or_default()
     }
 
     /// Run a command by name, as the menu bar does.
@@ -1517,7 +1528,7 @@ impl Forge {
     pub async fn kill_top(&self) -> Option<String> {
         let (tx, rx) = mpsc::channel();
         self.send(Request::KillTop(tx));
-        answer(rx).await.ok().flatten()
+        answer_within(rx, ANSWER_WAIT).await.ok().flatten()
     }
 
     /// The menus, built the way the app's menu bar wants them: the labels
@@ -2256,6 +2267,17 @@ mod tests {
     fn an_unanswered_wait_times_out() {
         let (_tx, rx) = mpsc::channel::<u32>();
         assert!(block_on(answer(rx)).is_err());
+    }
+
+    #[test]
+    fn a_slow_query_still_gets_its_answer() {
+        let (tx, rx) = mpsc::channel::<u32>();
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(FRAME_WAIT + Duration::from_millis(50));
+            tx.send(7).unwrap();
+        });
+        assert_eq!(block_on(answer_within(rx, ANSWER_WAIT)).ok(), Some(7));
+        sender.join().unwrap();
     }
 
     #[test]

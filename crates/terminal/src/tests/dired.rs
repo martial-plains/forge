@@ -140,7 +140,7 @@ fn find_file_lists_short_names_with_metadata() {
 
     // Short names, not full paths — with permissions, size and age.
     let (rows, _) = crate::minibuffer::vertical_view(&mut app).unwrap();
-    let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    let names: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
     assert!(names.contains(&"a.txt"), "{names:?}");
     assert!(names.contains(&"sub/"), "{names:?}");
     assert!(
@@ -154,7 +154,9 @@ fn find_file_lists_short_names_with_metadata() {
         }),
         "short names, at most a trailing slash: {names:?}"
     );
-    for (name, note, _) in &rows {
+    for row in &rows {
+        let name = &row.text;
+        let note = &row.note;
         if name == "./" {
             continue;
         }

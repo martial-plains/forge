@@ -12,7 +12,7 @@
 // separated by spaces. Named keys: RET SPC TAB DEL ESC <left> <f5> ...
 //
 // The API is namespaced like Neovim's: forge.opt, forge.keymap,
-// forge.command, forge.ui, forge.buffer, forge.mode, forge.plugin,
+// forge.command, forge.ui, forge.minibuffer, forge.buffer, forge.mode, forge.plugin,
 // forge.process, forge.fs, forge.http, forge.env, forge.system, forge.menu,
 // forge.theme, forge.log. See docs/plugin-api.md for the whole list.
 // forge.env is the process environment: what you set is what
@@ -167,6 +167,21 @@ forge.command.create("insert-greeting", |n| {
 }, #{ desc: "Ask for a name and insert a greeting." });
 forge.keymap.set("C-c H", "insert-greeting");
 
+// Replace what is typed in the open prompt, leaving the cursor at the end.
+// forge.command.create("try-dir", || forge.minibuffer.set_input("~/"));
+// forge.minibuffer.suspend() sets the open prompt aside (no answer);
+// forge.completion.sessions() lists what was set aside and
+// forge.completion.resume(0) brings one back.
+//
+// The prompt list can be grouped, labelled and laid out:
+// forge.completion.set_layout("grid", 8);       // vertical, flat, grid, reverse,
+//                                               // unobtrusive or buffer
+// forge.completion.set_group_format("-- %s --");
+// forge.completion.group("candidate", |names| /* one name per candidate */ names);
+// forge.completion.set_row_labels(["a", "s", "d"]);
+// forge.completion.jump_to_row(0, true);         // select row 0 and accept it
+// forge.minibuffer.on_open("fill-prompt");       // command must already exist
+
 // Positions are (line, column) as the mode line shows them: lines from 1,
 // columns from 0.
 forge.command.create("duplicate-line", |n| {
@@ -256,6 +271,15 @@ forge.command.create("two-space-indent", || {
 
 // Plugins in ~/.config/forge/plugins/ load at startup. Permissions granted
 // here aren't asked for; a plugin gets these plus any you grant when asked.
+// M-x plugin-profile shows how long each plugin spent in the cache, compiling,
+// initializing, starting lazily and in each call; forge --profile-startup
+// prints the same report from the command line (--json for JSON). This warns
+// in *Messages* when plugin startup takes longer than the budget:
+// forge.opt["startup_budget_ms"] = 250;
+// Review an init.rhai that changed outside Forge before evaluating it. If
+// the new file adds a grant, process, network request or writable directory,
+// Forge shows the diff and asks; declining behaves like starting with -q.
+// forge.opt["init_review"] = true;
 // forge.plugin.grant("spell", #{
 //   directories: ["~/dict", #{ path: "~/.cache/spell", write: true }],
 //   network: false,
@@ -276,6 +300,33 @@ forge.command.create("two-space-indent", || {
 // should load lazily. Anything missing is installed at startup, and
 // forge-lock.toml (next to this file) records the commit and sha256 each
 // one resolved to, so another machine rebuilds itself from these two files.
+// Machine-only lock overrides go in the ignored forge-lock.local.toml.
+// M-x package-snapshot-save/list/diff/restore manage named lock snapshots,
+// including plugins loaded from a custom load_path; M-x package-restore
+// reinstalls locked bytes from Forge's local artifact store and removes
+// package-managed plugins that the lock does not list. M-x package-log shows
+// package fetch/build/install/upgrade/rollback timings, and
+// package-log-export writes them as JSON lines.
+//
+// Package indexes can be signed. Forge looks for index.toml.minisig next
+// to each index and verifies it against these Minisign public keys; list
+// several while rotating keys. Strict mode also refuses unsigned indexes.
+// forge.opt["package_index_keys"] = ["RWQ...", "RWQ..."];
+// forge.opt["package_index_strict"] = true;
+//
+// Restrict package and index sources. Unset means unrestricted; [] denies
+// all. Entries are exact hosts, *.subdomain suffixes, exact URLs/paths, or
+// directory prefixes ending in /. Allowing an index does not authorize the
+// packages it lists.
+// forge.opt["package_allowed_sources"] = ["github.com", "https://example.org/forge/"];
+// Optionally warn when a GitHub repository is archived or changed owners.
+// forge.opt["package_repository_checks"] = true;
+//
+// Headless `forge package sync` never prompts. Let it build, accept new
+// capabilities, or grant plugin permissions only when you mean it:
+// forge.opt["package_allow_build"] = true;
+// forge.opt["package_allow_capabilities"] = true;
+// forge.opt["package_allow_grants"] = true;
 //
 // use_package is forge.plugin.declare plus `bind` and `init`: `bind` binds
 // keys (a command no one has defined yet makes its key load the plugin),
@@ -296,6 +347,9 @@ use_package("org-modern", #{
 // the lazy-loading triggers (forge.plugin.declare spells them `on`). The same with an index name (M-x list-packages
 // installs it first) or a prebuilt component:
 use_package("magit", #{ index: "magit", commands: ["magit-status"] });
+// Index declarations can restrict versions; freeze prevents automatic
+// upgrades. A `pin` also freezes the package and selects its Git revision.
+use_package("theme", #{ index: "theme", version: "^1.2", freeze: true });
 use_package("few", #{ url: "https://.../few.wasm", sha256: "..." });
 // A plugin already in the plugins directory needs no source at all, only
 // what to configure:
@@ -377,7 +431,9 @@ use_package("consult", #{
 // use_package_report() answers what each declaration did, one line each.
 // Carried over from Forge under their Rhai names (underscores):
 //     pin: "v1"                  the git tag, branch or commit (use_package
-//                                has no `rev`; forge.plugin.declare does)
+//                                has no `rev`; also holds automatic updates)
+//     freeze: true               hold this package during automatic upgrades
+//     version: "^1.2"            semver requirement for an index package
 //     load_path: "~/dev/x"       look for x.wasm there first
 //     no_require: true           install it but don't start it unless
 //                                something lazy triggers it
@@ -393,6 +449,13 @@ use_package("consult", #{
 //            lisp_dir: "crates/plugin",           build inside this directory
 //            features: ["fast"] }                 cargo features to enable
 //         (the first build of a command still asks before running it)
+//     build_env: ["NPM_TOKEN", "MY_*"]  extra variables (or prefixes) the
+//         build may inherit; all other variables are dropped
+//     build_timeout_secs: 1800          kill a build that runs this long
+//         (the default is 30 minutes)
+//     allow_history_rewrite: true       let an unattended upgrade move to
+//         an upstream commit that isn't a descendant of the locked one
+//         (a force-push or rewritten history); interactive upgrades only warn
 
 // ---- files
 
@@ -466,6 +529,38 @@ use_package("consult", #{
 // frontend's style, so light and dark mode keep working.
 // forge.theme.set("comment", #{ fg: "#6a9955", italic: true });
 // forge.theme.faces() lists every face; forge.theme.reset() forgets all.
+// Package manager faces keep labels in the default text color and put the
+// semantic color on the status mark:
+// forge.theme.set("package-title", #{ bold: true });
+// forge.theme.set("package-title-pill", #{ fg: "#12151b", bg: "#7aa2f7", bold: true });
+// forge.theme.set("package-tab-active", #{ fg: "#12151b", bg: "#7aa2f7", bold: true });
+// forge.theme.set("package-accent", #{ fg: "#7aa2f7", bold: true });
+// forge.theme.set("package-selected", #{ bg: "#45475a", bold: true });
+// forge.theme.set("package-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+// forge.theme.set("package-badge-warning", #{ fg: "#e8c97a", bg: "#3a3222" });
+// forge.theme.set("package-badge-inactive", #{ fg: "#8a90a0", bg: "#2a2e37" });
+//
+// Dark badge and band example (all pairs at least 4.5:1):
+// forge.theme.set("package-badge-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+// forge.theme.set("package-badge-info", #{ fg: "#1e1e2e", bg: "#89dceb", bold: true });
+// forge.theme.set("package-badge-error", #{ fg: "#1e1e2e", bg: "#f38ba8", bold: true });
+// forge.theme.set("package-badge-inactive", #{ fg: "#cdd6f4", bg: "#45475a" });
+// forge.theme.set("package-band-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+// forge.theme.set("package-band-error", #{ fg: "#1e1e2e", bg: "#f38ba8", bold: true });
+// forge.theme.set("package-risk", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+//
+// Light badge and band example (all pairs at least 4.5:1):
+// forge.theme.set("package-badge-warning", #{ fg: "#1f2328", bg: "#fff8c5", bold: true });
+// forge.theme.set("package-badge-info", #{ fg: "#1f2328", bg: "#ddf4ff", bold: true });
+// forge.theme.set("package-badge-error", #{ fg: "#1f2328", bg: "#ffebe9", bold: true });
+// forge.theme.set("package-badge-inactive", #{ fg: "#57606a", bg: "#eaeef2" });
+// forge.theme.set("package-band-warning", #{ fg: "#1f2328", bg: "#fff8c5", bold: true });
+// forge.theme.set("package-band-error", #{ fg: "#1f2328", bg: "#ffebe9", bold: true });
+// forge.theme.set("package-risk", #{ fg: "#1f2328", bg: "#fff8c5", bold: true });
+//
+// On a 16-colour terminal, leave the badge and band faces unset: the
+// terminal's bold yellow/cyan/red pairs are measured above 4.5:1, and the
+// status mark and wording carry the meaning without color.
 
 // ---- menus
 

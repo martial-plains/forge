@@ -95,6 +95,10 @@ pub struct Settings {
     pub wrap: Option<crate::decoration::Wrap>,
     /// Where package indexes are (forge.opt.package_index: one or a list).
     pub package_index: Option<Vec<String>>,
+    /// Trusted Minisign public keys for package indexes (rotation: a list).
+    pub package_index_keys: Option<Vec<String>>,
+    /// Hosts, URLs and paths packages and indexes may come from.
+    pub package_allowed_sources: Option<Vec<String>>,
     /// How many lines *Messages* keeps: t (unlimited), false (off) or a
     /// number of lines.
     pub message_log_max: Option<crate::messages::MessageLogMax>,
@@ -134,6 +138,7 @@ pub const NUMBERS: &[&str] = &[
     "uniquify_min_dir_components",
     "left_margin_width",
     "right_margin_width",
+    "startup_budget_ms",
 ];
 
 /// Text options (a string, or a list of them): numbered backups, and the
@@ -238,12 +243,18 @@ pub const FLAGS: &[&str] = &[
     "horizontal_scroll_bar",
     "image_animate_loop",
     "inhibit_message",
+    "init_review",
     "input_method_completion_everywhere",
     "make_backup_files",
     "menu_bar",
     "modifier_bar",
     "mouse_drag_copy_region",
     "no_littering",
+    "package_allow_build",
+    "package_allow_capabilities",
+    "package_allow_grants",
+    "package_index_strict",
+    "package_repository_checks",
     "org_clock_persist",
     "org_log_done",
     "delete_trailing_whitespace_on_save",
@@ -337,6 +348,7 @@ pub const OPTIONS: &[&str] = &[
     "image_file_name_extensions",
     "image_file_name_regexps",
     "inhibit_message",
+    "init_review",
     "input_method_completion_everywhere",
     "kept_new_versions",
     "kept_old_versions",
@@ -373,11 +385,14 @@ pub const OPTIONS: &[&str] = &[
     "org_startup_indented",
     "org_update_dblocks_on_save",
     "package_index",
+    "package_index_keys",
+    "package_allowed_sources",
     "epa_file_encrypt_to",
     "page_delimiter",
     "paragraph_separate",
     "paragraph_start",
     "plugin_auto_reload",
+    "startup_budget_ms",
     "prefix_help_delay",
     "recentf",
     "save_interprogram_paste_before_kill",
@@ -442,6 +457,8 @@ struct Shared {
     logs: RefCell<Vec<LogLine>>,
     settings: RefCell<Settings>,
     commands: RefCell<HashMap<String, Callback>>,
+    /// forge.completion.group(category, fn): category -> callback.
+    groups: RefCell<HashMap<String, Callback>>,
     answers: RefCell<HashMap<u32, Pending>>,
     next_request: Cell<u32>,
     /// (keys, command) bound, to warn about unknown commands later.
@@ -451,7 +468,9 @@ struct Shared {
     /// Plugins declared with use_package, in the order declared.
     uses: RefCell<Vec<crate::declare::PluginUse>>,
     /// What each use_package did, for `use_package_report()`.
-    use_log: RefCell<Vec<String>>,
+    use_log: RefCell<Vec<crate::declare::UseReport>>,
+    /// Collect declarations only: do not run closures or touch the machine.
+    collecting: Cell<bool>,
     deadline: Cell<Option<Instant>>,
     /// forge.on(event, fn) handlers: (event name, function).
     handlers: RefCell<Vec<(String, Callback)>>,
@@ -488,6 +507,16 @@ impl Shared {
         })
         .ok()
         .flatten()
+    }
+
+    fn deny_while_collecting(&self, what: &str) -> RhaiResult<()> {
+        if self.collecting.get() {
+            Err(err(format!(
+                "{what} isn't available while collecting declarations"
+            )))
+        } else {
+            Ok(())
+        }
     }
 
     fn with_editor<R>(&self, f: impl FnOnce(&mut Editor) -> Result<R, String>) -> RhaiResult<R> {
@@ -1338,11 +1367,36 @@ fn name_or_names(v: &Dynamic, what: &str) -> RhaiResult<Vec<String>> {
 /// `use_package(name, spec)`: record a declared plugin.
 fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
     use crate::declare::PluginUse;
-    const KEYS: [&str; 10] = [
-        "git", "rev", "index", "url", "sha256", "config", "grant", "hook", "on", "after",
+    const KEYS: [&str; 15] = [
+        "git",
+        "rev",
+        "index",
+        "url",
+        "sha256",
+        "config",
+        "grant",
+        "hook",
+        "on",
+        "after",
+        "version",
+        "freeze",
+        "build_env",
+        "build_timeout_secs",
+        "allow_history_rewrite",
     ];
     for k in spec.keys() {
         if !KEYS.contains(&k.as_str()) {
+            let message = format!("{name}: skipped, unknown key {k:?}");
+            s.use_log.borrow_mut().push(crate::declare::UseReport {
+                name: name.clone(),
+                line: None,
+                message,
+                outcome: crate::declare::UseOutcome::Error {
+                    message: format!("unknown key {k:?}"),
+                },
+                deferred: Vec::new(),
+                system_packages: Vec::new(),
+            });
             return Err(err(format!(
                 "unknown key {k:?} in a plugin declaration (known: {})",
                 KEYS.join(", ")
@@ -1354,8 +1408,25 @@ fn use_spec(s: &Shared, name: String, spec: &Map) -> RhaiResult<()> {
         git: map_string(spec, "git")?,
         rev: map_string(spec, "rev")?,
         index: map_string(spec, "index")?,
+        version: map_string(spec, "version")?,
+        frozen: map_bool(spec, "freeze")?.unwrap_or(false),
         url: map_string(spec, "url")?,
         sha256: map_string(spec, "sha256")?,
+        build_env: map_get(spec, "build_env")
+            .map(|value| name_or_names(value, "build_env"))
+            .transpose()?
+            .unwrap_or_default(),
+        build_timeout_secs: match map_get(spec, "build_timeout_secs") {
+            Some(value) => {
+                let secs = as_int(value, "build_timeout_secs")?;
+                if secs <= 0 {
+                    return Err(err("build_timeout_secs must be positive"));
+                }
+                Some(secs as u64)
+            }
+            None => None,
+        },
+        allow_rewrite: map_bool(spec, "allow_history_rewrite")?.unwrap_or(false),
         ..Default::default()
     };
     if let Some(config) = map_get(spec, "config") {

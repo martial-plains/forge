@@ -28,7 +28,7 @@ static lua_State *L;
 
 /* Registry tables: command name -> function, request id -> function,
  * event kind -> list of functions. */
-static int commands_ref, answers_ref, handlers_ref, processes_ref, annotators_ref, sources_ref;
+static int commands_ref, answers_ref, handlers_ref, processes_ref, annotators_ref, groupers_ref, sources_ref;
 
 /* ------------------------------------------------------------ helpers */
 
@@ -1065,6 +1065,117 @@ static int comp_annotate(lua_State *L) {
     return 0;
 }
 
+/* completion.group(category, fn(candidates) -> { group, ... }) */
+static int comp_group(lua_State *L) {
+    luaL_checkstring(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    lua_pushvalue(L, 1);
+    keep(groupers_ref, L, 2);
+    plugin_string_t c = lstr(L, 1);
+    forge_editor_completion_group(&c);
+    return 0;
+}
+
+/* completion.set_group_format("-- %s --") */
+static int comp_group_format(lua_State *L) {
+    plugin_string_t f = lstr(L, 1);
+    forge_editor_completion_set_group_format(&f);
+    return 0;
+}
+
+/* completion.set_layout("vertical", 10) */
+static const char *const LAYOUTS[] = {"vertical", "flat", "grid", "reverse", "unobtrusive", "buffer", NULL};
+static int comp_layout(lua_State *L) {
+    int layout = luaL_checkoption(L, 1, NULL, LAYOUTS);
+    uint32_t lines = (uint32_t)luaL_optinteger(L, 2, 10);
+    forge_editor_completion_set_layout((forge_editor_completion_layout_t)layout, lines);
+    return 0;
+}
+
+/* completion.set_row_labels({ "a", "s", "d" }) */
+static int comp_row_labels(lua_State *L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    plugin_list_string_t l = string_list(L, 1);
+    forge_editor_completion_set_row_labels(&l);
+    free(l.ptr);
+    return 0;
+}
+
+/* completion.jump_to_row(row, accept) */
+static int comp_jump_to_row(lua_State *L) {
+    forge_editor_completion_jump_to_row((uint32_t)luaL_checkinteger(L, 1), lua_toboolean(L, 2));
+    return 0;
+}
+
+/* completion.sessions() -> { { category =, prompt =, input =, total = }, ... } */
+static int comp_sessions(lua_State *L) {
+    forge_editor_completion_list_prompt_session_t l;
+    forge_editor_completion_sessions(&l);
+    lua_createtable(L, (int)l.len, 0);
+    for (size_t i = 0; i < l.len; i++) {
+        forge_editor_completion_prompt_session_t *s = &l.ptr[i];
+        lua_createtable(L, 0, 4);
+        lua_pushlstring(L, (const char *)s->category.ptr, s->category.len);
+        lua_setfield(L, -2, "category");
+        lua_pushlstring(L, (const char *)s->prompt.ptr, s->prompt.len);
+        lua_setfield(L, -2, "prompt");
+        lua_pushlstring(L, (const char *)s->input.ptr, s->input.len);
+        lua_setfield(L, -2, "input");
+        lua_pushinteger(L, (lua_Integer)s->total);
+        lua_setfield(L, -2, "total");
+        lua_rawseti(L, -2, (lua_Integer)i + 1);
+    }
+    forge_editor_completion_list_prompt_session_free(&l);
+    return 1;
+}
+
+/* completion.resume(index) */
+static int comp_resume(lua_State *L) {
+    forge_editor_completion_resume((uint32_t)luaL_checkinteger(L, 1));
+    return 0;
+}
+
+/* ---------------------------------------------------------- minibuffer */
+
+static int mini_set_input(lua_State *L) {
+    plugin_string_t t = lstr(L, 1);
+    forge_editor_minibuffer_set_input(&t);
+    return 0;
+}
+
+static int mini_on_open(lua_State *L) {
+    plugin_string_t c = lstr(L, 1);
+    forge_editor_minibuffer_on_open(&c);
+    return 0;
+}
+
+static int mini_suspend(lua_State *L) {
+    forge_editor_minibuffer_suspend();
+    return 0;
+}
+
+static int mini_active(lua_State *L) {
+    lua_pushboolean(L, forge_editor_minibuffer_active());
+    return 1;
+}
+
+static int mini_input(lua_State *L) {
+    plugin_string_t s;
+    forge_editor_minibuffer_input(&s);
+    push_str(L, &s);
+    return 1;
+}
+
+static int mini_history_kind(lua_State *L) {
+    plugin_string_t s;
+    if (!forge_editor_minibuffer_history_kind(&s)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_str(L, &s);
+    return 1;
+}
+
 /* completion.set_at_point_ui({ popup =, auto =, delay =, min_prefix =, lines = }) */
 static int comp_at_point_ui(lua_State *L) {
     forge_editor_completion_set_at_point_ui(bool_field(L, 1, "popup", true), bool_field(L, 1, "auto", false),
@@ -1321,9 +1432,14 @@ static void open_forge(lua_State *L) {
 
     LIB("completion", {"set_minibuffer_ui", comp_minibuffer_ui}, {"set_minibuffer_cycle", comp_minibuffer_cycle},
         {"set_matching", comp_matching},
-        {"annotate", comp_annotate}, {"set_at_point_ui", comp_at_point_ui}, {"source", comp_source},
+        {"annotate", comp_annotate}, {"group", comp_group}, {"set_group_format", comp_group_format},
+        {"set_layout", comp_layout}, {"set_row_labels", comp_row_labels}, {"jump_to_row", comp_jump_to_row},
+        {"sessions", comp_sessions}, {"resume", comp_resume},
+        {"set_at_point_ui", comp_at_point_ui}, {"source", comp_source},
         {"set_sorting", comp_sorting}, {"selected", comp_selected},
         {"set_popup_frame", comp_popup_frame});
+    LIB("minibuffer", {"set_input", mini_set_input}, {"on_open", mini_on_open}, {"suspend", mini_suspend},
+        {"active", mini_active}, {"input", mini_input}, {"history_kind", mini_history_kind});
     LIB("process", {"spawn", proc_spawn}, {"write", proc_write}, {"close_input", proc_close_input},
         {"kill", proc_kill}, {"project_root", proc_project_root});
     LIB("ui", {"input", ui_input}, {"select", ui_select}, {"confirm", ui_confirm}, {"read_key", ui_read_key});
@@ -1353,6 +1469,8 @@ static void open_forge(lua_State *L) {
     processes_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_newtable(L);
     annotators_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    lua_newtable(L);
+    groupers_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_newtable(L);
     sources_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 }
@@ -1512,6 +1630,51 @@ void exports_forge_editor_completion_handler_annotate(plugin_string_t *category,
     ret->ptr = NULL;
     ret->len = 0;
     lua_rawgeti(L, LUA_REGISTRYINDEX, annotators_ref);
+    lua_pushlstring(L, (const char *)category->ptr, category->len);
+    plugin_string_free(category);
+    lua_rawget(L, -2);
+    lua_remove(L, -2);
+    size_t n = candidates->len;
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        plugin_list_string_free(candidates);
+        return;
+    }
+    lua_createtable(L, (int)n, 0);
+    for (size_t i = 0; i < n; i++) {
+        lua_pushlstring(L, (const char *)candidates->ptr[i].ptr, candidates->ptr[i].len);
+        lua_rawseti(L, -2, (lua_Integer)i + 1);
+    }
+    plugin_list_string_free(candidates);
+    int base = lua_gettop(L) - 1;
+    lua_pushcfunction(L, traceback);
+    lua_insert(L, base);
+    if (lua_pcall(L, 1, 1, base) != LUA_OK) {
+        plugin_string_t m = forge_str_of(L, -1);
+        forge_editor_log_log(FORGE_EDITOR_LOG_LEVEL_ERROR, &m);
+        lua_pop(L, 2);
+        return;
+    }
+    lua_remove(L, base);
+    if (lua_istable(L, -1)) {
+        ret->len = n;
+        ret->ptr = calloc(n ? n : 1, sizeof *ret->ptr);
+        for (size_t i = 0; i < n; i++) {
+            lua_rawgeti(L, -1, (lua_Integer)i + 1);
+            size_t len = 0;
+            const char *s = lua_tolstring(L, -1, &len);
+            plugin_string_dup_n(&ret->ptr[i], s ? s : "", s ? len : 0);
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+}
+
+void exports_forge_editor_completion_handler_group(plugin_string_t *category, plugin_list_string_t *candidates,
+                                                   plugin_list_string_t *ret) {
+    ret->ptr = NULL;
+    ret->len = 0;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, groupers_ref);
     lua_pushlstring(L, (const char *)category->ptr, category->len);
     plugin_string_free(category);
     lua_rawget(L, -2);

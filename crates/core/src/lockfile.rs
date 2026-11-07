@@ -13,16 +13,21 @@
 //! asked for, so `M-x package-vc-upgrade` can show what changed before
 //! applying it.
 
-use crate::permissions::{Grants, Setting};
+use crate::package::BuildRecipe;
+use crate::permissions::{CapabilityDiff, Grants, Setting};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub const FILE: &str = "forge-lock.toml";
+pub const LOCAL_FILE: &str = "forge-lock.local.toml";
+const LOCK_VERSION: u32 = 1;
+const SNAPSHOTS_DIR: &str = "package-snapshots";
+const ARTIFACTS_DIR: &str = "package-artifacts";
 
 /// One declared plugin, resolved.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(rename_all = "kebab-case")]
 pub struct LockEntry {
     /// The git repository it came from, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,6 +43,35 @@ pub struct LockEntry {
     pub commit: Option<String>,
     /// The sha256 of the installed component.
     pub sha256: String,
+    /// SHA-256 of the installed component (explicit alias for new lockfiles).
+    #[serde(
+        rename = "artifact_sha256",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub artifact_sha256: Option<String>,
+    /// SHA-256 of the declaration's static, non-closure fields.
+    #[serde(rename = "spec_hash", default, skip_serializing_if = "Option::is_none")]
+    pub spec_hash: Option<String>,
+    /// `prebuilt` or `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    /// Hash of the source build command, toolchain, features, and target.
+    #[serde(
+        rename = "recipe_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recipe_hash: Option<String>,
+    /// Package version when known; used to restore `packages.toml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Accepted source build command, when one was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
+    /// The full build recipe (command, toolchain, features, target).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<BuildRecipe>,
     /// What its manifest asked for when it was locked (for the upgrade
     /// review: a changed permission set always asks again).
     #[serde(default, skip_serializing_if = "Grants::is_empty")]
@@ -52,20 +86,92 @@ pub struct LockEntry {
     pub extensions: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<Setting>,
+    /// Permissions and component imports captured at lock time.
+    #[serde(default, skip_serializing_if = "LockCapabilities::is_empty")]
+    pub capabilities: LockCapabilities,
+    /// Fields introduced by later Forge versions survive a read/write cycle.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct LockCapabilities {
+    #[serde(default, skip_serializing_if = "Grants::is_empty")]
+    pub permissions: Grants,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+impl LockCapabilities {
+    fn is_empty(&self) -> bool {
+        self.permissions.is_empty() && self.imports.is_empty() && self.extra.is_empty()
+    }
+
+    /// What changed between the capabilities recorded here and `new`.
+    pub fn diff(&self, new: &LockCapabilities) -> CapabilityDiff {
+        CapabilityDiff::between(&self.permissions, &new.permissions)
+    }
+}
+
+impl LockEntry {
+    /// The permissions recorded for this entry: the newer capabilities
+    /// table when present, else the older `permissions` field.
+    pub fn capability_grants(&self) -> &Grants {
+        if self.capabilities.is_empty() {
+            &self.permissions
+        } else {
+            &self.capabilities.permissions
+        }
+    }
 }
 
 /// The on-disk shape of `forge-lock.toml`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[serde(rename_all = "kebab-case")]
 struct LockData {
+    #[serde(rename = "lock_version", default = "lock_version")]
+    lock_version: u32,
     #[serde(default)]
     packages: BTreeMap<String, LockEntry>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, toml::Value>,
+}
+
+fn lock_version() -> u32 {
+    LOCK_VERSION
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Snapshot {
+    #[serde(rename = "lock_version", default = "lock_version")]
+    pub lock_version: u32,
+    #[serde(default)]
+    pub packages: BTreeMap<String, LockEntry>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SnapshotChange {
+    pub name: String,
+    pub change: String,
+    pub before: Option<LockEntry>,
+    pub after: Option<LockEntry>,
 }
 
 /// `forge-lock.toml`, keyed by plugin name.
 #[derive(Debug, Clone, Default)]
 pub struct LockFile {
+    /// Effective entries (shared file overlaid by machine-local entries).
     pub packages: BTreeMap<String, LockEntry>,
+    shared_packages: BTreeMap<String, LockEntry>,
+    local_packages: BTreeMap<String, LockEntry>,
+    lock_version: u32,
+    extra: BTreeMap<String, toml::Value>,
     dir: Option<PathBuf>,
 }
 
@@ -79,17 +185,50 @@ impl LockFile {
         dir.join(FILE)
     }
 
+    pub fn local_path(dir: &Path) -> PathBuf {
+        dir.join(LOCAL_FILE)
+    }
+
     /// Read the lock file from `dir`; a missing file means nothing is
-    /// locked yet.
-    pub fn load(dir: &Path) -> Self {
-        let data: LockData = std::fs::read_to_string(Self::path(dir))
-            .ok()
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default();
-        Self {
-            packages: data.packages,
+    /// locked yet. Machine-local entries override shared entries by name.
+    pub fn load(dir: &Path) -> std::io::Result<Self> {
+        let data = Self::read_data(&Self::path(dir))?.unwrap_or_default();
+        let local = Self::read_data(&Self::local_path(dir))?.unwrap_or_default();
+        let mut packages = data.packages.clone();
+        packages.extend(local.packages.clone());
+        Ok(Self {
+            packages,
+            shared_packages: data.packages,
+            local_packages: local.packages,
+            lock_version: data.lock_version.max(LOCK_VERSION),
+            extra: data.extra,
             dir: Some(dir.to_path_buf()),
-        }
+        })
+    }
+
+    fn read_lockfile(path: &Path) -> std::io::Result<LockData> {
+        Self::read_data(path)?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no lockfile at {}", path.display()),
+            )
+        })
+    }
+
+    fn read_data(path: &Path) -> std::io::Result<Option<LockData>> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!("could not read {}: {error}", path.display()),
+                ));
+            }
+        };
+        toml::from_str(&text).map(Some).map_err(|error| {
+            std::io::Error::other(format!("could not parse {}: {error}", path.display()))
+        })
     }
 
     pub fn dir(&self) -> Option<&Path> {
@@ -101,11 +240,30 @@ impl LockFile {
     }
 
     pub fn set(&mut self, name: &str, entry: LockEntry) {
-        self.packages.insert(name.to_string(), entry);
+        self.shared_packages.insert(name.to_string(), entry.clone());
+        self.packages.insert(
+            name.to_string(),
+            self.local_packages.get(name).cloned().unwrap_or(entry),
+        );
     }
 
     pub fn remove(&mut self, name: &str) -> bool {
-        self.packages.remove(name).is_some()
+        if let Some(local) = self.local_packages.get(name) {
+            self.packages.insert(name.to_string(), local.clone());
+        } else {
+            self.packages.remove(name);
+        }
+        self.shared_packages.remove(name).is_some()
+    }
+
+    pub fn replace_shared(&mut self, packages: BTreeMap<String, LockEntry>) {
+        self.shared_packages = packages;
+        self.packages = self.shared_packages.clone();
+        self.packages.extend(self.local_packages.clone());
+    }
+
+    pub fn shared_packages(&self) -> &BTreeMap<String, LockEntry> {
+        &self.shared_packages
     }
 
     /// Write the lock file (atomic, like the other Forge books).
@@ -115,7 +273,9 @@ impl LockFile {
         };
         std::fs::create_dir_all(dir)?;
         let data = LockData {
-            packages: self.packages.clone(),
+            lock_version: self.lock_version.max(LOCK_VERSION),
+            packages: self.shared_packages.clone(),
+            extra: self.extra.clone(),
         };
         let text = toml::to_string_pretty(&data).map_err(std::io::Error::other)?;
         let body = format!(
@@ -126,6 +286,152 @@ impl LockFile {
         crate::fsutil::write_atomic(&path, body)
     }
 
+    pub fn save_artifact(dir: &Path, hash: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+        if crate::package::sha256_hex(bytes) != hash {
+            return Err(std::io::Error::other(format!(
+                "artifact hash mismatch: expected {hash}"
+            )));
+        }
+        let path = Self::artifact_path(dir, hash)?;
+        let Some(parent) = path.parent() else {
+            return Err(std::io::Error::other("artifact path has no parent"));
+        };
+        std::fs::create_dir_all(parent)?;
+        if path.exists() {
+            let existing = std::fs::read(&path)?;
+            if crate::package::sha256_hex(&existing) == hash {
+                return Ok(path);
+            }
+        }
+        crate::fsutil::write_atomic(&path, bytes)?;
+        Ok(path)
+    }
+
+    pub fn artifact(dir: &Path, hash: &str) -> std::io::Result<Vec<u8>> {
+        let path = Self::artifact_path(dir, hash)?;
+        let bytes = std::fs::read(&path)?;
+        if crate::package::sha256_hex(&bytes) != hash {
+            return Err(std::io::Error::other(format!(
+                "saved artifact {} failed its SHA-256 check",
+                path.display()
+            )));
+        }
+        Ok(bytes)
+    }
+
+    pub fn save_snapshot(&self, name: &str, plugins_dir: &Path) -> std::io::Result<()> {
+        self.save_snapshot_with(name, |plugin| plugins_dir.join(format!("{plugin}.wasm")))
+    }
+
+    /// Save a snapshot, reading each component from the path `path_for`
+    /// returns. `package-snapshot-save` uses this to include plugins loaded
+    /// from a custom `load_path`.
+    pub fn save_snapshot_with<F>(&self, name: &str, path_for: F) -> std::io::Result<()>
+    where
+        F: Fn(&str) -> PathBuf,
+    {
+        Self::validate_snapshot_name(name)?;
+        let dir = self
+            .dir
+            .as_deref()
+            .ok_or_else(|| std::io::Error::other("no config directory for snapshots"))?;
+        for (plugin, entry) in &self.shared_packages {
+            Self::validate_plugin_name(plugin)?;
+            let path = path_for(plugin);
+            let bytes = std::fs::read(&path).map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!("{plugin}: reading {}: {error}", path.display()),
+                )
+            })?;
+            let expected = Self::locked_hash(entry);
+            Self::save_artifact(dir, expected, &bytes)?;
+        }
+        let snapshot = Snapshot {
+            lock_version: self.lock_version.max(LOCK_VERSION),
+            packages: self.shared_packages.clone(),
+            extra: self.extra.clone(),
+        };
+        let text = toml::to_string_pretty(&snapshot).map_err(std::io::Error::other)?;
+        let path = Self::snapshot_path(dir, name)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("snapshot path has no parent"))?;
+        std::fs::create_dir_all(parent)?;
+        crate::fsutil::write_atomic(&path, text)
+    }
+
+    pub fn snapshots(dir: &Path) -> std::io::Result<Vec<String>> {
+        let snapshots = dir.join(SNAPSHOTS_DIR);
+        let Ok(entries) = std::fs::read_dir(snapshots) else {
+            return Ok(Vec::new());
+        };
+        let mut names = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+            .filter_map(|path| path.file_stem()?.to_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        names.sort();
+        Ok(names)
+    }
+
+    pub fn read_snapshot(dir: &Path, name: &str) -> std::io::Result<Snapshot> {
+        let path = Self::snapshot_path(dir, name)?;
+        let text = std::fs::read_to_string(path)?;
+        toml::from_str(&text).map_err(std::io::Error::other)
+    }
+
+    pub fn diff_snapshots(
+        dir: &Path,
+        before: &str,
+        after: &str,
+    ) -> std::io::Result<Vec<SnapshotChange>> {
+        let before = Self::read_snapshot(dir, before)?;
+        let after = Self::read_snapshot(dir, after)?;
+        Ok(Self::diff(&before.packages, &after.packages))
+    }
+
+    /// Compare two lockfiles by path. Machine-local overlays are not
+    /// applied: this compares exactly the files named.
+    pub fn diff_lockfiles(before: &Path, after: &Path) -> std::io::Result<Vec<SnapshotChange>> {
+        let before = Self::read_lockfile(before)?;
+        let after = Self::read_lockfile(after)?;
+        Ok(Self::diff(&before.packages, &after.packages))
+    }
+
+    /// Install artifacts in the plugins directory and atomically update the
+    /// shared lockfile. Repeating after an interruption converges to the same
+    /// bytes.
+    pub fn restore_snapshot(
+        dir: &Path,
+        plugins_dir: &Path,
+        name: &str,
+    ) -> std::io::Result<Snapshot> {
+        let snapshot = Self::read_snapshot(dir, name)?;
+        let mut lock = Self::load(dir)?;
+        lock.replace_shared(snapshot.packages.clone());
+        let mut artifacts = Vec::with_capacity(lock.packages.len());
+        for (plugin, entry) in &lock.packages {
+            Self::validate_plugin_name(plugin)?;
+            let bytes = Self::artifact(dir, Self::locked_hash(entry))?;
+            artifacts.push((plugin, entry, bytes));
+        }
+        std::fs::create_dir_all(plugins_dir)?;
+        for (plugin, _, bytes) in artifacts {
+            crate::fsutil::write_atomic(&plugins_dir.join(format!("{plugin}.wasm")), bytes)?;
+        }
+        let keep: BTreeSet<String> = lock.packages.keys().cloned().collect();
+        let mut installed = crate::package::InstalledDb::load(plugins_dir);
+        installed
+            .prune_except(&keep)
+            .map_err(std::io::Error::other)?;
+        lock.lock_version = snapshot.lock_version.max(LOCK_VERSION);
+        lock.extra = snapshot.extra.clone();
+        lock.save()?;
+        Ok(snapshot)
+    }
+
     /// The entry for a plugin if the installed bytes match it (its sha256
     /// is what was locked): the fast path at startup, so a declared plugin
     /// that is already installed needn't be fetched again.
@@ -134,6 +440,79 @@ impl LockFile {
             .get(name)
             .is_some_and(|e| e.sha256 == crate::package::sha256_hex(bytes))
     }
+
+    fn locked_hash(entry: &LockEntry) -> &str {
+        entry
+            .artifact_sha256
+            .as_deref()
+            .unwrap_or(entry.sha256.as_str())
+    }
+
+    fn artifact_path(dir: &Path, hash: &str) -> std::io::Result<PathBuf> {
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(std::io::Error::other("invalid artifact SHA-256"));
+        }
+        Ok(dir.join(ARTIFACTS_DIR).join(format!("{hash}.wasm")))
+    }
+
+    fn snapshot_path(dir: &Path, name: &str) -> std::io::Result<PathBuf> {
+        Self::validate_snapshot_name(name)?;
+        Ok(dir.join(SNAPSHOTS_DIR).join(format!("{name}.toml")))
+    }
+
+    fn validate_snapshot_name(name: &str) -> std::io::Result<()> {
+        if name.is_empty()
+            || name == "."
+            || name == ".."
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        {
+            return Err(std::io::Error::other(
+                "snapshot name must contain only letters, numbers, '.', '_' or '-'",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_plugin_name(name: &str) -> std::io::Result<()> {
+        if name.is_empty()
+            || name.starts_with('.')
+            || name.contains(['/', '\\'])
+            || name.bytes().any(|b| b.is_ascii_control())
+        {
+            return Err(std::io::Error::other(format!(
+                "invalid plugin name in lockfile: {name:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn diff(
+        before: &BTreeMap<String, LockEntry>,
+        after: &BTreeMap<String, LockEntry>,
+    ) -> Vec<SnapshotChange> {
+        before
+            .keys()
+            .chain(after.keys())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|name| {
+                let old = before.get(name);
+                let new = after.get(name);
+                (old != new).then(|| SnapshotChange {
+                    name: (*name).clone(),
+                    change: match (old, new) {
+                        (None, Some(_)) => "added".into(),
+                        (Some(_), None) => "removed".into(),
+                        _ => "changed".into(),
+                    },
+                    before: old.cloned(),
+                    after: new.cloned(),
+                })
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -141,12 +520,16 @@ mod tests {
     use super::*;
     use crate::permissions::SettingKind;
 
+    fn temp_dir(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("forge-lock-{tag}-{}", std::process::id()))
+    }
+
     #[test]
     fn round_trips_through_toml() {
-        let dir = std::env::temp_dir().join(format!("forge-lock-{}", std::process::id()));
+        let dir = temp_dir("round-trip");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let mut lock = LockFile::load(&dir);
+        let mut lock = LockFile::load(&dir).unwrap();
         assert!(lock.packages.is_empty());
         lock.set(
             "org-modern",
@@ -173,7 +556,7 @@ mod tests {
         let text = std::fs::read_to_string(LockFile::path(&dir)).unwrap();
         assert!(text.contains("[packages.org-modern]"), "{text}");
         assert!(text.contains("commit = \"abc123\""), "{text}");
-        let again = LockFile::load(&dir);
+        let again = LockFile::load(&dir).unwrap();
         let e = again.get("org-modern").unwrap();
         assert_eq!(e.commit.as_deref(), Some("abc123"));
         assert_eq!(e.sha256, "deadbeef");
@@ -182,5 +565,399 @@ mod tests {
         assert!(!again.satisfied("org-modern", b"x"));
         assert_eq!(again.dir(), Some(dir.as_path()));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn legacy_locks_load_and_unknown_fields_survive_rewrite() {
+        let dir = temp_dir("unknown");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            LockFile::path(&dir),
+            r#"
+future-root = "keep"
+[packages.demo]
+sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+future-entry = 42
+"#,
+        )
+        .unwrap();
+        let lock = LockFile::load(&dir).unwrap();
+        assert_eq!(lock.get("demo").unwrap().sha256.len(), 64);
+        lock.save().unwrap();
+        let written = std::fs::read_to_string(LockFile::path(&dir)).unwrap();
+        assert!(written.contains("lock_version = 1"), "{written}");
+        assert!(written.contains("future-root = \"keep\""), "{written}");
+        assert!(written.contains("future-entry = 42"), "{written}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_lock_names_the_file_and_parse_problem() {
+        let dir = temp_dir("malformed");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = LockFile::path(&dir);
+        let bad = "[packages.demo\nsha256 = \"0123\"\n";
+        std::fs::write(&path, bad).unwrap();
+        let error = LockFile::load(&dir).unwrap_err().to_string();
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(error.contains("could not parse"), "{error}");
+        assert!(error.contains("TOML parse error"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), bad);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn malformed_local_lock_names_the_local_file() {
+        let dir = temp_dir("malformed-local");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let local = LockFile::local_path(&dir);
+        let bad = "[packages.demo\nsha256 = \"0123\"\n";
+        std::fs::write(&local, bad).unwrap();
+        let error = LockFile::load(&dir).unwrap_err().to_string();
+        assert!(error.contains(&local.display().to_string()), "{error}");
+        assert!(error.contains("could not parse"), "{error}");
+        assert_eq!(std::fs::read_to_string(&local).unwrap(), bad);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn local_lock_overrides_shared_without_being_written_into_it() {
+        let dir = temp_dir("local");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            LockFile::path(&dir),
+            "[packages.demo]\nsha256 = \"shared\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            LockFile::local_path(&dir),
+            "[packages.demo]\nsha256 = \"local\"\n",
+        )
+        .unwrap();
+        let mut lock = LockFile::load(&dir).unwrap();
+        assert_eq!(lock.get("demo").unwrap().sha256, "local");
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: "updated-shared".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(lock.get("demo").unwrap().sha256, "local");
+        lock.save().unwrap();
+        let shared = std::fs::read_to_string(LockFile::path(&dir)).unwrap();
+        assert!(shared.contains("updated-shared"), "{shared}");
+        assert!(!shared.contains("local"), "{shared}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn snapshot_diff_and_restore_round_trip_artifact_and_lock() {
+        let config = temp_dir("snapshot-config");
+        let plugins = temp_dir("snapshot-plugins");
+        let _ = std::fs::remove_dir_all(&config);
+        let _ = std::fs::remove_dir_all(&plugins);
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(&plugins).unwrap();
+        let original = b"\0asm\x0d\0\x01\0original".to_vec();
+        let changed = b"\0asm\x0d\0\x01\0changed".to_vec();
+        let original_hash = crate::package::sha256_hex(&original);
+        let changed_hash = crate::package::sha256_hex(&changed);
+        std::fs::write(plugins.join("demo.wasm"), &original).unwrap();
+        let mut lock = LockFile::load(&config).unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: original_hash.clone(),
+                artifact_sha256: Some(original_hash.clone()),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+        lock.save_snapshot("before", &plugins).unwrap();
+
+        std::fs::write(plugins.join("demo.wasm"), &changed).unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: changed_hash.clone(),
+                artifact_sha256: Some(crate::package::sha256_hex(&changed)),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+        lock.save_snapshot("after", &plugins).unwrap();
+
+        std::fs::write(plugins.join("stale.wasm"), &changed).unwrap();
+        std::fs::write(plugins.join("stale.toml"), "name = \"stale\"\n").unwrap();
+        let mut installed = crate::package::InstalledDb::load(&plugins);
+        installed.packages.insert(
+            "stale".into(),
+            crate::package::Installed {
+                version: "1.0.0".into(),
+                sha256: changed_hash,
+                url: "stale.wasm".into(),
+                git: None,
+                rev: None,
+                commit: None,
+                build: None,
+                recipe: None,
+            },
+        );
+        installed.save().unwrap();
+
+        let changes = LockFile::diff_snapshots(&config, "before", "after").unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].change, "changed");
+        let restored = LockFile::restore_snapshot(&config, &plugins, "before").unwrap();
+        assert_eq!(restored.packages["demo"].sha256, original_hash);
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
+        assert!(!plugins.join("stale.wasm").exists());
+        assert!(!plugins.join("stale.toml").exists());
+        assert!(
+            !crate::package::InstalledDb::load(&plugins)
+                .packages
+                .contains_key("stale")
+        );
+        LockFile::restore_snapshot(&config, &plugins, "before").unwrap();
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
+        assert_eq!(
+            LockFile::load(&config)
+                .unwrap()
+                .get("demo")
+                .unwrap()
+                .artifact_sha256
+                .as_deref(),
+            Some(original_hash.as_str())
+        );
+        std::fs::remove_dir_all(&config).unwrap();
+        std::fs::remove_dir_all(&plugins).unwrap();
+    }
+
+    #[test]
+    fn interrupted_snapshot_restore_converges() {
+        let config = temp_dir("interrupted-config");
+        let plugins = temp_dir("interrupted-plugins");
+        let _ = std::fs::remove_dir_all(&config);
+        let _ = std::fs::remove_dir_all(&plugins);
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(&plugins).unwrap();
+        let original = b"\0asm\x0d\0\x01\0original".to_vec();
+        let changed = b"\0asm\x0d\0\x01\0changed".to_vec();
+        let original_hash = crate::package::sha256_hex(&original);
+        let changed_hash = crate::package::sha256_hex(&changed);
+        std::fs::write(plugins.join("demo.wasm"), &original).unwrap();
+        let mut lock = LockFile::load(&config).unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: original_hash.clone(),
+                artifact_sha256: Some(original_hash.clone()),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+        lock.save_snapshot("good", &plugins).unwrap();
+
+        std::fs::write(plugins.join("demo.wasm"), &changed).unwrap();
+        std::fs::write(plugins.join("stale.wasm"), &changed).unwrap();
+        std::fs::write(plugins.join("stale.toml"), "name = \"stale\"\n").unwrap();
+        let mut installed = crate::package::InstalledDb::load(&plugins);
+        installed.packages.insert(
+            "stale".into(),
+            crate::package::Installed {
+                version: "1.0.0".into(),
+                sha256: changed_hash.clone(),
+                url: "stale.wasm".into(),
+                git: None,
+                rev: None,
+                commit: None,
+                build: None,
+                recipe: None,
+            },
+        );
+        installed.save().unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: changed_hash.clone(),
+                artifact_sha256: Some(changed_hash),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+
+        // An interrupted restore replaced demo but did not prune stale entries
+        // or update the lockfile yet.
+        std::fs::write(plugins.join("demo.wasm"), &original).unwrap();
+        LockFile::restore_snapshot(&config, &plugins, "good").unwrap();
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
+        assert!(!plugins.join("stale.wasm").exists());
+        assert!(!plugins.join("stale.toml").exists());
+        assert!(
+            !crate::package::InstalledDb::load(&plugins)
+                .packages
+                .contains_key("stale")
+        );
+        assert_eq!(
+            LockFile::load(&config).unwrap().get("demo").unwrap().sha256,
+            original_hash
+        );
+
+        let lock_bytes = std::fs::read(LockFile::path(&config)).unwrap();
+        LockFile::restore_snapshot(&config, &plugins, "good").unwrap();
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), original);
+        assert_eq!(std::fs::read(LockFile::path(&config)).unwrap(), lock_bytes);
+
+        std::fs::remove_dir_all(&config).unwrap();
+        std::fs::remove_dir_all(&plugins).unwrap();
+    }
+
+    #[test]
+    fn diff_lockfiles_compares_named_files() {
+        let before_dir = temp_dir("diff-before");
+        let after_dir = temp_dir("diff-after");
+        let _ = std::fs::remove_dir_all(&before_dir);
+        let _ = std::fs::remove_dir_all(&after_dir);
+        std::fs::create_dir_all(&before_dir).unwrap();
+        std::fs::create_dir_all(&after_dir).unwrap();
+        let mut before = LockFile::load(&before_dir).unwrap();
+        before.set(
+            "demo",
+            LockEntry {
+                sha256: "old".into(),
+                ..Default::default()
+            },
+        );
+        before.set(
+            "old",
+            LockEntry {
+                sha256: "gone".into(),
+                ..Default::default()
+            },
+        );
+        before.save().unwrap();
+        let mut after = LockFile::load(&after_dir).unwrap();
+        after.set(
+            "demo",
+            LockEntry {
+                sha256: "new".into(),
+                ..Default::default()
+            },
+        );
+        after.set(
+            "new",
+            LockEntry {
+                sha256: "added".into(),
+                ..Default::default()
+            },
+        );
+        after.save().unwrap();
+
+        let changes =
+            LockFile::diff_lockfiles(&LockFile::path(&before_dir), &LockFile::path(&after_dir))
+                .unwrap();
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| (change.name.as_str(), change.change.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("demo", "changed"), ("new", "added"), ("old", "removed")]
+        );
+        let missing = LockFile::diff_lockfiles(
+            &before_dir.join("missing.toml"),
+            &LockFile::path(&after_dir),
+        )
+        .unwrap_err();
+        assert!(missing.to_string().contains("no lockfile at"), "{missing}");
+
+        std::fs::remove_dir_all(&before_dir).unwrap();
+        std::fs::remove_dir_all(&after_dir).unwrap();
+    }
+
+    #[test]
+    fn snapshot_saves_components_from_custom_paths() {
+        let config = temp_dir("custom-config");
+        let plugins = temp_dir("custom-plugins");
+        let custom = temp_dir("custom-load-path");
+        let _ = std::fs::remove_dir_all(&config);
+        let _ = std::fs::remove_dir_all(&plugins);
+        let _ = std::fs::remove_dir_all(&custom);
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::create_dir_all(&custom).unwrap();
+        let bytes = b"\0asm\x0d\0\x01\0custom".to_vec();
+        let hash = crate::package::sha256_hex(&bytes);
+        std::fs::write(custom.join("demo.wasm"), &bytes).unwrap();
+
+        let mut lock = LockFile::load(&config).unwrap();
+        lock.set(
+            "demo",
+            LockEntry {
+                sha256: hash.clone(),
+                artifact_sha256: Some(hash.clone()),
+                ..Default::default()
+            },
+        );
+        lock.save().unwrap();
+        lock.save_snapshot_with("custom", |plugin| custom.join(format!("{plugin}.wasm")))
+            .unwrap();
+        assert_eq!(LockFile::artifact(&config, &hash).unwrap(), bytes);
+        assert!(!plugins.join("demo.wasm").exists());
+
+        LockFile::restore_snapshot(&config, &plugins, "custom").unwrap();
+        assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), bytes);
+        std::fs::remove_dir_all(&config).unwrap();
+        std::fs::remove_dir_all(&plugins).unwrap();
+        std::fs::remove_dir_all(&custom).unwrap();
+    }
+
+    #[test]
+    fn capability_grants_fall_back_to_the_old_permissions_field() {
+        let old = LockEntry {
+            permissions: Grants {
+                network: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(old.capability_grants().network);
+        let newer = LockEntry {
+            permissions: Grants {
+                network: true,
+                ..Default::default()
+            },
+            capabilities: LockCapabilities {
+                permissions: Grants {
+                    environment: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(newer.capability_grants().environment);
+        assert!(
+            !newer.capability_grants().network,
+            "the capabilities table wins when it has permissions"
+        );
+        let imports_only = LockEntry {
+            permissions: Grants {
+                network: true,
+                ..Default::default()
+            },
+            capabilities: LockCapabilities {
+                imports: vec!["wasi:http".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(
+            imports_only.capability_grants().is_empty(),
+            "a capabilities table with no permissions doesn't resurrect the old field"
+        );
     }
 }

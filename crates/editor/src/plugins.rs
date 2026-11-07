@@ -5,16 +5,26 @@
 
 use crate::app::App;
 use crate::minibuffer::Purpose;
+use crate::package_ui::{self, Status, Symbols, Text};
+use forge_core::decoration::PackageFace;
 use forge_core::plugin::runtime::Level;
 use forge_core::plugin::runtime::is_supported_import;
 use forge_core::{
-    Effect, Grants, Manifest, Outcome, PluginFile, PluginHost, PluginRequest, Question,
+    Effect, GrantBinding, Grants, Manifest, Outcome, PluginFile, PluginHost, PluginRequest,
+    Question,
 };
 use std::path::{Path, PathBuf};
 
 /// How deep plugin commands may run each other (commands.run) before
 /// Forge assumes a loop.
 const MAX_DEPTH: usize = 16;
+
+/// The permission review's mode: RET opens or closes the import list.
+pub const PERMISSIONS_MODE: &str = "plugin-permissions-mode";
+/// The plugin list's mode: RET expands, j/k move, r revokes.
+pub const LIST_MODE: &str = "plugin-list-mode";
+/// How many imports a folded review shows.
+const FOLDED_IMPORTS: usize = 4;
 
 /// How often plugin files are checked for rebuilds (when idle).
 pub const RELOAD_POLL: std::time::Duration = std::time::Duration::from_secs(1);
@@ -29,14 +39,52 @@ pub struct PendingQuestion {
     pub question: Question,
 }
 
+/// What the plugin permission and list buffers are showing: which import
+/// lists are expanded and which list row is selected.
+#[derive(Debug, Clone, Default)]
+pub struct PluginUi {
+    /// The permissions or import-mismatch buffer is showing every import.
+    pub imports_expanded: bool,
+    /// The selected row in *Plugins*.
+    pub list_selected: usize,
+    /// *Plugins* has been shown at least once.
+    pub list_initialized: bool,
+    /// Rows whose details are open in *Plugins*.
+    pub list_expanded: std::collections::BTreeSet<String>,
+    /// The import mismatch that is on screen. `PluginRequest` holds a
+    /// compiled component and cannot be kept here.
+    pub mismatch: Option<MismatchView>,
+}
+
+impl PluginUi {
+    /// Start a new permission or mismatch screen with its imports folded.
+    pub fn begin_review(&mut self, mismatch: Option<MismatchView>) {
+        self.imports_expanded = false;
+        self.mismatch = mismatch;
+    }
+}
+
+/// The text needed to redraw an import-mismatch buffer after RET.
+#[derive(Debug, Clone)]
+pub struct MismatchView {
+    pub name: String,
+    pub mismatches: Vec<forge_core::ImportMismatch>,
+    pub imports: Vec<String>,
+}
+
 /// A plugin waiting for the user to answer the permission question.
 pub struct PendingGrant {
     pub request: PluginRequest,
     /// What it asks for that isn't granted yet.
     pub missing: Grants,
+    /// The binary the answer is being given for.
+    pub binding: GrantBinding,
+    /// The name was approved for a different binary, so it is being asked
+    /// again even when it would otherwise have enough permissions.
+    pub different_binary: bool,
 }
 
-fn ensure_host(app: &mut App) -> bool {
+pub(crate) fn ensure_host(app: &mut App) -> bool {
     if app.plugin_host.is_none() {
         match PluginHost::with_cache_dir(app.plugin_cache.as_deref()) {
             Ok(h) => {
@@ -50,6 +98,46 @@ fn ensure_host(app: &mut App) -> bool {
         }
     }
     true
+}
+
+/// Start the plugin-startup stopwatch, if it can be started.
+pub fn begin_startup_profile(app: &mut App) -> bool {
+    if !ensure_host(app) {
+        return false;
+    }
+    if let Some(host) = app.plugin_host.as_ref() {
+        host.enable_profiling();
+        host.begin_startup_profile();
+    }
+    true
+}
+
+/// Stop the plugin-startup stopwatch and warn if it went over the budget.
+pub fn finish_startup_profile(app: &mut App) {
+    let Some(host) = app.plugin_host.as_ref() else {
+        return;
+    };
+    host.finish_startup_profile();
+    let Some(total) = host.startup_profile_total() else {
+        return;
+    };
+    let Some(budget) = app.startup_budget else {
+        return;
+    };
+    if total <= budget {
+        return;
+    }
+    app.startup_budget_exceeded = true;
+    let total_ms = total.as_secs_f64() * 1000.0;
+    let budget_ms = budget.as_secs_f64() * 1000.0;
+    crate::messages::log(
+        app,
+        "startup",
+        Level::Warn,
+        &format!(
+            "Plugin startup took {total_ms:.3} ms, over the {budget_ms:.3} ms startup_budget_ms"
+        ),
+    );
 }
 
 /// Plugin files in the plugins directory (~/.config/forge/plugins).
@@ -73,7 +161,14 @@ pub fn load_at_startup(app: &mut App, path: &Path) {
     if let Err(e) = check_settings(app, &file.name, file.manifest.as_ref()) {
         return app.error(e);
     }
-    let granted = effective_grants(app, &file.name);
+    let binding = file.binding();
+    if app.grants.binding_mismatch(&file.name, &binding) {
+        // Ask again, with the explanation, rather than starting from a
+        // stale approval for another binary.
+        return load(app, path);
+    }
+    bind_legacy(app, &file.name, &binding);
+    let granted = effective_grants_for(app, &file.name, &binding);
     let mut host = app.plugin_host.take().expect("just made");
     let r = host.load_dormant(&mut app.editor, file, &granted);
     app.plugin_host = Some(host);
@@ -103,13 +198,67 @@ pub fn load_lazy(
     if let Err(e) = check_settings(app, &file.name, file.manifest.as_ref()) {
         return app.error(e);
     }
-    let granted = effective_grants(app, &file.name);
+    let binding = file.binding();
+    if app.grants.binding_mismatch(&file.name, &binding) {
+        return load(app, path);
+    }
+    bind_legacy(app, &file.name, &binding);
+    let granted = effective_grants_for(app, &file.name, &binding);
     let mut host = app.plugin_host.take().expect("just made");
     let r = host.load_lazy(&mut app.editor, file, &granted, commands, modes, extensions);
     app.plugin_host = Some(host);
     if let Err(e) = r {
         report_error(app, e);
     }
+}
+
+/// Load a plugin during a bisect without asking permission questions: it
+/// was loaded before, so keep the grants it already had. `dormant` puts it
+/// back in the lazy state it was in when the bisect started.
+pub fn reload_for_bisect(
+    app: &mut App,
+    path: &Path,
+    dormant: bool,
+    lazy: Option<(&[String], &[String], &[String])>,
+) -> Result<(), String> {
+    if !ensure_host(app) {
+        return Err("can't start the plugin runtime".into());
+    }
+    let file = PluginFile::read(path).map_err(|error| format!("{error:#}"))?;
+    check_settings(app, &file.name, file.manifest.as_ref())?;
+    let binding = file.binding();
+    bind_legacy(app, &file.name, &binding);
+    let granted = effective_grants_for(app, &file.name, &binding);
+    let mut host = app.plugin_host.take().expect("just made");
+    let mut out = forge_core::Outcome::default();
+    let result = if dormant {
+        if let Some((commands, modes, extensions)) = lazy {
+            host.load_lazy(&mut app.editor, file, &granted, commands, modes, extensions)
+        } else {
+            match host.load_dormant(&mut app.editor, file, &granted) {
+                Ok(()) => Ok(()),
+                Err(file) => {
+                    let request = host
+                        .inspect_file(&file.path)
+                        .map_err(|error| format!("{error:#}"))?;
+                    let (result, more) = host.load_request(&mut app.editor, request, &granted);
+                    out = more;
+                    result
+                }
+            }
+        }
+    } else {
+        let request = host
+            .inspect_file(path)
+            .map_err(|error| format!("{error:#}"))?;
+        let (result, more) = host.load_request(&mut app.editor, request, &granted);
+        out = more;
+        result
+    };
+    app.plugin_host = Some(host);
+    apply(app, out);
+    app.sync_docs();
+    result.map_err(|error| format!("{error:#}"))
 }
 
 /// M-x reload-plugin: load it again from the file it came from.
@@ -178,37 +327,104 @@ pub fn load(app: &mut App, path: &Path) {
     if let Err(e) = check_settings(app, request.name(), request.manifest.as_ref()) {
         return app.error(e);
     }
-    let granted = effective_grants(app, request.name());
+    let mismatches =
+        forge_core::uncovered_imports(request.manifest.as_ref(), &request.inspection.used_imports);
+    if !mismatches.is_empty() {
+        show_import_mismatch(app, &request, &mismatches);
+        let details = mismatches
+            .iter()
+            .map(forge_core::ImportMismatch::describe)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return app.error(format!(
+            "Plugin {} not loaded: its manifest doesn't declare permissions its imports need: {details}",
+            request.name()
+        ));
+    }
+    let name = request.name().to_string();
+    // A request read from bytes alone has no binary identity; one from a
+    // file always does.
+    let binding = request.binding().unwrap_or_default();
+    let different_binary = app.grants.binding_mismatch(&name, &binding);
+    if different_binary {
+        // The old approval belongs to another binary. Forget it before
+        // asking, so a declined prompt can't leave it usable.
+        if let Err(e) = app.grants.revoke(&name) {
+            app.error(format!("Couldn't invalidate the old grant: {e}"));
+        }
+    } else {
+        bind_legacy(app, &name, &binding);
+    }
+    let granted = effective_grants_for(app, &name, &binding);
     let missing = granted.missing(&request.requested());
     if missing.is_empty() {
         return finish_load(app, request, &granted, None);
     }
-    show_permissions(app, &request, &missing, &granted);
-    let name = request.name().to_string();
-    app.pending_grant = Some(PendingGrant { request, missing });
-    app.prompt(
-        format!("Grant these permissions to {name}? (y or n) "),
-        Purpose::PluginGrant,
-    );
+    if app.unattended {
+        if app.packages.approvals.grants {
+            let saved = if binding.is_empty() {
+                app.grants.grant(&name, &missing)
+            } else {
+                app.grants.grant_for(&name, &missing, &binding)
+            };
+            if let Err(e) = saved {
+                app.error(format!("Couldn't save the grant: {e}"));
+            }
+            let granted = effective(app, &name, &binding);
+            finish_load(app, request, &granted, None);
+            return process_pending_loads(app);
+        }
+        let error = format!(
+            "Plugin {name} not loaded: it needs permissions {}. {}",
+            missing.describe().join("; "),
+            crate::packages::Approvals::grants_hint()
+        );
+        app.packages.approval_blocked = Some(error.clone());
+        return app.error(error);
+    }
+    show_permissions(app, &request, &missing, &granted, different_binary);
+    app.pending_grant = Some(PendingGrant {
+        request,
+        missing,
+        binding,
+        different_binary,
+    });
+    let prompt = if different_binary {
+        format!("same name, different binary. Grant these permissions to {name}? (y or n) ")
+    } else {
+        format!("Grant these permissions to {name}? (y or n) ")
+    };
+    app.prompt(prompt, Purpose::PluginGrant);
 }
 
 /// The user answered the permission question: Some(true) grant and load,
 /// Some(false) load without, None don't load.
 pub fn answer_grant(app: &mut App, answer: Option<bool>) {
-    let Some(PendingGrant { request, missing }) = app.pending_grant.take() else {
+    let Some(PendingGrant {
+        request,
+        missing,
+        binding,
+        ..
+    }) = app.pending_grant.take()
+    else {
         return;
     };
     let name = request.name().to_string();
     match answer {
         Some(true) => {
-            if let Err(e) = app.grants.grant(&name, &missing) {
+            let saved = if binding.is_empty() {
+                app.grants.grant(&name, &missing)
+            } else {
+                app.grants.grant_for(&name, &missing, &binding)
+            };
+            if let Err(e) = saved {
                 app.error(format!("Couldn't save the grant: {e}"));
             }
-            let granted = effective_grants(app, &name);
+            let granted = effective(app, &name, &binding);
             finish_load(app, request, &granted, None);
         }
         Some(false) => {
-            let granted = effective_grants(app, &name);
+            let granted = effective(app, &name, &binding);
             finish_load(app, request, &granted, Some(&missing));
         }
         None => app.msg(format!("Plugin {name} not loaded")),
@@ -216,10 +432,41 @@ pub fn answer_grant(app: &mut App, answer: Option<bool>) {
     process_pending_loads(app);
 }
 
+/// Remember the binary that first used a migrated, unbound approval.
+fn bind_legacy(app: &mut App, name: &str, binding: &GrantBinding) {
+    if binding.is_empty() {
+        return;
+    }
+    if let Err(e) = app.grants.bind_if_unbound(name, binding) {
+        app.error(format!("Couldn't save the grant: {e}"));
+    }
+}
+
+fn effective(app: &App, name: &str, binding: &GrantBinding) -> Grants {
+    if binding.is_empty() {
+        effective_grants(app, name)
+    } else {
+        effective_grants_for(app, name, binding)
+    }
+}
+
 /// What a plugin may do: granted interactively (plugin-grants.toml) plus
 /// pre-granted in init.rhai (forge.plugin.grant).
 pub fn effective_grants(app: &App, name: &str) -> Grants {
     let mut g = app.grants.get(name);
+    merge_pre_grants(app, name, &mut g);
+    g
+}
+
+/// What a particular binary of a plugin may do. A migrated, unbound
+/// approval still applies; `forge.plugin.grant` always applies.
+pub fn effective_grants_for(app: &App, name: &str, binding: &GrantBinding) -> Grants {
+    let mut g = app.grants.get_for(name, binding);
+    merge_pre_grants(app, name, &mut g);
+    g
+}
+
+fn merge_pre_grants(app: &App, name: &str, g: &mut Grants) {
     if let Some(pre) = app
         .rhai
         .as_ref()
@@ -227,7 +474,6 @@ pub fn effective_grants(app: &App, name: &str) -> Grants {
     {
         g.merge(&pre);
     }
-    g
 }
 
 /// Load plugins that waited for a permission question to be answered.
@@ -307,38 +553,64 @@ pub fn describe(app: &mut App, name: &str) {
         .get(name)
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or(serde_json::Value::Null);
-
-    let mut t = format!("{name}\n");
-    if let Some(m) = &manifest {
-        if let Some(v) = m.version() {
-            t.push_str(&format!("  version: {v}\n"));
-        }
-        if let Some(d) = m.description() {
-            t.push_str(&format!("  {d}\n"));
-        }
-        if let Some(h) = m.homepage() {
-            t.push_str(&format!("  home: {h}\n"));
-        }
-        if let Some(l) = m.license() {
-            t.push_str(&format!("  license: {l}\n"));
-        }
-    }
-    if dormant {
-        t.push_str("  (not started yet)\n");
-    }
-    if let Some(p) = &path {
-        t.push_str(&format!("  file: {}\n", p.display()));
-    }
-
     let commands: Vec<&str> = app
         .editor
         .commands
         .names()
         .filter(|c| app.editor.commands.plugin_for(c) == Some(name))
         .collect();
-    t.push_str("\nCommands:\n");
+
+    let unsupported = host
+        .get(name)
+        .map(|p| p.unsupported.clone())
+        .unwrap_or_default();
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
+    let symbols = Symbols::for_app(app);
+    let version = manifest
+        .as_ref()
+        .and_then(|m| m.version())
+        .map(|v| format!("{name} {v}"))
+        .unwrap_or_else(|| name.to_string());
+    let mut text = Text::for_width(outer);
+    package_ui::title(&mut text, "Plugin", &version, width, symbols);
+    package_ui::rule(&mut text, width, symbols);
+    text.push_face(name, PackageFace::Heading);
+    if dormant {
+        text.push(" ");
+        text.push_face("not started", PackageFace::BadgeInactive);
+    }
+    text.newline();
+    if let Some(m) = &manifest {
+        if let Some(d) = m.description() {
+            text.push_face(d, PackageFace::Inactive);
+            text.newline();
+        }
+        for (label, value) in [("home", m.homepage()), ("license", m.license())] {
+            if let Some(value) = value {
+                text.push_face(&format!("{label}: "), PackageFace::Heading);
+                text.push(value);
+                text.newline();
+            }
+        }
+    }
+    if let Some(p) = &path {
+        text.push_face("file: ", PackageFace::Heading);
+        text.push(&p.display().to_string());
+        text.newline();
+    }
+
+    text.newline();
+    package_ui::heading(
+        &mut text,
+        &format!("Commands ({})", commands.len()),
+        width,
+        symbols,
+    );
+    text.newline();
     if commands.is_empty() {
-        t.push_str("  none\n");
+        text.push_face("  none", PackageFace::Inactive);
+        text.newline();
     } else {
         for c in &commands {
             let doc = app
@@ -347,30 +619,62 @@ pub fn describe(app: &mut App, name: &str) {
                 .get(c)
                 .map(|i| i.doc.clone())
                 .unwrap_or_default();
-            if doc.is_empty() {
-                t.push_str(&format!("  {c}\n"));
-            } else {
-                t.push_str(&format!("  {c}  -- {doc}\n"));
+            text.push("  ");
+            text.push_face(c, PackageFace::Primary);
+            if !doc.is_empty() {
+                text.push("  ");
+                text.push_face(
+                    &package_ui::fit(&doc, width.saturating_sub(4 + c.len()), symbols.ellipsis),
+                    PackageFace::Inactive,
+                );
             }
+            text.newline();
         }
     }
 
-    t.push_str("\nPermissions:\n");
+    text.newline();
+    package_ui::heading(&mut text, "Permissions", width, symbols);
+    text.newline();
     if grants.describe().is_empty() {
-        t.push_str("  none (no files, network or environment)\n");
+        text.push_face(
+            "  none (no files, network or environment)",
+            PackageFace::Inactive,
+        );
+        text.newline();
     } else {
-        for line in grants.describe() {
-            t.push_str(&format!("  - {line}\n"));
+        for (key, line) in grants.describe_keyed() {
+            text.push_face(&format!("  {} ", symbols.check), PackageFace::Ok);
+            text.push(&line);
+            if let Some(time) = app.grants.grant_time(name, &key) {
+                text.push_face(
+                    &format!("  (last changed {})", forge_core::format_grant_time(time)),
+                    PackageFace::Inactive,
+                );
+            }
+            text.newline();
+        }
+    }
+    if !unsupported.is_empty() {
+        text.newline();
+        text.push_face("Imports Forge doesn't provide", PackageFace::Heading);
+        text.newline();
+        for import in &unsupported {
+            text.push_face(&format!("  {} ", symbols.cross), PackageFace::Error);
+            text.push(import);
+            text.newline();
         }
     }
 
-    t.push_str("\nSettings:\n");
+    text.newline();
+    package_ui::heading(&mut text, "Settings", width, symbols);
+    text.newline();
     let settings = manifest
         .as_ref()
         .map(|m| m.settings.as_slice())
         .unwrap_or(&[]);
     if settings.is_empty() {
-        t.push_str("  none declared\n");
+        text.push_face("  none declared", PackageFace::Inactive);
+        text.newline();
     } else {
         for s in settings {
             let value = config
@@ -380,19 +684,16 @@ pub fn describe(app: &mut App, name: &str) {
                     Some(d) => format!("{d} (default)"),
                     None => "(unset)".to_string(),
                 });
-            let default = s
-                .default
-                .as_ref()
-                .map(|d| format!("  default: {d}"))
-                .unwrap_or_default();
-            t.push_str(&format!(
-                "  {} ({}){default}\n    value: {value}\n",
-                s.name,
-                s.kind.as_str()
-            ));
+            text.push_face(&format!("  {} ", s.name), PackageFace::Primary);
+            text.push_face(&format!("({}) ", s.kind.as_str()), PackageFace::Inactive);
+            text.push(&format!("value: {value}"));
+            if let Some(default) = &s.default {
+                text.push_face(&format!("  default: {default}"), PackageFace::Inactive);
+            }
+            text.newline();
         }
     }
-    app.show_special_buffer("*Plugin*", "special-mode", &t);
+    text.show(app, "*Plugin*", "special-mode", None);
 }
 
 fn report_error(app: &mut App, e: anyhow::Error) {
@@ -400,52 +701,389 @@ fn report_error(app: &mut App, e: anyhow::Error) {
     app.error(text);
 }
 
+/// A plugin whose imports need a permission its manifest doesn't declare:
+/// show the mismatch instead of treating the import as an implicit grant.
+fn show_import_mismatch(
+    app: &mut App,
+    request: &PluginRequest,
+    mismatches: &[forge_core::ImportMismatch],
+) {
+    let view = MismatchView {
+        name: request.name().to_string(),
+        mismatches: mismatches.to_vec(),
+        imports: request.inspection.imports.clone(),
+    };
+    app.plugin_ui.begin_review(Some(view.clone()));
+    show_mismatch(app, &view);
+}
+
+fn show_mismatch(app: &mut App, view: &MismatchView) {
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
+    let symbols = Symbols::for_app(app);
+    let mut text = Text::for_width(outer);
+    package_ui::title(&mut text, "Import Mismatch", &view.name, width, symbols);
+    package_ui::rule(&mut text, width, symbols);
+    text.push_face(
+        &format!("{} can't load: a declared permission is missing", view.name),
+        PackageFace::Heading,
+    );
+    text.newline();
+    text.newline();
+    package_ui::band(
+        &mut text,
+        Status::Error,
+        "the manifest doesn't declare every permission its imports need",
+        width,
+        symbols,
+    );
+    text.newline();
+    text.push_face("Mismatched imports", PackageFace::Heading);
+    text.newline();
+    for mismatch in &view.mismatches {
+        text.push_face(&format!("{} ", symbols.cross), PackageFace::Error);
+        let needs = format!("needs {}, not declared", mismatch.permission.describe());
+        text.push_face(&mismatch.import, PackageFace::Primary);
+        text.push("  ");
+        text.push_face(&needs, PackageFace::Error);
+        text.newline();
+    }
+    text.newline();
+    text.push_face("What its code can call", PackageFace::Heading);
+    text.push_face(&format!(" ({})", view.imports.len()), PackageFace::Heading);
+    text.newline();
+    push_imports(
+        &mut text,
+        &view.imports,
+        Some(&view.mismatches),
+        app.plugin_ui.imports_expanded,
+        width,
+        symbols,
+    );
+    text.newline();
+    text.push_face(
+        "Add the missing permissions to the plugin's manifest, then load it again.",
+        PackageFace::Inactive,
+    );
+    text.newline();
+    text.show(app, "*Plugin Permissions*", PERMISSIONS_MODE, None);
+}
+
 /// The *Plugin Permissions* buffer: what a plugin asks for and what its
 /// code can call.
-fn show_permissions(app: &mut App, request: &PluginRequest, missing: &Grants, granted: &Grants) {
-    let name = request.name();
-    let mut t = format!("Plugin {name} asks for permission\n\n");
-    if let Some(m) = &request.manifest {
-        let version = m
-            .version
-            .as_deref()
-            .map(|v| format!(" {v}"))
-            .unwrap_or_default();
-        let desc = m
-            .description
-            .as_deref()
-            .map(|d| format!(": {d}"))
-            .unwrap_or_default();
-        t.push_str(&format!("{name}{version}{desc}\n\n"));
+fn show_permissions(
+    app: &mut App,
+    request: &PluginRequest,
+    missing: &Grants,
+    granted: &Grants,
+    different_binary: bool,
+) {
+    app.plugin_ui.begin_review(None);
+    let version = request
+        .manifest
+        .as_ref()
+        .and_then(|m| m.version())
+        .map(str::to_string);
+    let view = PermissionView {
+        name: request.name(),
+        version: version.as_deref(),
+        imports: &request.inspection.imports,
+        missing,
+        granted,
+        different_binary,
+    };
+    draw_permissions(app, &view);
+}
+
+struct PermissionView<'a> {
+    name: &'a str,
+    version: Option<&'a str>,
+    imports: &'a [String],
+    missing: &'a Grants,
+    granted: &'a Grants,
+    different_binary: bool,
+}
+
+fn draw_permissions(app: &mut App, view: &PermissionView<'_>) {
+    let name = view.name;
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
+    let symbols = Symbols::for_app(app);
+    let version = view
+        .version
+        .map(|v| format!("{name} {v}"))
+        .unwrap_or_else(|| name.to_string());
+    let mut text = Text::for_width(outer);
+    package_ui::title(&mut text, "Plugin Permissions", &version, width, symbols);
+    package_ui::rule(&mut text, width, symbols);
+    text.push_face(&format!("{name} asks for permission"), PackageFace::Heading);
+    text.newline();
+    text.newline();
+    if view.different_binary {
+        package_ui::band_lines(
+            &mut text,
+            Status::Warning,
+            &[
+                "same name, different binary",
+                "The saved approval was for a different build, so it was forgotten.",
+            ],
+            width,
+            symbols,
+        );
+        text.newline();
     }
-    t.push_str("It asks for:\n");
-    for line in missing.describe() {
-        t.push_str(&format!("  - {line}\n"));
+
+    let asks = permission_rows(view.missing);
+    let have = permission_rows(view.granted);
+    let name_w = permission_name_width(asks.iter().chain(&have));
+    text.push_face(
+        &format!("Asks for ({} new)", asks.len()),
+        PackageFace::Heading,
+    );
+    text.newline();
+    for row in &asks {
+        push_permission_row(
+            &mut text,
+            row,
+            "+",
+            PackageFace::Warning,
+            name_w,
+            width,
+            symbols,
+        );
     }
-    if !granted.is_empty() {
-        t.push_str("\nAlready granted:\n");
-        for line in granted.describe() {
-            t.push_str(&format!("  - {line}\n"));
+
+    if !view.granted.is_empty() {
+        text.newline();
+        text.push_face(
+            &format!("Already granted ({})", have.len()),
+            PackageFace::Heading,
+        );
+        text.newline();
+        for row in &have {
+            push_permission_row(
+                &mut text,
+                row,
+                symbols.check,
+                PackageFace::Ok,
+                name_w,
+                width,
+                symbols,
+            );
         }
     }
-    t.push_str("\nWhat its code can call (component imports):\n");
-    for i in &request.inspection.imports {
-        let note = if !is_supported_import(i) {
-            "  (not provided by Forge: calls fail)"
-        } else if i.starts_with("wasi:filesystem/") {
-            "  (only granted directories)"
-        } else if i.starts_with("wasi:sockets/") {
-            "  (only with network permission)"
-        } else {
-            ""
-        };
-        t.push_str(&format!("  {i}{note}\n"));
-    }
-    t.push_str(
-        "\ny: grant and load    n: load without these permissions    C-g: don't load\n\
-         Grants are kept in plugin-grants.toml; M-x revoke-plugin-permissions forgets them.\n",
+
+    text.newline();
+    text.push_face(
+        &format!("What its code can call ({} imports)", view.imports.len()),
+        PackageFace::Heading,
     );
-    app.show_special_buffer("*Plugin Permissions*", "special-mode", &t);
+    text.newline();
+    push_imports(
+        &mut text,
+        view.imports,
+        None,
+        app.plugin_ui.imports_expanded,
+        width,
+        symbols,
+    );
+
+    text.newline();
+    text.push_face(
+        &package_ui::fit(
+            "y grant and load   n load without these   C-g don't load   ? help",
+            width,
+            symbols.ellipsis,
+        ),
+        PackageFace::Inactive,
+    );
+    text.newline();
+    text.show(app, "*Plugin Permissions*", PERMISSIONS_MODE, None);
+}
+
+#[derive(Debug)]
+struct PermissionRow {
+    name: &'static str,
+    description: String,
+    risk: bool,
+}
+
+fn permission_rows(grants: &Grants) -> Vec<PermissionRow> {
+    let mut rows = Vec::new();
+    if grants.network {
+        rows.push(PermissionRow {
+            name: "network",
+            description: "connect to the internet".into(),
+            risk: true,
+        });
+    }
+    if grants.http {
+        rows.push(PermissionRow {
+            name: "http",
+            description: "make web requests".into(),
+            risk: true,
+        });
+    }
+    if grants.environment {
+        rows.push(PermissionRow {
+            name: "environment",
+            description: "read environment variables".into(),
+            risk: false,
+        });
+    }
+    for dir in &grants.directories {
+        let mode = if dir.write { "write" } else { "read" };
+        let mut description = format!("{mode} {}", dir.path);
+        if let Some(why) = &dir.why {
+            description.push_str(&format!(" ({why})"));
+        }
+        rows.push(PermissionRow {
+            name: "directory",
+            description,
+            risk: dir.write,
+        });
+    }
+    if let Some(memory) = grants.memory_mb {
+        rows.push(PermissionRow {
+            name: "memory",
+            description: format!("{memory} MB"),
+            risk: false,
+        });
+    }
+    for process in &grants.processes {
+        rows.push(PermissionRow {
+            name: "processes",
+            description: format!("run {process}"),
+            risk: true,
+        });
+    }
+    rows
+}
+
+fn permission_name_width<'a>(rows: impl Iterator<Item = &'a PermissionRow>) -> usize {
+    rows.map(|row| row.name.len() + 1)
+        .max()
+        .unwrap_or(0)
+        .max(11)
+}
+
+fn push_permission_row(
+    text: &mut Text,
+    row: &PermissionRow,
+    mark: &str,
+    mark_face: PackageFace,
+    name_w: usize,
+    width: usize,
+    symbols: Symbols,
+) {
+    let tag = row.risk.then_some(("higher risk", PackageFace::Warning));
+    package_ui::capability_line(
+        text,
+        mark,
+        mark_face,
+        row.name,
+        &row.description,
+        tag,
+        name_w,
+        width,
+        symbols,
+    );
+}
+
+fn push_imports(
+    text: &mut Text,
+    imports: &[String],
+    mismatches: Option<&[forge_core::ImportMismatch]>,
+    expanded: bool,
+    width: usize,
+    symbols: Symbols,
+) {
+    let shown = if expanded {
+        imports.len()
+    } else {
+        imports.len().min(FOLDED_IMPORTS)
+    };
+    let bare = |import: &str| import.split('@').next().unwrap_or(import).to_string();
+    let name_w = imports[..shown]
+        .iter()
+        .map(|import| package_ui::display_width(&bare(import)) + 2)
+        .max()
+        .unwrap_or(0)
+        .clamp(30, 40)
+        .min(width.saturating_sub(12).max(12));
+    for import in &imports[..shown] {
+        let mismatch = mismatches.and_then(|all| all.iter().find(|m| m.import == *import));
+        let note = if let Some(mismatch) = mismatch {
+            format!("needs {}, not declared", mismatch.permission.describe())
+        } else if !is_supported_import(import) {
+            "not provided by Forge: calls fail".to_string()
+        } else if import.starts_with("wasi:filesystem/") {
+            "only granted directories".to_string()
+        } else if import.starts_with("wasi:sockets/") {
+            "only with network permission".to_string()
+        } else {
+            String::new()
+        };
+        text.push("  ");
+        let label = if mismatch.is_some() {
+            import.clone()
+        } else {
+            bare(import)
+        };
+        let label = package_ui::pad(&label, name_w, symbols.ellipsis);
+        let room = width.saturating_sub(2);
+        if mismatch.is_some() {
+            text.push_face(
+                &package_ui::fit(&format!("{label}{note}"), room, symbols.ellipsis),
+                PackageFace::Error,
+            );
+        } else {
+            text.push(&package_ui::fit(&label, room, symbols.ellipsis));
+            text.push_face(
+                &package_ui::fit(&note, room.saturating_sub(name_w), symbols.ellipsis),
+                PackageFace::Inactive,
+            );
+        }
+        text.newline();
+    }
+    if imports.len() > FOLDED_IMPORTS {
+        let hint = if expanded {
+            "RET to fold".to_string()
+        } else {
+            format!("+ {} more   RET to expand", imports.len() - shown)
+        };
+        text.push_face(&format!("  {hint}"), PackageFace::Inactive);
+        text.newline();
+    }
+}
+
+pub fn toggle_imports(app: &mut App) {
+    if app.buf_ref().major_mode() != PERMISSIONS_MODE {
+        return app.error("Not in a plugin permission review");
+    }
+    app.plugin_ui.imports_expanded = !app.plugin_ui.imports_expanded;
+    if let Some(pending) = app.pending_grant.take() {
+        let name = pending.request.name().to_string();
+        let granted = effective(app, &name, &pending.binding);
+        let version = pending
+            .request
+            .manifest
+            .as_ref()
+            .and_then(|m| m.version())
+            .map(str::to_string);
+        let view = PermissionView {
+            name: pending.request.name(),
+            version: version.as_deref(),
+            imports: &pending.request.inspection.imports,
+            missing: &pending.missing,
+            granted: &granted,
+            different_binary: pending.different_binary,
+        };
+        draw_permissions(app, &view);
+        app.pending_grant = Some(pending);
+    } else if let Some(view) = app.plugin_ui.mismatch.clone() {
+        show_mismatch(app, &view);
+    }
 }
 
 /// M-: evaluate Rhai in init.rhai's state (made on first use if there is
@@ -526,61 +1164,517 @@ fn rhai_sexp_before(app: &mut App) -> Option<String> {
 
 /// M-x list-plugins: loaded plugins and what they're allowed.
 pub fn list(app: &mut App) {
-    let mut t = String::from("Plugins\n\n");
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
+    let symbols = Symbols::for_app(app);
     let Some(host) = app.plugin_host.as_ref().filter(|h| !h.is_empty()) else {
-        t.push_str("No plugins are loaded. M-x load-plugin loads one.\n");
-        return app.show_special_buffer("*Plugins*", "special-mode", &t);
+        let mut text = Text::for_width(outer);
+        package_ui::title(&mut text, "Plugins", "", width, symbols);
+        package_ui::rule(&mut text, width, symbols);
+        text.push_face(
+            "No plugins are loaded. M-x load-plugin loads one.",
+            PackageFace::Inactive,
+        );
+        text.newline();
+        text.show(app, "*Plugins*", LIST_MODE, None);
+        return;
     };
+
+    let mut rows = Vec::new();
     for name in host.names() {
         let grants = match host.get(name) {
             Some(p) => p.grants.clone(),
             None => host.dormant_grants(name).cloned().unwrap_or_default(),
         };
-        let commands: Vec<&str> = app
+        let dormant = host.is_dormant(name);
+        let unsupported = host
+            .get(name)
+            .map(|p| p.unsupported.clone())
+            .unwrap_or_default();
+        let file = host.source(name).map(|p| p.display().to_string());
+        let manifest = host
+            .source(name)
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|bytes| {
+                host.source(name)
+                    .and_then(|p| Manifest::for_component(p, &bytes).ok().flatten())
+            });
+        let commands: Vec<String> = app
             .editor
             .commands
             .names()
             .filter(|c| app.editor.commands.plugin_for(c) == Some(name))
+            .map(String::from)
             .collect();
-        t.push_str(&format!("{name}\n"));
-        if host.is_dormant(name) {
-            t.push_str("  not started yet: starts when one of its commands runs or an event it wants happens\n");
-        }
-        if let Some(path) = host.source(name) {
-            t.push_str(&format!("  file: {}\n", path.display()));
-        }
-        t.push_str(&format!(
-            "  commands: {}\n",
-            if commands.is_empty() {
-                "none".into()
-            } else {
-                commands.join(", ")
-            }
-        ));
-        if grants.describe().is_empty() {
-            t.push_str("  permissions: none (no files, network or environment)\n");
-        }
         let pre = app
             .rhai
             .as_ref()
             .and_then(|l| l.plugin_grants().remove(name))
-            .unwrap_or_default();
-        for line in pre.describe() {
-            t.push_str(&format!("  {line}  [init.rhai]\n"));
-        }
-        for line in app.grants.get(name).describe() {
-            t.push_str(&format!("  {line}  [granted when asked]\n"));
-        }
-        t.push_str(&format!("  memory limit: {} MB\n", grants.memory_mb()));
-        if let Some(p) = host.get(name).filter(|p| !p.unsupported.is_empty()) {
-            t.push_str(&format!(
-                "  imports Forge doesn't provide: {}\n",
-                p.unsupported.join(", ")
-            ));
-        }
-        t.push('\n');
+            .unwrap_or_default()
+            .describe_keyed();
+        let asked = app
+            .grants
+            .get(name)
+            .describe_keyed()
+            .into_iter()
+            .map(|(key, line)| {
+                let changed = app.grants.grant_time(name, &key);
+                (line, changed)
+            })
+            .collect();
+        rows.push(ListRow {
+            name: name.to_string(),
+            section: if dormant {
+                ListSection::NotStarted
+            } else if unsupported.is_empty() {
+                ListSection::Loaded
+            } else {
+                ListSection::Attention
+            },
+            version: manifest
+                .as_ref()
+                .and_then(|m| m.version())
+                .unwrap_or_default()
+                .to_string(),
+            description: manifest
+                .as_ref()
+                .and_then(|m| m.description())
+                .unwrap_or_default()
+                .to_string(),
+            file,
+            commands,
+            chips: grant_chips(&grants),
+            pre,
+            asked,
+            memory: grants.memory_mb(),
+            memory_is_default: grants.memory_mb.is_none(),
+            unsupported,
+        });
     }
-    app.show_special_buffer("*Plugins*", "special-mode", &t);
+
+    draw_list(app, rows);
+}
+
+fn draw_list(app: &mut App, rows: Vec<ListRow>) {
+    let outer = app.win().width.max(20);
+    let width = package_ui::inner(outer);
+    let symbols = Symbols::for_app(app);
+    if !app.plugin_ui.list_initialized {
+        app.plugin_ui.list_initialized = true;
+        if let Some(first) = rows.first() {
+            app.plugin_ui.list_expanded.insert(first.name.clone());
+        }
+    }
+    if app.plugin_ui.list_selected >= rows.len() {
+        app.plugin_ui.list_selected = rows.len().saturating_sub(1);
+    }
+    let selected = app.plugin_ui.list_selected;
+    let name_w = rows
+        .iter()
+        .map(|row| package_ui::display_width(&row.name))
+        .max()
+        .unwrap_or(4)
+        .clamp(18, 24);
+
+    let count = |section: ListSection| rows.iter().filter(|row| row.section == section).count();
+    let mut summary = format!(
+        "{} loaded {} {} not started",
+        count(ListSection::Loaded),
+        symbols.dot,
+        count(ListSection::NotStarted),
+    );
+    if count(ListSection::Attention) > 0 {
+        summary.push_str(&format!(
+            " {} {} need attention",
+            symbols.dot,
+            count(ListSection::Attention)
+        ));
+    }
+    let mut text = Text::for_width(outer);
+    package_ui::title(&mut text, "Plugins", &summary, width, symbols);
+    package_ui::rule(&mut text, width, symbols);
+    let mut selected_line = 0;
+    let mut first = true;
+    for section in [
+        ListSection::Loaded,
+        ListSection::NotStarted,
+        ListSection::Attention,
+    ] {
+        let in_section: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.section == section)
+            .map(|(index, _)| index)
+            .collect();
+        if in_section.is_empty() {
+            continue;
+        }
+        if !first {
+            text.newline();
+        }
+        first = false;
+        let label = format!("{} ({})", section.label(), in_section.len());
+        package_ui::heading(&mut text, &label, width, symbols);
+        text.newline();
+        for index in in_section {
+            let row = &rows[index];
+            let is_selected = index == selected;
+            if is_selected {
+                selected_line = text.line_count();
+            }
+            push_plugin_row(
+                &mut text,
+                row,
+                is_selected,
+                app.plugin_ui.list_expanded.contains(&row.name),
+                name_w,
+                width,
+                symbols,
+            );
+        }
+    }
+    text.newline();
+    text.push_face(
+        &package_ui::fit(
+            "RET expand   r revoke   g refresh   ? help",
+            width,
+            symbols.ellipsis,
+        ),
+        PackageFace::Inactive,
+    );
+    text.newline();
+    text.show(
+        app,
+        "*Plugins*",
+        LIST_MODE,
+        Some(forge_core::Pos::new(selected_line, 0)),
+    );
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListSection {
+    Loaded,
+    NotStarted,
+    Attention,
+}
+
+impl ListSection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Loaded => "Loaded",
+            Self::NotStarted => "Not started",
+            Self::Attention => "Needs attention",
+        }
+    }
+}
+
+struct ListRow {
+    name: String,
+    section: ListSection,
+    version: String,
+    description: String,
+    file: Option<String>,
+    commands: Vec<String>,
+    chips: Vec<(&'static str, PackageFace)>,
+    pre: Vec<(String, String)>,
+    asked: Vec<(String, Option<i64>)>,
+    memory: u32,
+    memory_is_default: bool,
+    unsupported: Vec<String>,
+}
+
+fn grant_chips(grants: &Grants) -> Vec<(&'static str, PackageFace)> {
+    let mut chips = Vec::new();
+    if grants.network {
+        chips.push(("net", PackageFace::BadgeWarning));
+    }
+    if grants.http {
+        chips.push(("http", PackageFace::BadgeWarning));
+    }
+    if grants.environment {
+        chips.push(("env", PackageFace::BadgeInfo));
+    }
+    for dir in &grants.directories {
+        let (label, face) = if dir.write {
+            ("dir:w", PackageFace::BadgeWarning)
+        } else {
+            ("dir:r", PackageFace::BadgeInfo)
+        };
+        if !chips.iter().any(|(l, _)| *l == label) {
+            chips.push((label, face));
+        }
+    }
+    if !grants.processes.is_empty() {
+        chips.push(("proc", PackageFace::BadgeWarning));
+    }
+    if chips.is_empty() {
+        chips.push(("no permissions", PackageFace::BadgeInactive));
+    }
+    chips
+}
+
+fn push_plugin_row(
+    text: &mut Text,
+    row: &ListRow,
+    selected: bool,
+    expanded: bool,
+    name_w: usize,
+    width: usize,
+    symbols: Symbols,
+) {
+    let base = selected.then_some(PackageFace::Selected);
+    text.begin_line(base);
+    let mut used = 0;
+    let (mark, mark_face) = match row.section {
+        ListSection::Loaded => (symbols.ok, PackageFace::Ok),
+        ListSection::NotStarted => (symbols.neutral, PackageFace::Inactive),
+        ListSection::Attention => (symbols.error, PackageFace::Error),
+    };
+    text.push_face(mark, mark_face);
+    used += package_ui::display_width(mark);
+    list_base(text, &mut used, " ", base);
+    let name = package_ui::pad(&row.name, name_w, symbols.ellipsis);
+    list_base(text, &mut used, &name, base);
+    list_base(text, &mut used, " ", base);
+    let version = package_ui::pad(&row.version, 7, symbols.ellipsis);
+    let version_face = if selected {
+        base
+    } else {
+        Some(PackageFace::Inactive)
+    };
+    list_base(text, &mut used, &version, version_face);
+    let chip = |text: &mut Text, used: &mut usize, label: &str, face: PackageFace| {
+        let label = format!(" {label} ");
+        if *used + 1 + package_ui::display_width(&label) > width {
+            return;
+        }
+        list_base(text, used, " ", base);
+        text.push_face(&label, face);
+        *used += package_ui::display_width(&label);
+    };
+    if row.section == ListSection::Attention {
+        chip(text, &mut used, "not loaded", PackageFace::BadgeError);
+    } else {
+        for (label, chip_face) in &row.chips {
+            chip(text, &mut used, label, *chip_face);
+        }
+    }
+    if row.section == ListSection::NotStarted {
+        let note = package_ui::fit(
+            "starts on first use",
+            width.saturating_sub(used + 1),
+            symbols.ellipsis,
+        );
+        list_base(text, &mut used, " ", base);
+        let face = if selected {
+            base
+        } else {
+            Some(PackageFace::Inactive)
+        };
+        list_base(text, &mut used, &note, face);
+    }
+    if let Some(face) = base {
+        if used < width {
+            let fill = " ".repeat(width - used);
+            list_base(text, &mut used, &fill, Some(face));
+        }
+        text.end_line_fill(face);
+    }
+    text.newline();
+    let unsupported = (!row.unsupported.is_empty()).then(|| {
+        format!(
+            "imports Forge doesn't provide: {}",
+            row.unsupported.join(", ")
+        )
+    });
+    if let Some(reason) = unsupported.as_ref().filter(|_| !expanded) {
+        text.push(&" ".repeat(4));
+        text.push_face(
+            &package_ui::fit(reason, width.saturating_sub(4), symbols.ellipsis),
+            PackageFace::Error,
+        );
+        text.newline();
+    }
+    if !expanded {
+        return;
+    }
+
+    const INDENT: usize = 4;
+    let field = |text: &mut Text, label: &str, value: &str, face: Option<PackageFace>| {
+        package_ui::field(text, INDENT, label, value, face, width, symbols);
+    };
+    if !row.description.is_empty() {
+        field(text, "about", &row.description, None);
+    }
+    if let Some(file) = &row.file {
+        field(text, "file", file, None);
+    }
+    let commands = if row.commands.is_empty() {
+        "none".to_string()
+    } else {
+        row.commands.join(", ")
+    };
+    field(text, "commands", &commands, None);
+    let mut permissions = 0;
+    for (line, source, changed) in row.grant_lines() {
+        permissions += 1;
+        let (label, value) = split_grant_line(&line);
+        let tag = match (&source, changed) {
+            (Some(source), _) => format!("   [{source}]"),
+            (None, _) => "   [granted when asked]".to_string(),
+        };
+        text.push(&" ".repeat(INDENT));
+        text.push_face(
+            &package_ui::pad(&label, package_ui::FIELD_LABEL, symbols.ellipsis),
+            PackageFace::Inactive,
+        );
+        let room = width.saturating_sub(INDENT + package_ui::FIELD_LABEL + tag.len());
+        text.push(&package_ui::fit(&value, room, symbols.ellipsis));
+        text.push_face(&tag, PackageFace::Inactive);
+        text.newline();
+        if let Some(time) = changed {
+            text.push(&" ".repeat(INDENT + package_ui::FIELD_LABEL));
+            text.push_face(
+                &format!(
+                    "last changed {}",
+                    forge_core::format_grant_time(time)
+                        .split(' ')
+                        .next()
+                        .unwrap_or_default()
+                ),
+                PackageFace::Inactive,
+            );
+            text.newline();
+        }
+    }
+    if permissions == 0 {
+        field(
+            text,
+            "access",
+            "none (no files, network or environment)",
+            Some(PackageFace::Inactive),
+        );
+    }
+    let memory = if row.memory_is_default {
+        format!("{} MB (default)", row.memory)
+    } else {
+        format!("{} MB", row.memory)
+    };
+    field(text, "memory", &memory, Some(PackageFace::Inactive));
+    if let Some(reason) = &unsupported {
+        text.push(&" ".repeat(INDENT));
+        text.push_face(
+            &package_ui::fit(reason, width.saturating_sub(INDENT), symbols.ellipsis),
+            PackageFace::Error,
+        );
+        text.newline();
+    }
+}
+
+fn list_base(text: &mut Text, used: &mut usize, value: &str, face: Option<PackageFace>) {
+    match face {
+        Some(face) => text.push_face(value, face),
+        None => text.push(value),
+    }
+    *used += package_ui::display_width(value);
+}
+
+/// Split a grant description such as `network: open connections` or
+/// `files: read ~/x` into a short label and the rest.
+fn split_grant_line(line: &str) -> (String, String) {
+    match line.split_once(": ") {
+        Some((label, rest)) => {
+            let label = match label {
+                "files" => "directory",
+                "programs" => "processes",
+                other => other,
+            };
+            (label.to_string(), rest.to_string())
+        }
+        None => ("access".to_string(), line.to_string()),
+    }
+}
+
+impl ListRow {
+    /// Every permission line with where it came from: the init file or a
+    /// grant given when asked.
+    fn grant_lines(&self) -> Vec<(String, Option<&'static str>, Option<i64>)> {
+        let mut lines: Vec<_> = self
+            .pre
+            .iter()
+            .map(|(_, line)| (line.clone(), Some("init.rhai"), None))
+            .collect();
+        lines.extend(
+            self.asked
+                .iter()
+                .map(|(line, changed)| (line.clone(), None, *changed)),
+        );
+        lines
+    }
+}
+
+fn list_names(app: &App) -> Vec<String> {
+    app.plugin_host
+        .as_ref()
+        .map(|h| h.names().map(String::from).collect())
+        .unwrap_or_default()
+}
+
+fn selected_list_name(app: &App) -> Option<String> {
+    let names = list_names(app);
+    names.get(app.plugin_ui.list_selected).cloned()
+}
+
+pub fn list_next(app: &mut App) {
+    if app.buf_ref().major_mode() != LIST_MODE {
+        return app.error("Not in the plugin list");
+    }
+    let len = list_names(app).len();
+    if len > 0 {
+        app.plugin_ui.list_selected = (app.plugin_ui.list_selected + 1).min(len - 1);
+    }
+    list(app);
+}
+
+pub fn list_prev(app: &mut App) {
+    if app.buf_ref().major_mode() != LIST_MODE {
+        return app.error("Not in the plugin list");
+    }
+    app.plugin_ui.list_selected = app.plugin_ui.list_selected.saturating_sub(1);
+    list(app);
+}
+
+pub fn list_toggle(app: &mut App) {
+    if app.buf_ref().major_mode() != LIST_MODE {
+        return app.error("Not in the plugin list");
+    }
+    if let Some(name) = selected_list_name(app)
+        && !app.plugin_ui.list_expanded.remove(&name)
+    {
+        app.plugin_ui.list_expanded.insert(name);
+    }
+    list(app);
+}
+
+pub fn list_revoke(app: &mut App) {
+    if app.buf_ref().major_mode() != LIST_MODE {
+        return app.error("Not in the plugin list");
+    }
+    let Some(name) = selected_list_name(app) else {
+        return app.error("No plugin selected");
+    };
+    revoke(app, &name);
+    list(app);
+}
+
+pub fn list_describe(app: &mut App) {
+    if app.buf_ref().major_mode() != LIST_MODE {
+        return app.error("Not in the plugin list");
+    }
+    let Some(name) = selected_list_name(app) else {
+        return app.error("No plugin selected");
+    };
+    describe(app, &name);
 }
 
 /// Forget what was granted: a plugin's permissions (by its name), or a
@@ -943,6 +2037,18 @@ pub fn apply(app: &mut App, out: Outcome) {
                 start_rhai_http(app, request, &method, &url, headers, body);
             }
             Effect::Locate => locate(app),
+            Effect::SetPromptInput(text) => {
+                let input = app.minibuffer.as_mut().map(|mb| {
+                    mb.set_input(text);
+                    mb.current_input()
+                });
+                if let Some(input) = input {
+                    app.editor.prompt_input = input;
+                }
+            }
+            Effect::SuspendPrompt => crate::minibuffer::suspend(app),
+            Effect::ResumeSession(index) => crate::minibuffer::resume(app, index as usize),
+            Effect::JumpToRow { row, accept } => crate::minibuffer::jump_to_row(app, row, accept),
         }
     }
     if had_unloads {
@@ -1051,3 +2157,300 @@ pub fn show_next_question(app: &mut App) {
 }
 
 pub use crate::messages::{log, messages_buffer};
+
+#[cfg(test)]
+mod review_snapshots {
+    use super::*;
+    use forge_core::{Buffer, Editor, Grants};
+
+    fn app() -> App {
+        let mut app = App::new(Editor::default());
+        let id = app.editor.add_buffer(Buffer::new("*scratch*"));
+        app.editor.show_buffer(id);
+        app.win_mut().width = 80;
+        app
+    }
+
+    fn view<'a>(
+        name: &'a str,
+        version: Option<&'a str>,
+        imports: &'a [String],
+        missing: &'a Grants,
+        granted: &'a Grants,
+        different_binary: bool,
+    ) -> PermissionView<'a> {
+        PermissionView {
+            name,
+            version,
+            imports,
+            missing,
+            granted,
+            different_binary,
+        }
+    }
+
+    fn text(app: &App) -> String {
+        app.buf_ref()
+            .get_contents()
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn imports() -> Vec<String> {
+        vec![
+            "forge:editor/log@0.1.0".into(),
+            "forge:editor/buffers@0.1.0".into(),
+        ]
+    }
+
+    fn missing() -> Grants {
+        Grants {
+            network: true,
+            directories: vec![forge_core::permissions::DirGrant {
+                path: "~/.cache/spellcheck".into(),
+                write: true,
+                why: Some("word lists".into()),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fresh_permission_prompt_snapshot() {
+        let imports = imports();
+        let missing = missing();
+        let granted = Grants::default();
+        let mut app = app();
+        draw_permissions(
+            &mut app,
+            &view(
+                "spellcheck",
+                Some("0.3.0"),
+                &imports,
+                &missing,
+                &granted,
+                false,
+            ),
+        );
+        insta_like(
+            &text(&app),
+            r#" Plugin Permissions                                            spellcheck 0.3.0
+--------------------------------------------------------------------------------
+
+spellcheck asks for permission
+
+Asks for (2 new) ---------------------------------------------------------------
+  + network     connect to the internet                             higher risk
+  + directory   write ~/.cache/spellcheck (word lists)              higher risk
+
+What its code can call (2 imports)
+  forge:editor/log@0.1.0
+  forge:editor/buffers@0.1.0
+
+y grant and load   n load without permissions   C-g don't load
+Grants are kept in the state directory; M-x revoke-plugin-permissions forgets them."#,
+        );
+    }
+
+    #[test]
+    fn different_binary_permission_prompt_snapshot() {
+        let imports = imports();
+        let missing = missing();
+        let granted = Grants::default();
+        let mut app = app();
+        draw_permissions(
+            &mut app,
+            &view(
+                "spellcheck",
+                Some("0.3.0"),
+                &imports,
+                &missing,
+                &granted,
+                true,
+            ),
+        );
+        insta_like(
+            &text(&app),
+            r#" Plugin Permissions                                            spellcheck 0.3.0
+--------------------------------------------------------------------------------
+
+spellcheck asks for permission
+
+ ! same name, different binary
+The saved approval was for a different build, so it was forgotten.
+
+Asks for (2 new) ---------------------------------------------------------------
+  + network     connect to the internet                             higher risk
+  + directory   write ~/.cache/spellcheck (word lists)              higher risk
+
+What its code can call (2 imports)
+  forge:editor/log@0.1.0
+  forge:editor/buffers@0.1.0
+
+y grant and load   n load without permissions   C-g don't load
+Grants are kept in the state directory; M-x revoke-plugin-permissions forgets them."#,
+        );
+    }
+
+    #[test]
+    fn import_mismatch_snapshot() {
+        let imports = vec![
+            "wasi:sockets/instance-network@0.2.12".to_string(),
+            "forge:editor/log@0.1.0".to_string(),
+        ];
+        let mismatch = forge_core::ImportMismatch {
+            import: imports[0].clone(),
+            permission: forge_core::PermissionKind::Network,
+        };
+        let view = MismatchView {
+            name: "sockets".into(),
+            mismatches: vec![mismatch],
+            imports: imports.clone(),
+        };
+        let mut app = app();
+        show_mismatch(&mut app, &view);
+        insta_like(
+            &text(&app),
+            r#" Import Mismatch                                                        sockets
+--------------------------------------------------------------------------------
+
+sockets can't load: a declared permission is missing
+
+ x the manifest doesn't declare every permission its imports need
+
+Mismatched imports
+  x wasi:sockets/instance-network@0.2.12  needs network, not declared
+
+What its code can call (2)
+  wasi:sockets/instance-network@0.2.12  (needs network, not declared)
+  forge:editor/log@0.1.0
+
+Add the missing permissions to the plugin's manifest, then load it again."#,
+        );
+    }
+
+    #[test]
+    fn dump_permissions_and_list() {
+        std::fs::create_dir_all("/tmp/actual").unwrap();
+        let imports: Vec<String> = [
+            "wasi:sockets/tcp@0.2.12",
+            "wasi:filesystem/types@0.2.12",
+            "forge:editor/buffers@0.1.0",
+            "forge:editor/decorations@0.1.0",
+            "forge:editor/log@0.1.0",
+            "forge:editor/commands@0.1.0",
+            "forge:editor/events@0.1.0",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        let missing = Grants {
+            network: true,
+            directories: vec![forge_core::permissions::DirGrant {
+                path: "~/.cache/spellcheck".into(),
+                write: true,
+                why: None,
+            }],
+            ..Default::default()
+        };
+        let granted = Grants {
+            memory_mb: Some(256),
+            ..Default::default()
+        };
+        let mut prompt = app();
+        draw_permissions(
+            &mut prompt,
+            &view(
+                "spellcheck",
+                Some("0.3.0"),
+                &imports,
+                &missing,
+                &granted,
+                true,
+            ),
+        );
+        std::fs::write("/tmp/actual/permission_prompt_dark.txt", text(&prompt)).unwrap();
+
+        let row =
+            |name: &str, section, version: &str, chips: Vec<(&'static str, PackageFace)>| ListRow {
+                name: name.into(),
+                section,
+                version: version.into(),
+                description: String::new(),
+                file: None,
+                commands: Vec::new(),
+                chips,
+                pre: Vec::new(),
+                asked: Vec::new(),
+                memory: 128,
+                memory_is_default: true,
+                unsupported: Vec::new(),
+            };
+        let warn = PackageFace::BadgeWarning;
+        let info = PackageFace::BadgeInfo;
+        let mut org = row(
+            "org-modern",
+            ListSection::Loaded,
+            "0.3.1",
+            vec![("net", warn), ("dir:w", warn)],
+        );
+        org.file = Some("~/.config/forge/plugins/org-modern.wasm".into());
+        org.commands = vec!["org-modern-mode".into(), "org-modern-refresh".into()];
+        org.asked = vec![(
+            "network: connect to api.example.com".into(),
+            Some(1_790_942_400),
+        )];
+        org.pre = vec![(
+            "directory".into(),
+            "files: write ~/.cache/org-modern".into(),
+        )];
+        let mut old = row("old-theme", ListSection::Attention, "0.1.0", vec![]);
+        old.unsupported = vec!["forge:editor/legacy-faces".into()];
+        let rows = vec![
+            org,
+            row(
+                "spellcheck",
+                ListSection::Loaded,
+                "0.3.0",
+                vec![("net", warn), ("dir:w", warn)],
+            ),
+            row(
+                "rainbow-delimiters",
+                ListSection::Loaded,
+                "0.4.1",
+                vec![("no permissions", PackageFace::BadgeInactive)],
+            ),
+            row(
+                "git-status",
+                ListSection::Loaded,
+                "1.1.0",
+                vec![("proc", warn), ("dir:r", info)],
+            ),
+            row(
+                "snippets",
+                ListSection::NotStarted,
+                "2.0.0",
+                vec![("dir:r", info)],
+            ),
+            row(
+                "lsp-helper",
+                ListSection::NotStarted,
+                "0.7.2",
+                vec![("net", warn), ("proc", warn)],
+            ),
+            old,
+        ];
+        let mut app = app();
+        app.plugin_ui.list_initialized = true;
+        app.plugin_ui.list_expanded.insert("org-modern".into());
+        app.plugin_ui.list_selected = 0;
+        draw_list(&mut app, rows);
+        std::fs::write("/tmp/actual/plugins_list_dark.txt", text(&app)).unwrap();
+    }
+
+    fn insta_like(actual: &str, expected: &str) {
+        assert_eq!(actual, expected, "\n--- actual ---\n{actual}\n--- end ---");
+    }
+}

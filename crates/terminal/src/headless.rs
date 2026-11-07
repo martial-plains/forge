@@ -20,6 +20,10 @@
 //! - `--type TEXT`: type text, character by character.
 //! - `--wait SECONDS`: let idle work happen (plugin events, processes,
 //!   auto completion).
+//! - `--test CMD`: find the plugin that causes CMD to fail, by disabling
+//!   halves of the loaded plugins (the same search as M-x plugin-bisect).
+//!   A plugin has a problem when CMD exits nonzero. CMD gets the enabled
+//!   plugin names in FORGE_BISECT_ENABLED (comma-separated).
 //! - `--screen`: print the screen (see `--size WxH`, default 80x24).
 //!
 //! At the end it prints the echo area and where point is. Nothing is read
@@ -39,6 +43,7 @@ pub enum Step {
     Keys(String),
     Type(String),
     Wait(f64),
+    Test(String),
     Screen,
 }
 
@@ -55,6 +60,7 @@ pub fn run(opts: Options) -> bool {
         files: Vec::new(),
         plugin_files: Vec::new(),
         graphical: false,
+        profile_startup: false,
     };
     let mut app = match crate::start(&start) {
         Ok(a) => a,
@@ -63,10 +69,12 @@ pub fn run(opts: Options) -> bool {
             return false;
         }
     };
+    app.unattended = true;
     app.message = None;
     // Compiled plugins are cached as usual, so repeated runs are quick.
     app.plugin_cache = forge_core::config::cache_dir();
     let mut ok = true;
+    let mut profiling_startup = false;
     for step in opts.steps {
         match step {
             Step::Init(path) => {
@@ -74,6 +82,9 @@ pub fn run(opts: Options) -> bool {
                 // Its hooks and commands wait for the plugins, as at startup:
                 // they run after a --plugin step or a key.
                 app.load_init_file();
+                if app.startup_budget.is_some() && !profiling_startup {
+                    profiling_startup = plugins::begin_startup_profile(&mut app);
+                }
             }
             Step::Plugin(path) => {
                 ok &= load(&mut app, &path);
@@ -110,14 +121,41 @@ pub fn run(opts: Options) -> bool {
                     app.on_idle();
                 }
             }
+            Step::Test(command) => match crate::plugin_bisect::run_headless(&mut app, &command) {
+                Ok(report) => {
+                    use forge_core::plugin_bisect::BisectOutcome;
+                    match report.outcome {
+                        BisectOutcome::Culprit(name) => {
+                            println!("plugin-bisect: culprit {name} ({} tests)", report.tests)
+                        }
+                        BisectOutcome::NoSingleCulprit => {
+                            println!("plugin-bisect: no single culprit ({} tests)", report.tests)
+                        }
+                        BisectOutcome::NoProblem => {
+                            println!(
+                                "plugin-bisect: no problem with all plugins enabled ({} tests)",
+                                report.tests
+                            );
+                            ok = false;
+                        }
+                    }
+                }
+                Err(error) => {
+                    println!("error: plugin-bisect: {error}");
+                    ok = false;
+                }
+            },
             Step::Screen => print_screen(&mut app, opts.width, opts.height),
         }
+    }
+    if profiling_startup {
+        plugins::finish_startup_profile(&mut app);
     }
     println!("echo: {}", forge_editor::ui::echo_line(&app).0);
     let b = app.buf_ref();
     let p = b.point();
     println!("buffer: {} at {}:{}", b.name(), p.line + 1, p.col);
-    ok
+    ok && !app.startup_budget_exceeded
 }
 
 fn load(app: &mut App, path: &str) -> bool {

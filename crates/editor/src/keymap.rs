@@ -343,6 +343,9 @@ pub const SPECIAL_MODES: &[&str] = &[
     "compilation-mode",
     "shell-command-mode",
     "package-menu-mode",
+    "package-manager-mode",
+    "plugin-permissions-mode",
+    "plugin-list-mode",
     "dired-mode",
     "image-dired-thumbnail-mode",
     "tether-dir-mode",
@@ -366,6 +369,57 @@ pub const PACKAGE_MENU_BINDINGS: &[(&str, &str)] = &[
     ("d", "package-menu-delete"),
     ("g", "package-menu-refresh"),
     ("U", "package-upgrade-all"),
+];
+
+pub const PACKAGE_MANAGER_BINDINGS: &[(&str, &str)] = &[
+    ("RET", "package-manager-toggle"),
+    ("TAB", "package-manager-toggle"),
+    ("i", "package-menu-install"),
+    ("j", "package-manager-next"),
+    ("k", "package-manager-prev"),
+    ("<down>", "package-manager-next"),
+    ("C-n", "package-manager-next"),
+    ("<up>", "package-manager-prev"),
+    ("C-p", "package-manager-prev"),
+    ("f", "package-manager-filter"),
+    ("F", "package-manager-clear-filter"),
+    ("v", "package-menu-view"),
+    ("u", "package-menu-upgrade"),
+    ("b", "package-menu-build-log"),
+    ("d", "package-menu-delete"),
+    ("g", "package-menu-refresh"),
+    ("U", "package-manager-upgrade-all"),
+    ("S", "package-manager-show-sync"),
+    ("X", "package-manager-show-clean"),
+    ("H", "package-manager-show-home"),
+    ("I", "package-manager-show-install"),
+    ("C", "package-manager-show-check"),
+    ("L", "package-manager-show-log"),
+    ("R", "package-manager-show-restore"),
+    ("P", "package-manager-show-profile"),
+    ("D", "package-manager-show-doctor"),
+    ("?", "package-manager-show-help"),
+];
+
+pub const PLUGIN_PERMISSIONS_BINDINGS: &[(&str, &str)] = &[
+    ("RET", "plugin-toggle-imports"),
+    ("TAB", "plugin-toggle-imports"),
+    ("?", "describe-mode"),
+];
+
+pub const PLUGIN_LIST_BINDINGS: &[(&str, &str)] = &[
+    ("RET", "plugin-list-toggle"),
+    ("TAB", "plugin-list-toggle"),
+    ("j", "plugin-list-next"),
+    ("k", "plugin-list-prev"),
+    ("<down>", "plugin-list-next"),
+    ("C-n", "plugin-list-next"),
+    ("<up>", "plugin-list-prev"),
+    ("C-p", "plugin-list-prev"),
+    ("r", "plugin-list-revoke"),
+    ("d", "plugin-list-describe"),
+    ("g", "list-plugins"),
+    ("?", "describe-mode"),
 ];
 
 /// What a click does in a listing: `<mouse-1>` visits the name under point,
@@ -753,6 +807,8 @@ const COMPLETION_LIST_BINDINGS: &[(&str, &str)] = &[
     ("C-M-n", "minibuffer-list-next-page"),
     ("<prior>", "minibuffer-list-prev-page"),
     ("C-M-p", "minibuffer-list-prev-page"),
+    ("C-v", "minibuffer-list-next-page"),
+    ("M-v", "minibuffer-list-prev-page"),
 ];
 
 /// Prompts that answer yes or no.
@@ -919,6 +975,34 @@ pub fn install_defaults(keymaps: &mut Keymaps) {
         keymaps
             .bind(&menu, keys, cmd, Origin::Package)
             .expect("valid default binding");
+    }
+    let manager = Scope::Mode("package-manager-mode".into());
+    for (keys, cmd) in PACKAGE_MANAGER_BINDINGS {
+        keymaps
+            .bind(&manager, keys, cmd, Origin::Package)
+            .expect("valid default binding");
+    }
+    let permissions = Scope::Mode(crate::plugins::PERMISSIONS_MODE.into());
+    for (keys, cmd) in PLUGIN_PERMISSIONS_BINDINGS {
+        keymaps
+            .bind(&permissions, keys, cmd, Origin::Package)
+            .expect("valid default binding");
+    }
+    let plugins = Scope::Mode(crate::plugins::LIST_MODE.into());
+    for (keys, cmd) in PLUGIN_LIST_BINDINGS {
+        keymaps
+            .bind(&plugins, keys, cmd, Origin::Package)
+            .expect("valid default binding");
+    }
+    for view in crate::package_manager_ui::View::ALL {
+        let region = Scope::Region(format!(
+            "{}{}",
+            crate::package_manager_ui::TAB_REGION_PREFIX,
+            view.slug()
+        ));
+        keymaps
+            .bind(&region, "<mouse-1>", view.command(), Origin::Package)
+            .expect("valid default region binding");
     }
     let agenda = Scope::Mode(crate::org_agenda_ui::MODE.into());
     for (keys, cmd) in crate::org_agenda_ui::AGENDA_BINDINGS {
@@ -1337,6 +1421,9 @@ mod tests {
             .chain(IMAGE_MODE_BINDINGS)
             .chain(TUTORIAL_MODE_BINDINGS)
             .chain(PACKAGE_MENU_BINDINGS)
+            .chain(PACKAGE_MANAGER_BINDINGS)
+            .chain(PLUGIN_PERMISSIONS_BINDINGS)
+            .chain(PLUGIN_LIST_BINDINGS)
             .chain(DIRED_MODE_BINDINGS)
             .chain(WDIRED_MODE_BINDINGS)
             .chain(IMAGE_DIRED_BINDINGS)

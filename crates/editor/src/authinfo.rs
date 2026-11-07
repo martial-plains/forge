@@ -160,7 +160,7 @@ pub fn set_files(files: Option<Vec<String>>) {
     }
 }
 
-fn files() -> Vec<PathBuf> {
+pub(crate) fn files() -> Vec<PathBuf> {
     let list = FILES
         .lock()
         .ok()

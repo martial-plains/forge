@@ -731,6 +731,26 @@ const OPT_DOCS: &[(&str, &str, &str)] = &[
         "a path or URL, or a list of them",
     ),
     (
+        "package_index_keys",
+        "Minisign public keys trusted for package index signatures; list several while rotating keys.",
+        "a key or a list of keys",
+    ),
+    (
+        "package_index_strict",
+        "Refuse unsigned package indexes; needs package_index_keys.",
+        "true or false",
+    ),
+    (
+        "package_allowed_sources",
+        "Hosts, URLs and paths packages and indexes may come from.",
+        "a host, URL, absolute path, or a list of them",
+    ),
+    (
+        "package_repository_checks",
+        "Ask GitHub whether a repository is archived or renamed; only warns.",
+        "true or false",
+    ),
+    (
         "no_littering",
         "Keep auto-saves and backups in the state directory's var/ instead of next to visited files (backup_directory still wins).",
         "true or false",
@@ -966,6 +986,13 @@ fn opt_value(app: &App, name: &str) -> Option<String> {
         "mouse" => st.mouse.map(|b| b.to_string()),
         "plugin_auto_reload" => st.plugin_auto_reload.map(|b| b.to_string()),
         "package_index" => st.package_index.map(|l| l.join(", ")),
+        "package_index_keys" => st.package_index_keys.map(|l| l.join(", ")),
+        "package_index_strict" => st.flags.get("package_index_strict").map(|b| b.to_string()),
+        "package_allowed_sources" => st.package_allowed_sources.map(|l| l.join(", ")),
+        "package_repository_checks" => st
+            .flags
+            .get("package_repository_checks")
+            .map(|b| b.to_string()),
         "electric_indent" => st.electric_indent.map(|b| b.to_string()),
         "line_numbers" => st.line_numbers.map(|l| l.name().to_string()),
         "mark_ring_max" => st.numbers.get(name).map(|n| n.to_string()),

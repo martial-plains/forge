@@ -948,36 +948,177 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
         "package-delete",
         "Delete a plugin installed from a package index.",
     ),
+    forge_docs::CommandDoc::line(
+        "package-doctor",
+        "Check package declarations, installs, hashes, permissions, and caches.",
+    ),
     forge_docs::CommandDoc::new("package-install", "Install a plugin from the package index (checked against its sha256),").body("then load it."),
     forge_docs::CommandDoc::line("package-list-packages", "Same as list-packages."),
     forge_docs::CommandDoc::line(
+        "package-log",
+        "Show timings for package fetches, builds, installs, upgrades, and rollbacks.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-log-export",
+        "Export the package operation log as JSON lines, then choose a file.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager",
+        "Browse declared, installed, and indexed plugins interactively.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-back",
+        "In the package manager: return to the previous view.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-clear-filter",
+        "In the package manager: clear the package-name/source filter.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-filter",
+        "In the package manager: filter packages by name, source, or description.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-next",
+        "In the package manager: select the next package.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-prev",
+        "In the package manager: select the previous package.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-check",
+        "In the package manager: show the upgrade plan without changing files.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-doctor",
+        "In the package manager: show package doctor findings.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-help",
+        "In the package manager: show its keys and update behavior.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-home",
+        "In the package manager: show updates, problems, and packages.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-install",
+        "In the package manager: show packages available to install.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-log",
+        "In the package manager: show recent package operations.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-profile",
+        "In the package manager: show plugin startup and call timings.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-restore",
+        "In the package manager: show package snapshots and restore commands.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-update",
+        "In the package manager: show update progress or available updates.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-toggle",
+        "In the package manager: expand or collapse the selected package.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-upgrade-all",
+        "In the package manager: start updates and switch to the Update view.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-menu-build-log",
+        "Show the output from the latest Git package install or build.",
+    ),
+    forge_docs::CommandDoc::line(
         "package-menu-delete",
-        "In *Packages*: delete the package on this line.",
+        "In a package list: delete the package on this line.",
     ),
     forge_docs::CommandDoc::line(
         "package-menu-install",
-        "In *Packages*: install or upgrade the package on this line.",
+        "In a package list: install the package on this line.",
     ),
     forge_docs::CommandDoc::line(
         "package-menu-refresh",
-        "In *Packages*: read the indexes again and redraw.",
+        "In a package list: read the indexes again and redraw.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-menu-upgrade",
+        "In a package list: upgrade the package on this line.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-menu-view",
+        "In a package list: show the package's source and declaration.",
     ),
     forge_docs::CommandDoc::line(
         "package-refresh-contents",
         "Read the package indexes again.",
     ),
     forge_docs::CommandDoc::line(
+        "package-restore",
+        "Restore locked plugins and remove those the lock doesn't list.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-diff",
+        "Compare two saved package snapshots.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-list",
+        "List saved package snapshots.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-restore",
+        "Restore a snapshot and remove plugins it doesn't list.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-snapshot-save",
+        "Save the current package lock and its verified artifacts under a name.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-upgrade",
+        "Upgrade one installed package after reviewing its planned changes.",
+    ),
+    forge_docs::CommandDoc::line(
         "package-upgrade-all",
-        "Install newer versions of every package installed from an index.",
+        "Upgrade indexed packages (C-u: show plan).",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-upgrade-all-dry-run",
+        "Preview package versions and recorded build commands for upgrades.",
     ),
     forge_docs::CommandDoc::new("package-vc-install", "Install a plugin from a Git repository (URL, or URL@tag/branch/commit): clone,").body("build (asking first) and load it."),
     forge_docs::CommandDoc::line(
         "package-vc-upgrade",
-        "Fetch a package installed from version control and rebuild it if it changed.",
+        "Rebuild a changed Git package (C-u: show plan).",
     ),
     forge_docs::CommandDoc::line(
         "package-vc-upgrade-all",
-        "Fetch and rebuild every package installed from version control.",
+        "Rebuild changed Git packages (C-u: show plan).",
+    ),
+    forge_docs::CommandDoc::new("plugin-bisect", "Find the plugin that causes a problem by disabling halves of the loaded plugins,").body("asking after each step whether the problem still happens. Dependencies stay with the plugins that require them, and the original set is restored when the search ends, is aborted (C-g), or Forge is restarted."),
+    forge_docs::CommandDoc::line(
+        "plugin-list-describe",
+        "In the plugin list: describe the selected plugin.",
+    ),
+    forge_docs::CommandDoc::line("plugin-list-next", "In the plugin list: select the next plugin."),
+    forge_docs::CommandDoc::line("plugin-list-prev", "In the plugin list: select the previous plugin."),
+    forge_docs::CommandDoc::line(
+        "plugin-list-revoke",
+        "In the plugin list: forget the selected plugin's permissions.",
+    ),
+    forge_docs::CommandDoc::line(
+        "plugin-list-toggle",
+        "In the plugin list: expand or collapse the selected plugin.",
+    ),
+    forge_docs::CommandDoc::new("plugin-profile", "Show how long each plugin took to look up in the cache, compile, initialize,").body("start lazily, and run each command or callback. Also available as `forge --profile-startup` (with `--json`); `forge.opt[\"startup_budget_ms\"]` warns in *Messages* when plugin startup takes longer."),
+    forge_docs::CommandDoc::new("plugin-repro", "Write a directory with a minimal init.rhai, lockfile, components and manifests,").body("the Forge and system versions, and a README. It includes the named plugin and its transitive `requires` dependencies, but not grants, credentials, sessions, or the rest of init.rhai. Secret-looking config values and URL credentials are redacted."),
+    forge_docs::CommandDoc::line(
+        "plugin-toggle-imports",
+        "In a plugin permission review: show or fold the component imports.",
     ),
     forge_docs::CommandDoc::line(
         "point-to-register",
@@ -2863,6 +3004,14 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             }
         }
         "list-plugins" => plugins::list(app),
+        "plugin-list-describe" => plugins::list_describe(app),
+        "plugin-list-next" => plugins::list_next(app),
+        "plugin-list-prev" => plugins::list_prev(app),
+        "plugin-list-revoke" => plugins::list_revoke(app),
+        "plugin-list-toggle" => plugins::list_toggle(app),
+        "plugin-toggle-imports" => plugins::toggle_imports(app),
+        "plugin-bisect" => crate::plugin_bisect::start(app),
+        "plugin-profile" => crate::startup_profile::show(app),
         "list-projects" => crate::project::list(app),
         "eval-expression" => app.prompt("Eval: ", Purpose::EvalRhai),
         "eval-rhai-last-sexp" => plugins::eval_rhai_sexp_before(app, false),
