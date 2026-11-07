@@ -2,14 +2,10 @@
 //! packaging tests.
 
 use super::*;
-use std::sync::{Mutex, MutexGuard};
-
-static PACKAGE_ENV: Mutex<()> = Mutex::new(());
+use std::sync::MutexGuard;
 
 fn package_env() -> MutexGuard<'static, ()> {
-    PACKAGE_ENV
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
+    super::env_lock()
 }
 
 struct EnvGuard {
@@ -21,7 +17,7 @@ impl EnvGuard {
     fn set(data: &std::path::Path, config: &std::path::Path) -> Self {
         let data_old = std::env::var_os("FORGE_DATA_DIR");
         let config_old = std::env::var_os("FORGE_CONFIG_DIR");
-        // SAFETY: package_env serializes the tests that change these.
+        // SAFETY: the shared test environment lock serializes these changes.
         unsafe {
             std::env::set_var("FORGE_DATA_DIR", data);
             std::env::set_var("FORGE_CONFIG_DIR", config);
@@ -35,7 +31,7 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        // SAFETY: package_env serializes the tests that change these.
+        // SAFETY: the shared test environment lock serializes these changes.
         unsafe {
             match &self.data {
                 Some(value) => std::env::set_var("FORGE_DATA_DIR", value),

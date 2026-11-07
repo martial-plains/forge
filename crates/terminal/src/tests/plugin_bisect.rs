@@ -2,9 +2,7 @@
 //! End-to-end tests for scripted plugin-bisect (`--headless --test`).
 
 use super::*;
-use std::sync::{Mutex, MutexGuard};
-
-static ENV: Mutex<()> = Mutex::new(());
+use std::sync::MutexGuard;
 
 struct EnvGuard {
     data: Option<std::ffi::OsString>,
@@ -12,9 +10,9 @@ struct EnvGuard {
 
 impl EnvGuard {
     fn set(data: &std::path::Path) -> (Self, MutexGuard<'static, ()>) {
-        let guard = ENV.lock().unwrap_or_else(|error| error.into_inner());
+        let guard = super::env_lock();
         let old = std::env::var_os("FORGE_DATA_DIR");
-        // SAFETY: ENV serializes the tests that change it.
+        // SAFETY: the shared test environment lock serializes these changes.
         unsafe { std::env::set_var("FORGE_DATA_DIR", data) };
         (Self { data: old }, guard)
     }
@@ -22,7 +20,7 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        // SAFETY: ENV serializes the tests that change it.
+        // SAFETY: the shared test environment lock serializes these changes.
         unsafe {
             match &self.data {
                 Some(value) => std::env::set_var("FORGE_DATA_DIR", value),
