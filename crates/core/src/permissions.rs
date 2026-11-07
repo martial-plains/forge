@@ -425,6 +425,9 @@ impl CapabilityChange {
                 };
                 format!("programs: run {what} (outside the sandbox, with your rights)")
             }
+            CapabilityChange::Memory { from, to } if from == to => {
+                format!("memory: up to {to} MB")
+            }
             CapabilityChange::Memory { from, to } => {
                 format!("memory: up to {to} MB (was {from} MB)")
             }

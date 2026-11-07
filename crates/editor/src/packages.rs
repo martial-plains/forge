@@ -11,11 +11,13 @@
 
 use crate::app::App;
 use crate::minibuffer::{Choice, Purpose};
+use crate::package_ui::{self, Status as UiStatus, Symbols, Text};
+use forge_core::decoration::PackageFace;
 use forge_core::package::{self, Index, Installed, InstalledDb, Package};
 use forge_core::package_doctor::Finding;
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use forge_core::package_source::{SourceAllowlist, SourceKind as PackageSourceKind};
-use forge_core::{CapabilityDiff, LockFile, Manifest};
+use forge_core::{CapabilityChange, CapabilityDiff, Grants, LockFile, Manifest};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -822,6 +824,225 @@ fn decorate_package_text(app: &mut App, id: forge_core::BufferId) {
         }
     }
     b.set_decorations("package-text", decos);
+}
+
+/// One upgrade review screen shared by index and Git upgrades.
+pub(crate) struct UpgradeReview<'a> {
+    pub name: &'a str,
+    pub old_version: &'a str,
+    pub new_version: &'a str,
+    pub new: &'a Grants,
+    pub diff: &'a CapabilityDiff,
+    pub build: Option<&'a str>,
+    pub recipe_changes: &'a [String],
+    pub commits: Option<&'a str>,
+    pub notes: Option<&'a str>,
+}
+
+pub(crate) fn show_capability_review(app: &mut App, review: UpgradeReview<'_>) {
+    let width = app.win().width.max(20);
+    let symbols = Symbols::for_app(app);
+    let mut text = Text::new();
+    package_ui::title(
+        &mut text,
+        "Upgrade Review",
+        &format!(
+            "{} {} {} {}",
+            review.name, review.old_version, symbols.arrow, review.new_version
+        ),
+        width,
+        symbols,
+    );
+    text.push_face(&symbols.rule.repeat(width), PackageFace::Rule);
+    text.newline();
+    text.newline();
+    text.push_face(review.name, PackageFace::Heading);
+    text.newline();
+    text.newline();
+    package_ui::band(
+        &mut text,
+        UiStatus::Warning,
+        "unattended upgrades stop and change nothing",
+        width,
+        symbols,
+    );
+    text.newline();
+
+    let additions = &review.diff.additions;
+    let removals = &review.diff.removals;
+    let unchanged: Vec<CapabilityChange> = capability_list(review.new)
+        .into_iter()
+        .filter(|change| !additions.contains(change))
+        .collect();
+    package_ui::heading(
+        &mut text,
+        &format!(
+            "Capabilities (+{} -{} ={})",
+            additions.len(),
+            removals.len(),
+            unchanged.len()
+        ),
+        width,
+        symbols,
+    );
+    text.newline();
+    for change in additions {
+        push_capability_change(
+            &mut text,
+            "+",
+            PackageFace::Warning,
+            change,
+            true,
+            width,
+            symbols,
+        );
+    }
+    for change in removals {
+        push_capability_change(
+            &mut text,
+            "-",
+            PackageFace::Inactive,
+            change,
+            false,
+            width,
+            symbols,
+        );
+    }
+    for change in &unchanged {
+        push_capability_change(
+            &mut text,
+            "=",
+            PackageFace::Ok,
+            change,
+            false,
+            width,
+            symbols,
+        );
+    }
+
+    if let Some(commits) = review.commits.filter(|text| !text.trim().is_empty()) {
+        text.newline();
+        package_ui::heading(&mut text, "Changes", width, symbols);
+        text.newline();
+        for line in commits.lines() {
+            let upper = line.to_ascii_uppercase();
+            let face = if upper.contains("BREAKING") {
+                PackageFace::Error
+            } else if upper.contains("WARNING") {
+                PackageFace::Warning
+            } else {
+                PackageFace::Neutral
+            };
+            let line = package_ui::fit(line, width, symbols.ellipsis);
+            text.push_face(&line, face);
+            text.newline();
+        }
+    }
+
+    if review.build.is_some() || !review.recipe_changes.is_empty() {
+        text.newline();
+        package_ui::heading(&mut text, "Build", width, symbols);
+        text.newline();
+        if let Some(build) = review.build {
+            text.push_face("  command: ", PackageFace::Heading);
+            text.push_face(build, PackageFace::Primary);
+            text.newline();
+        }
+        for change in review.recipe_changes {
+            text.push_face(
+                &package_ui::fit(&format!("  {change}"), width, symbols.ellipsis),
+                PackageFace::Warning,
+            );
+            text.newline();
+        }
+    }
+
+    if let Some(notes) = review.notes.filter(|notes| !notes.trim().is_empty()) {
+        text.newline();
+        package_ui::heading(&mut text, "Release notes", width, symbols);
+        text.newline();
+        for line in notes.lines() {
+            text.push_face(
+                &package_ui::fit(line, width, symbols.ellipsis),
+                PackageFace::Inactive,
+            );
+            text.newline();
+        }
+    }
+
+    text.newline();
+    text.push_face("y", PackageFace::Accent);
+    text.push(" apply upgrade   ");
+    text.push_face("n", PackageFace::Accent);
+    text.push(" skip   ");
+    text.push_face("C-g", PackageFace::Accent);
+    text.push(" cancel");
+    text.newline();
+    text.show(app, "*Package Upgrade Review*", "special-mode", None);
+}
+
+fn capability_list(grants: &Grants) -> Vec<CapabilityChange> {
+    let mut changes = Vec::new();
+    if grants.network {
+        changes.push(CapabilityChange::Network);
+    }
+    if grants.http {
+        changes.push(CapabilityChange::Http);
+    }
+    if grants.environment {
+        changes.push(CapabilityChange::Environment);
+    }
+    for dir in &grants.directories {
+        changes.push(CapabilityChange::Directory {
+            path: dir.path.clone(),
+            write: dir.write,
+        });
+    }
+    if let Some(memory) = grants.memory_mb {
+        changes.push(CapabilityChange::Memory {
+            from: memory,
+            to: memory,
+        });
+    }
+    for process in &grants.processes {
+        changes.push(CapabilityChange::Process(process.clone()));
+    }
+    changes
+}
+
+fn push_capability_change(
+    text: &mut Text,
+    mark: &str,
+    mark_face: PackageFace,
+    change: &CapabilityChange,
+    risk: bool,
+    width: usize,
+    symbols: Symbols,
+) {
+    let prefix = format!("  {mark} ");
+    let risk_label = "higher risk";
+    let risk_width = if risk {
+        package_ui::display_width(risk_label) + 2
+    } else {
+        0
+    };
+    let room =
+        width.saturating_sub(package_ui::display_width(&prefix) + risk_width + usize::from(risk));
+    let description = package_ui::fit(&change.describe(), room, symbols.ellipsis);
+    text.push_face(&prefix, mark_face);
+    text.push(&description);
+    if risk {
+        let gap = width.saturating_sub(
+            package_ui::display_width(&prefix)
+                + package_ui::display_width(&description)
+                + risk_width,
+        );
+        if gap > 0 {
+            text.push(&" ".repeat(gap));
+        }
+        package_ui::chip(text, risk_label, PackageFace::Risk);
+    }
+    text.newline();
 }
 
 fn restore_snapshot(app: &mut App, name: &str) {
@@ -2106,32 +2327,6 @@ fn install(app: &mut App, p: Package, force: bool) -> bool {
     }
 }
 
-fn append_package_text(app: &mut App, name: &str, text: &str) {
-    let id = match app.editor.find_buffer(name) {
-        Some(id) => {
-            let old = app
-                .editor
-                .state
-                .get_buffer(id)
-                .map(|b| b.get_contents())
-                .unwrap_or_default();
-            if let Some(buffer) = app.editor.state.get_buffer_mut(id) {
-                buffer.set_contents(&format!("{old}{text}"));
-            }
-            id
-        }
-        None => {
-            let id = app.editor.create_buffer(name);
-            if let Some(buffer) = app.editor.state.get_buffer_mut(id) {
-                buffer.set_contents(text);
-            }
-            id
-        }
-    };
-    decorate_package_text(app, id);
-    crate::compile::display_buffer(app, id);
-}
-
 fn candidate_manifest(package: &Package, bytes: &[u8]) -> Result<Option<Manifest>, String> {
     match package::local_path(&package.url) {
         Some(path) => Manifest::for_component(&path, bytes),
@@ -2143,7 +2338,7 @@ fn candidate_capability_diff(
     app: &App,
     package: &Package,
     bytes: &[u8],
-) -> Result<CapabilityDiff, String> {
+) -> Result<(Grants, Grants, CapabilityDiff), String> {
     let (_, config, _) = update_paths(app)?;
     let old = LockFile::load(&config)
         .map_err(|e| format!("can't read the package lock: {e}"))?
@@ -2153,7 +2348,8 @@ fn candidate_capability_diff(
     let new = candidate_manifest(package, bytes)?
         .map(|manifest| manifest.permissions)
         .unwrap_or_default();
-    Ok(CapabilityDiff::between(&old, &new))
+    let diff = CapabilityDiff::between(&old, &new);
+    Ok((old, new, diff))
 }
 
 fn unattended_capability_error(diff: &CapabilityDiff) -> String {
@@ -2166,7 +2362,7 @@ fn unattended_capability_error(diff: &CapabilityDiff) -> String {
 /// Ask about new capabilities (or stop an unattended upgrade). Returns
 /// true when installation may proceed now.
 fn capability_gate(app: &mut App, package: &Package, bytes: &[u8]) -> Result<bool, String> {
-    let diff = candidate_capability_diff(app, package, bytes)?;
+    let (_old, new, diff) = candidate_capability_diff(app, package, bytes)?;
     if !diff.has_additions() {
         return Ok(true);
     }
@@ -2182,25 +2378,28 @@ fn capability_gate(app: &mut App, package: &Package, bytes: &[u8]) -> Result<boo
         app.packages.approval_blocked = Some(error.clone());
         return Err(error);
     }
-    let mut text = format!(
-        "\nNew capabilities in {} {}:\n",
-        package.name, package.version
+    let installed = db(app).and_then(|db| db.packages.get(&package.name).cloned());
+    let old_version = installed
+        .as_ref()
+        .map(|installed| installed.version.as_str())
+        .unwrap_or("not installed");
+    let build = installed
+        .as_ref()
+        .and_then(|installed| installed.build.as_deref());
+    show_capability_review(
+        app,
+        UpgradeReview {
+            name: &package.name,
+            old_version,
+            new_version: &package.version,
+            new: &new,
+            diff: &diff,
+            build,
+            recipe_changes: &[],
+            commits: None,
+            notes: package.release_notes.as_deref(),
+        },
     );
-    for line in diff.describe_additions() {
-        text.push_str(&format!("  {line}\n"));
-    }
-    if !diff.removals.is_empty() {
-        text.push_str("\nCapabilities it no longer asks for:\n");
-        for line in diff
-            .removals
-            .iter()
-            .map(forge_core::CapabilityChange::describe)
-        {
-            text.push_str(&format!("  {line}\n"));
-        }
-    }
-    text.push_str("\nThese additions need your approval before the upgrade is applied.\n");
-    append_package_text(app, "*Package Upgrade Review*", &text);
     app.packages.pending_capability = Some(PendingCapability {
         package: package.clone(),
         bytes: bytes.to_vec(),
@@ -2659,5 +2858,134 @@ pub fn poll(app: &mut App) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod review_snapshots {
+    use super::*;
+    use forge_core::permissions::{CapabilityChange, DirGrant};
+    use forge_core::{Buffer, Editor, Grants};
+
+    fn app() -> App {
+        let mut app = App::new(Editor::default());
+        let id = app.editor.add_buffer(Buffer::new("*scratch*"));
+        app.editor.show_buffer(id);
+        app.win_mut().width = 80;
+        app
+    }
+
+    fn text(app: &App) -> String {
+        app.buf_ref()
+            .get_contents()
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn check(actual: &str, expected: &str) {
+        assert_eq!(actual, expected, "\n--- actual ---\n{actual}\n--- end ---");
+    }
+
+    #[test]
+    fn upgrade_with_an_addition_snapshot() {
+        let new = Grants {
+            network: true,
+            directories: vec![DirGrant {
+                path: "~/.config/forge".into(),
+                write: false,
+                why: None,
+            }],
+            memory_mb: Some(256),
+            ..Default::default()
+        };
+        let diff = CapabilityDiff {
+            additions: vec![CapabilityChange::Network],
+            removals: vec![CapabilityChange::Process("git".into())],
+        };
+        let mut app = app();
+        show_capability_review(
+            &mut app,
+            UpgradeReview {
+                name: "org-modern",
+                old_version: "0.2.0",
+                new_version: "0.3.1",
+                new: &new,
+                diff: &diff,
+                build: Some("cargo build --release --target wasm32-wasip2"),
+                recipe_changes: &[],
+                commits: None,
+                notes: None,
+            },
+        );
+        check(
+            &text(&app),
+            r#" Upgrade Review                                       org-modern 0.2.0 -> 0.3.1
+--------------------------------------------------------------------------------
+
+org-modern
+
+ ! unattended upgrades stop and change nothing
+
+Capabilities (+1 -1 =2) --------------------------------------------------------
+  + network: open connections and look up host names                higher risk
+  - programs: run git (outside the sandbox, with your rights)
+  = files: read ~/.config/forge
+  = memory: up to 256 MB
+
+Build --------------------------------------------------------------------------
+  command: cargo build --release --target wasm32-wasip2
+
+y apply upgrade   n skip   C-g cancel"#,
+        );
+    }
+
+    #[test]
+    fn upgrade_with_only_removals_snapshot() {
+        let new = Grants::default();
+        let diff = CapabilityDiff {
+            additions: Vec::new(),
+            removals: vec![
+                CapabilityChange::Network,
+                CapabilityChange::Directory {
+                    path: "~/.cache/old".into(),
+                    write: false,
+                },
+            ],
+        };
+        let mut app = app();
+        show_capability_review(
+            &mut app,
+            UpgradeReview {
+                name: "quiet",
+                old_version: "1.0.0",
+                new_version: "1.1.0",
+                new: &new,
+                diff: &diff,
+                build: None,
+                recipe_changes: &[],
+                commits: None,
+                notes: Some("Removed network access."),
+            },
+        );
+        check(
+            &text(&app),
+            r#" Upgrade Review                                            quiet 1.0.0 -> 1.1.0
+--------------------------------------------------------------------------------
+
+quiet
+
+ ! unattended upgrades stop and change nothing
+
+Capabilities (+0 -2 =0) --------------------------------------------------------
+  - network: open connections and look up host names
+  - files: read ~/.cache/old
+
+Release notes ------------------------------------------------------------------
+Removed network access.
+
+y apply upgrade   n skip   C-g cancel"#,
+        );
     }
 }

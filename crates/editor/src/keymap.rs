@@ -344,6 +344,8 @@ pub const SPECIAL_MODES: &[&str] = &[
     "shell-command-mode",
     "package-menu-mode",
     "package-manager-mode",
+    "plugin-permissions-mode",
+    "plugin-list-mode",
     "dired-mode",
     "image-dired-thumbnail-mode",
     "tether-dir-mode",
@@ -395,6 +397,26 @@ pub const PACKAGE_MANAGER_BINDINGS: &[(&str, &str)] = &[
     ("P", "package-manager-show-profile"),
     ("D", "package-manager-show-doctor"),
     ("?", "package-manager-show-help"),
+];
+
+pub const PLUGIN_PERMISSIONS_BINDINGS: &[(&str, &str)] = &[
+    ("RET", "plugin-toggle-imports"),
+    ("TAB", "plugin-toggle-imports"),
+];
+
+pub const PLUGIN_LIST_BINDINGS: &[(&str, &str)] = &[
+    ("RET", "plugin-list-toggle"),
+    ("TAB", "plugin-list-toggle"),
+    ("j", "plugin-list-next"),
+    ("k", "plugin-list-prev"),
+    ("<down>", "plugin-list-next"),
+    ("C-n", "plugin-list-next"),
+    ("<up>", "plugin-list-prev"),
+    ("C-p", "plugin-list-prev"),
+    ("r", "plugin-list-revoke"),
+    ("d", "plugin-list-describe"),
+    ("g", "list-plugins"),
+    ("?", "describe-mode"),
 ];
 
 /// What a click does in a listing: `<mouse-1>` visits the name under point,
@@ -957,6 +979,18 @@ pub fn install_defaults(keymaps: &mut Keymaps) {
             .bind(&manager, keys, cmd, Origin::Package)
             .expect("valid default binding");
     }
+    let permissions = Scope::Mode(crate::plugins::PERMISSIONS_MODE.into());
+    for (keys, cmd) in PLUGIN_PERMISSIONS_BINDINGS {
+        keymaps
+            .bind(&permissions, keys, cmd, Origin::Package)
+            .expect("valid default binding");
+    }
+    let plugins = Scope::Mode(crate::plugins::LIST_MODE.into());
+    for (keys, cmd) in PLUGIN_LIST_BINDINGS {
+        keymaps
+            .bind(&plugins, keys, cmd, Origin::Package)
+            .expect("valid default binding");
+    }
     for view in crate::package_manager_ui::View::ALL {
         let region = Scope::Region(format!(
             "{}{}",
@@ -1385,6 +1419,8 @@ mod tests {
             .chain(TUTORIAL_MODE_BINDINGS)
             .chain(PACKAGE_MENU_BINDINGS)
             .chain(PACKAGE_MANAGER_BINDINGS)
+            .chain(PLUGIN_PERMISSIONS_BINDINGS)
+            .chain(PLUGIN_LIST_BINDINGS)
             .chain(DIRED_MODE_BINDINGS)
             .chain(WDIRED_MODE_BINDINGS)
             .chain(IMAGE_DIRED_BINDINGS)

@@ -186,7 +186,26 @@ fn package_style(f: PackageFace) -> Style {
             .fg(Color::Black)
             .bg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
-        PackageFace::BadgeInactive => Style::default().add_modifier(Modifier::DIM),
+        PackageFace::BadgeInactive => Style::default()
+            .fg(Color::Black)
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeInfo => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeError => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BandWarning | PackageFace::Risk => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BandError => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD),
     }
 }
 
@@ -1003,13 +1022,20 @@ mod tests {
             assert!(style.add_modifier.contains(Modifier::BOLD), "{face:?}");
         }
         assert_eq!(package(PackageFace::Accent).fg, Some(Color::Blue));
-        assert_eq!(package(PackageFace::BadgeWarning).fg, Some(Color::Black));
-        assert_eq!(package(PackageFace::BadgeWarning).bg, Some(Color::Yellow));
-        assert!(
-            package(PackageFace::BadgeInactive)
-                .add_modifier
-                .contains(Modifier::DIM)
-        );
+        for (face, fg, bg) in [
+            (PackageFace::BadgeWarning, Color::Black, Color::Yellow),
+            (PackageFace::BadgeInactive, Color::Black, Color::DarkGray),
+            (PackageFace::BadgeInfo, Color::Black, Color::Cyan),
+            (PackageFace::BadgeError, Color::Black, Color::Red),
+            (PackageFace::BandWarning, Color::Black, Color::Yellow),
+            (PackageFace::BandError, Color::Black, Color::Red),
+            (PackageFace::Risk, Color::Black, Color::Yellow),
+        ] {
+            let style = package(face);
+            assert_eq!(style.fg, Some(fg), "{face:?}");
+            assert_eq!(style.bg, Some(bg), "{face:?}");
+            assert!(style.add_modifier.contains(Modifier::BOLD), "{face:?}");
+        }
     }
 
     #[test]

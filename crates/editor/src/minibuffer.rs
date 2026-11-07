@@ -1085,6 +1085,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     if completes && list_lines(app, &mb).is_some() {
         refresh(app, &mut mb);
     }
+    if matches!(mb.purpose, Purpose::PluginGrant)
+        && matches!(key.code, KeyCode::Enter | KeyCode::Tab)
+    {
+        app.minibuffer = Some(mb);
+        plugins::toggle_imports(app);
+        return;
+    }
     let scope = active_scope(app, &mb);
     let found = prompt_command(app, scope, key, ctrl, alt);
 
@@ -3052,8 +3059,17 @@ pub fn cmd_abort(app: &mut App) {
     }
 }
 
-/// RET and C-j: answer the prompt.
+/// RET and C-j: answer the prompt. In a plugin permission review RET
+/// opens or folds the import list instead.
 pub fn cmd_exit(app: &mut App) {
+    if app
+        .minibuffer
+        .as_ref()
+        .is_some_and(|mb| matches!(mb.purpose, Purpose::PluginGrant))
+    {
+        plugins::toggle_imports(app);
+        return;
+    }
     with_prompt(app, submit);
 }
 
@@ -3063,8 +3079,17 @@ pub fn cmd_exit_with_input(app: &mut App) {
     with_prompt(app, submit);
 }
 
-/// TAB: complete against the candidates.
+/// TAB: complete against the candidates. In a plugin permission review
+/// TAB opens or folds the import list instead.
 pub fn cmd_complete(app: &mut App) {
+    if app
+        .minibuffer
+        .as_ref()
+        .is_some_and(|mb| matches!(mb.purpose, Purpose::PluginGrant))
+    {
+        plugins::toggle_imports(app);
+        return;
+    }
     with_prompt(app, |app, mut mb| {
         complete(app, &mut mb);
         app.minibuffer = Some(mb);

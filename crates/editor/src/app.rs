@@ -313,6 +313,8 @@ pub struct App {
     pub grants: GrantStore,
     /// A plugin waiting for the permission question to be answered.
     pub pending_grant: Option<PendingGrant>,
+    /// What the plugin permission and list buffers are showing.
+    pub plugin_ui: plugins::PluginUi,
     /// Plugin files waiting for that question to be over.
     pub pending_loads: VecDeque<PathBuf>,
     /// Projects whose init.rhai has been asked about (or run) this session,
@@ -898,6 +900,7 @@ impl App {
             plugin_depth: 0,
             grants: GrantStore::in_memory(),
             pending_grant: None,
+            plugin_ui: plugins::PluginUi::default(),
             pending_loads: VecDeque::new(),
             projects_asked: std::collections::HashSet::new(),
             watch: Watch::default(),

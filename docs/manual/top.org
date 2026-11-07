@@ -107,10 +107,16 @@ The package screens have their own faces: =package-title=,
 =package-selected-marker=, =package-ok=, =package-warning=,
 =package-error=, =package-info=, =package-neutral=, =package-inactive=,
 =package-rule=, =package-title-pill=, =package-tab-active=,
-=package-accent=, =package-badge-warning=, and =package-badge-inactive=.
+=package-accent=, =package-badge-warning=, =package-badge-inactive=,
+=package-badge-info=, =package-badge-error=, =package-band-warning=,
+=package-band-error=, and =package-risk=.
 Restyle them with ~forge.theme.set~; unset fields keep the frontend's light
 and dark defaults. =package-accent= is reserved for tab keys, progress fill,
-and links; status badges stay quiet.
+and links; status badges stay quiet. Danger is never carried by color alone:
+risk labels also say "higher risk", and bands carry a mark and text. Leave
+the badge faces unset on 16-colour terminals; the labels and marks still
+carry the meaning. The default 16-colour badge pairs measure 19.56:1
+(yellow), 16.75:1 (cyan), 5.25:1 (red), and 5.32:1 (dark gray).
 
 ** Package operation log
    :PROPERTIES:

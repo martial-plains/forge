@@ -539,6 +539,28 @@ use_package("consult", #{
 // forge.theme.set("package-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
 // forge.theme.set("package-badge-warning", #{ fg: "#e8c97a", bg: "#3a3222" });
 // forge.theme.set("package-badge-inactive", #{ fg: "#8a90a0", bg: "#2a2e37" });
+//
+// Dark badge and band example (all pairs at least 4.5:1):
+// forge.theme.set("package-badge-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+// forge.theme.set("package-badge-info", #{ fg: "#1e1e2e", bg: "#89dceb", bold: true });
+// forge.theme.set("package-badge-error", #{ fg: "#1e1e2e", bg: "#f38ba8", bold: true });
+// forge.theme.set("package-badge-inactive", #{ fg: "#cdd6f4", bg: "#45475a" });
+// forge.theme.set("package-band-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+// forge.theme.set("package-band-error", #{ fg: "#1e1e2e", bg: "#f38ba8", bold: true });
+// forge.theme.set("package-risk", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+//
+// Light badge and band example (all pairs at least 4.5:1):
+// forge.theme.set("package-badge-warning", #{ fg: "#1f2328", bg: "#fff8c5", bold: true });
+// forge.theme.set("package-badge-info", #{ fg: "#1f2328", bg: "#ddf4ff", bold: true });
+// forge.theme.set("package-badge-error", #{ fg: "#1f2328", bg: "#ffebe9", bold: true });
+// forge.theme.set("package-badge-inactive", #{ fg: "#57606a", bg: "#eaeef2" });
+// forge.theme.set("package-band-warning", #{ fg: "#1f2328", bg: "#fff8c5", bold: true });
+// forge.theme.set("package-band-error", #{ fg: "#1f2328", bg: "#ffebe9", bold: true });
+// forge.theme.set("package-risk", #{ fg: "#1f2328", bg: "#fff8c5", bold: true });
+//
+// On a 16-colour terminal, leave the badge and band faces unset: the
+// terminal's bold yellow/cyan/red pairs are measured above 4.5:1, and the
+// status mark and wording carry the meaning without color.
 
 // ---- menus
 

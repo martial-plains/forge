@@ -28,7 +28,11 @@ fn installed_plugins_start_lazily_and_reload_when_rebuilt() {
     let mut app = start();
     assert!(host(&app));
     press(&mut app, "M-x list-plugins RET");
-    assert!(text(&app).contains("not started yet"), "{}", text(&app));
+    assert!(
+        text(&app).contains("Not started") && text(&app).contains("not started"),
+        "{}",
+        text(&app)
+    );
     press(&mut app, "q");
     app.handle_key(KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE));
     assert_eq!(
@@ -364,20 +368,35 @@ fn plugins_ask_before_getting_permissions() {
     );
     let t = text(&app);
     assert_eq!(app.buf_ref().name(), "*Plugin Permissions*");
-    assert!(t.contains("demo 1.2.0: Greets people"), "{t}");
-    assert!(t.contains("network: open connections"), "{t}");
     assert!(
-        t.contains(&format!(
-            "files: read {} (greeting templates)",
-            data.display().to_string().replace('\\', "/")
-        )),
+        t.contains("Plugin Permissions") && t.contains("demo 1.2.0"),
         "{t}"
     );
+    assert!(
+        t.contains("network") && t.contains("connect to the internet"),
+        "{t}"
+    );
+    assert!(t.contains("+ directory") && t.contains("read "), "{t}");
+    let _ = data;
     assert!(t.contains("forge:editor/buffers@0.1.0"), "{t}");
     assert!(
         !app.editor.commands.contains("demo-greet"),
         "nothing runs before the answer"
     );
+
+    // RET and TAB fold and unfold the import list without answering.
+    assert!(t.contains("RET shows all imports"), "{t}");
+    press(&mut app, "RET");
+    let t = text(&app);
+    assert!(t.contains("RET folds the import list"), "{t}");
+    assert!(app.minibuffer.is_some(), "still asking");
+    press(&mut app, "TAB");
+    assert!(
+        text(&app).contains("RET shows all imports"),
+        "{}",
+        text(&app)
+    );
+    assert!(app.minibuffer.is_some(), "still asking");
 
     // y: granted, saved, loaded.
     press(&mut app, "y");
@@ -407,7 +426,7 @@ fn plugins_ask_before_getting_permissions() {
     let t = text(&app);
     assert!(
         t.contains("commands: demo-greet")
-            && t.contains("network: open connections")
+            && t.contains("network: open connections and look up host names")
             && t.contains("memory limit: 128 MB"),
         "{t}"
     );
@@ -459,9 +478,9 @@ fn the_same_name_with_a_different_binary_asks_again() {
     std::fs::write(&path, bytes).unwrap();
     crate::plugins::load(&mut app, &path);
     let prompt = app.minibuffer.as_ref().unwrap().prompt.clone();
-    assert!(prompt.contains("same name, different binary."), "{prompt}");
+    assert!(prompt.contains("same name, different binary"), "{prompt}");
     assert!(
-        text(&app).contains("same name, different binary."),
+        text(&app).contains("same name, different binary"),
         "{}",
         text(&app)
     );
@@ -815,4 +834,38 @@ fn imenu_and_occur() {
     press(&mut app, "C-n RET");
     assert_eq!(app.buf_ref().name(), "*scratch*");
     assert_eq!(point(&app), Pos::new(3, 0));
+}
+
+#[test]
+fn plugin_list_with_a_not_started_plugin_snapshot() {
+    let dir = std::env::temp_dir().join(format!("forge-list-snapshot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = demo_plugin_file(&dir.join("plugins"));
+    let start = || {
+        let mut app = app_with("");
+        app.plugin_cache = Some(dir.join("cache"));
+        crate::plugins::load_at_startup(&mut app, &path);
+        app
+    };
+    let _ = start();
+    let mut app = start();
+    app.win_mut().width = 120;
+    press(&mut app, "M-x list-plugins RET");
+    let actual = text(&app)
+        .replace(&dir.to_string_lossy().to_string(), "<DIR>")
+        .trim_end()
+        .to_string();
+    let expected = r#" Plugins                                                                                                       1 plugin
+------------------------------------------------------------------------------------------------------------------------
+
+Not started (1) --------------------------------------------------------------------------------------------------------
+| demo                  no permissions  not started
+    file: <DIR>/plugins/demo.wasm
+    commands: demo-greet
+    permissions: none (no files, network or environment)
+    memory limit: 128 MB
+
+RET expand  j/k select  r revoke  d describe  g refresh  q quit"#;
+    assert_eq!(actual, expected, "\n--- actual ---\n{actual}\n--- end ---");
+    let _ = std::fs::remove_dir_all(&dir);
 }

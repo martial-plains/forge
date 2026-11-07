@@ -1227,14 +1227,14 @@ fn package_upgrade_with_new_capabilities_asks_and_blocks_unattended() {
         review.contains("network")
             && review.contains("~/.cache/forge-demo")
             && review.contains("read and write")
-            && review.contains("New capabilities"),
+            && review.contains("Capabilities (+2 -0 =0)"),
         "{review}"
     );
     assert!(
         buffer_has_face(
             &app,
             "*Package Upgrade Review*",
-            forge_core::decoration::PackageFace::Title,
+            forge_core::decoration::PackageFace::TitlePill,
         ) && buffer_has_face(
             &app,
             "*Package Upgrade Review*",

@@ -10,6 +10,20 @@ queued, running, finished, skipped and failed packages with elapsed time
 and a progress bar. New faces =package-title-pill=, =package-tab-active=,
 =package-accent=, =package-badge-warning= and =package-badge-inactive= make
 the dashboard restylable without changing status semantics.
+** Plugin reviews share the package visual language
+Plugin permission prompts, import-mismatch reports, upgrade capability
+reviews, the plugin list and =describe-plugin= now use the same title,
+rule, section, badge and band system as the package manager. Permission
+imports fold after four entries with RET or TAB; =y=, =n=, =C-g= and
+=revoke-plugin-permissions= behave as before. The list separates Loaded,
+Not started and Needs attention, shows grant sources, and supports RET/TAB
+expand, =j=/=k= selection, =r= revoke and =d= describe. Upgrade reviews
+mark additions, removals and unchanged capabilities, flag risk in words,
+and keep unattended upgrades stopped until confirmed. New faces
+=package-badge-info=, =package-badge-error=, =package-band-warning=,
+=package-band-error= and =package-risk= complete the palette; the default
+16-colour badge pairs measure 19.56:1 (yellow), 16.75:1 (cyan), 5.25:1
+(red) and 5.32:1 (dark gray).
 ** Package screens use restrained status badges
 The package manager, package list, doctor, operation log, upgrade plan,
 snapshot diff and build header now share a quiet table style. Titles and

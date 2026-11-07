@@ -259,6 +259,55 @@ impl Text {
     }
 }
 
+/// A filled title pill with optional right-aligned metadata.
+pub fn title(text: &mut Text, title: &str, right: &str, width: usize, symbols: Symbols) {
+    let title = format!(" {title} ");
+    text.push_face(&title, PackageFace::TitlePill);
+    let used = display_width(&title) + display_width(right);
+    if !right.is_empty() && used < width {
+        text.push(&" ".repeat(width.saturating_sub(used + 1)));
+        text.push_face(
+            &fit(
+                right,
+                width.saturating_sub(display_width(&title) + 1),
+                symbols.ellipsis,
+            ),
+            PackageFace::Heading,
+        );
+    }
+    text.newline();
+}
+
+/// A section heading followed by a rule, with one space between.
+pub fn heading(text: &mut Text, label: &str, width: usize, symbols: Symbols) {
+    text.push_face(label, PackageFace::Heading);
+    let used = display_width(label);
+    if used < width {
+        text.push(" ");
+        text.push_face(
+            &symbols.rule.repeat(width.saturating_sub(used + 1)),
+            PackageFace::Rule,
+        );
+    }
+}
+
+/// A full-width band whose tint and mark follow a status.
+pub fn band(text: &mut Text, status: Status, message: &str, width: usize, symbols: Symbols) {
+    let face = match status {
+        Status::Error => PackageFace::BandError,
+        Status::Warning => PackageFace::BandWarning,
+        _ => status.face(),
+    };
+    let label = format!(" {} {} ", symbols.mark(status), message);
+    text.push_face(&pad(&label, width, symbols.ellipsis), face);
+    text.newline();
+}
+
+/// A tinted inline label.
+pub fn chip(text: &mut Text, label: &str, face: PackageFace) {
+    text.push_face(&format!(" {label} "), face);
+}
+
 pub fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }

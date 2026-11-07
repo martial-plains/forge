@@ -1100,8 +1100,26 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
         "Rebuild changed Git packages (C-u: show plan).",
     ),
     forge_docs::CommandDoc::new("plugin-bisect", "Find the plugin that causes a problem by disabling halves of the loaded plugins,").body("asking after each step whether the problem still happens. Dependencies stay with the plugins that require them, and the original set is restored when the search ends, is aborted (C-g), or Forge is restarted."),
+    forge_docs::CommandDoc::line(
+        "plugin-list-describe",
+        "In the plugin list: describe the selected plugin.",
+    ),
+    forge_docs::CommandDoc::line("plugin-list-next", "In the plugin list: select the next plugin."),
+    forge_docs::CommandDoc::line("plugin-list-prev", "In the plugin list: select the previous plugin."),
+    forge_docs::CommandDoc::line(
+        "plugin-list-revoke",
+        "In the plugin list: forget the selected plugin's permissions.",
+    ),
+    forge_docs::CommandDoc::line(
+        "plugin-list-toggle",
+        "In the plugin list: expand or collapse the selected plugin.",
+    ),
     forge_docs::CommandDoc::new("plugin-profile", "Show how long each plugin took to look up in the cache, compile, initialize,").body("start lazily, and run each command or callback. Also available as `forge --profile-startup` (with `--json`); `forge.opt[\"startup_budget_ms\"]` warns in *Messages* when plugin startup takes longer."),
     forge_docs::CommandDoc::new("plugin-repro", "Write a directory with a minimal init.rhai, lockfile, components and manifests,").body("the Forge and system versions, and a README. It includes the named plugin and its transitive `requires` dependencies, but not grants, credentials, sessions, or the rest of init.rhai. Secret-looking config values and URL credentials are redacted."),
+    forge_docs::CommandDoc::line(
+        "plugin-toggle-imports",
+        "In a plugin permission review: show or fold the component imports.",
+    ),
     forge_docs::CommandDoc::line(
         "point-to-register",
         "Save point in a register, for C-x r j. It follows later edits.",
@@ -2986,6 +3004,12 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
             }
         }
         "list-plugins" => plugins::list(app),
+        "plugin-list-describe" => plugins::list_describe(app),
+        "plugin-list-next" => plugins::list_next(app),
+        "plugin-list-prev" => plugins::list_prev(app),
+        "plugin-list-revoke" => plugins::list_revoke(app),
+        "plugin-list-toggle" => plugins::list_toggle(app),
+        "plugin-toggle-imports" => plugins::toggle_imports(app),
         "plugin-bisect" => crate::plugin_bisect::start(app),
         "plugin-profile" => crate::startup_profile::show(app),
         "list-projects" => crate::project::list(app),

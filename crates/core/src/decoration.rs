@@ -376,10 +376,20 @@ pub enum PackageFace {
     BadgeWarning,
     /// A frozen or inactive badge with a quiet background.
     BadgeInactive,
+    /// An informational badge with a quiet background.
+    BadgeInfo,
+    /// An error badge with a quiet background.
+    BadgeError,
+    /// A full-width warning band.
+    BandWarning,
+    /// A full-width error band.
+    BandError,
+    /// A higher-risk label, never carried by color alone.
+    Risk,
 }
 
 impl PackageFace {
-    pub const ALL: [PackageFace; 17] = [
+    pub const ALL: [PackageFace; 22] = [
         Self::Title,
         Self::Heading,
         Self::Primary,
@@ -397,6 +407,11 @@ impl PackageFace {
         Self::Accent,
         Self::BadgeWarning,
         Self::BadgeInactive,
+        Self::BadgeInfo,
+        Self::BadgeError,
+        Self::BandWarning,
+        Self::BandError,
+        Self::Risk,
     ];
 
     pub fn name(self) -> &'static str {
@@ -418,6 +433,11 @@ impl PackageFace {
             Self::Accent => "package-accent",
             Self::BadgeWarning => "package-badge-warning",
             Self::BadgeInactive => "package-badge-inactive",
+            Self::BadgeInfo => "package-badge-info",
+            Self::BadgeError => "package-badge-error",
+            Self::BandWarning => "package-band-warning",
+            Self::BandError => "package-band-error",
+            Self::Risk => "package-risk",
         }
     }
 

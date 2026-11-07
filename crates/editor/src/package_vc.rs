@@ -1655,7 +1655,7 @@ fn build(app: &mut App, mut job: VcJob) {
 fn capability_diff(
     name: &str,
     manifest: Option<&forge_core::Manifest>,
-) -> Result<CapabilityDiff, String> {
+) -> Result<(forge_core::Grants, forge_core::Grants, CapabilityDiff), String> {
     let Some(dir) = forge_core::config::config_dir() else {
         return Err("no config directory (set HOME or FORGE_CONFIG_DIR)".into());
     };
@@ -1667,7 +1667,36 @@ fn capability_diff(
     let new = manifest
         .map(|manifest| manifest.permissions.clone())
         .unwrap_or_default();
-    Ok(CapabilityDiff::between(&old, &new))
+    let diff = CapabilityDiff::between(&old, &new);
+    Ok((old, new, diff))
+}
+
+fn recipe_review(app: &App, job: &VcJob) -> (Option<String>, Vec<String>) {
+    let installed = db(app).and_then(|db| db.packages.get(&job.name).cloned());
+    let command = job.plan.as_ref().and_then(|plan| plan.command.clone());
+    let build = command.clone().or_else(|| {
+        installed
+            .as_ref()
+            .and_then(|installed| installed.build.clone())
+    });
+    let new_recipe = command.as_deref().map(|command| {
+        forge_core::package::BuildRecipe::for_checkout(command, &job.features, &job.root())
+    });
+    let old_recipe = installed
+        .as_ref()
+        .and_then(|installed| installed.recipe.clone())
+        .or_else(|| locked_recipe(&job.name));
+    let mut changes = match (&old_recipe, &new_recipe) {
+        (Some(old), Some(new)) => old.diff(new),
+        _ => Vec::new(),
+    };
+    let hash_changed = new_recipe
+        .as_ref()
+        .is_some_and(|new| locked_recipe_hash(&job.name).is_some_and(|old| old != new.hash()));
+    if changes.is_empty() && hash_changed {
+        changes.push("build recipe changed (command, toolchain, features or target)".to_string());
+    }
+    (build, changes)
 }
 
 fn capability_gate(
@@ -1679,7 +1708,7 @@ fn capability_gate(
     if job.expected_artifact.is_some() {
         return Ok(true);
     }
-    let diff = capability_diff(&job.name, manifest)?;
+    let (_old, new, diff) = capability_diff(&job.name, manifest)?;
     if !diff.has_additions() {
         return Ok(true);
     }
@@ -1695,22 +1724,29 @@ fn capability_gate(
         app.packages.approval_blocked = Some(error.clone());
         return Err(error);
     }
-    let mut text = format!("\nNew capabilities in {}:\n", job.name);
-    for line in diff.describe_additions() {
-        text.push_str(&format!("  {line}\n"));
-    }
-    if !diff.removals.is_empty() {
-        text.push_str("\nCapabilities it no longer asks for:\n");
-        for line in diff
-            .removals
-            .iter()
-            .map(forge_core::CapabilityChange::describe)
-        {
-            text.push_str(&format!("  {line}\n"));
-        }
-    }
-    text.push_str("\nThese additions need your approval before the upgrade is applied.\n");
-    append(app, &text);
+    let installed = db(app).and_then(|db| db.packages.get(&job.name).cloned());
+    let old_version = installed
+        .as_ref()
+        .map(|installed| installed.version.as_str())
+        .unwrap_or("not installed");
+    let new_version = manifest
+        .and_then(|manifest| manifest.version())
+        .unwrap_or("new");
+    let (build, recipe_changes) = recipe_review(app, job);
+    crate::packages::show_capability_review(
+        app,
+        crate::packages::UpgradeReview {
+            name: &job.name,
+            old_version,
+            new_version,
+            new: &new,
+            diff: &diff,
+            build: build.as_deref(),
+            recipe_changes: &recipe_changes,
+            commits: job.review.as_deref(),
+            notes: None,
+        },
+    );
     app.packages.vc.capability = Some(PendingCapability {
         job: job.clone(),
         bytes: bytes.to_vec(),
