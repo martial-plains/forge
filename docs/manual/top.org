@@ -76,6 +76,23 @@ review-needed packages, =building= and =fetching= for work in progress,
 or =source= for the rest. The mark carries the color and the label says
 what it means, so the state is readable without color.
 
+The manager opens on =Home=, which lists each package once under
+=Updates=, =Problems=, =Loaded=, and =Not loaded=. Problems come first so a
+broken package is never hidden by an available update. The other views are
+=Install=, =Update=, =Check=, =Log=, =Restore=, =Profile=, =Doctor=, and
+=Help=; switch with the tab keys =H=, =I=, =U=, =C=, =L=, =R=, =P=, =D=, and
+=?=, or click a tab. Narrow frames collapse inactive tabs to their keys
+instead of wrapping.
+
+In a package list, =RET= or =TAB= expands the selected row, =i= installs,
+=u= upgrades, =U= starts every update and switches to the =Update= view, =v=
+shows details in a separate buffer, =d= deletes, =f= filters, and =g=
+refreshes. Clicking the =Update= tab only shows the view; pressing =U=
+starts updates and switches there. The =Update= view reports queued,
+running, finished, skipped, and failed packages with elapsed time and a
+progress bar. A failure names the package and reason before the batch rolls
+back.
+
 =M-x package-upgrade NAME= reviews and updates one package;
 =M-x package-upgrade-all= reviews available index release notes and Git
 commit subjects before applying updates. =C-u M-x package-upgrade-all= or
@@ -89,8 +106,11 @@ The package screens have their own faces: =package-title=,
 =package-heading=, =package-primary=, =package-selected=,
 =package-selected-marker=, =package-ok=, =package-warning=,
 =package-error=, =package-info=, =package-neutral=, =package-inactive=,
-and =package-rule=. Restyle them with ~forge.theme.set~; unset fields keep
-the frontend's light and dark defaults.
+=package-rule=, =package-title-pill=, =package-tab-active=,
+=package-accent=, =package-badge-warning=, and =package-badge-inactive=.
+Restyle them with ~forge.theme.set~; unset fields keep the frontend's light
+and dark defaults. =package-accent= is reserved for tab keys, progress fill,
+and links; status badges stay quiet.
 
 ** Package operation log
    :PROPERTIES:

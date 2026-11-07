@@ -1,5 +1,15 @@
 #+title: Forge NEWS
 * 0.1.0
+** Tabbed package manager
+=M-x package-manager= now opens a tabbed dashboard: Home, Install, Update,
+Check, Log, Restore, Profile, Doctor and Help. Home lists each package once
+under Updates, Problems, Loaded and Not loaded, with problems first. =RET=
+or =TAB= expands a row, =i= installs, =U= starts updates and switches to the
+Update view, and clicking a tab only switches views. The Update view shows
+queued, running, finished, skipped and failed packages with elapsed time
+and a progress bar. New faces =package-title-pill=, =package-tab-active=,
+=package-accent=, =package-badge-warning= and =package-badge-inactive= make
+the dashboard restylable without changing status semantics.
 ** Package screens use restrained status badges
 The package manager, package list, doctor, operation log, upgrade plan,
 snapshot diff and build header now share a quiet table style. Titles and

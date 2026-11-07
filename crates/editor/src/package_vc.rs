@@ -488,6 +488,7 @@ pub fn upgrade_all(app: &mut App) -> usize {
         .into_iter()
         .filter(|(name, _, _)| !frozen.contains(name))
         .collect();
+    crate::package_manager_ui::update_start_git(app, &all);
     for (name, repo, rev) in &all {
         install(app, name, repo, rev.clone(), true);
     }
@@ -934,6 +935,7 @@ fn next(app: &mut App) {
         crate::packages::finish_update(app);
         return;
     };
+    crate::package_manager_ui::update_running(app, &job.name, "fetching Git");
     clear_output(app);
     app.show_special_buffer(BUFFER, "compilation-mode", "");
     append(app, &format!("{} from {}\n\n", job.name, job.repo));
@@ -1001,6 +1003,15 @@ fn spawn_process(
 }
 
 fn step(app: &mut App, job: VcJob, stage: Stage, r: Result<ProcessId, String>) {
+    let step = match stage {
+        Stage::Fetch => "fetching Git",
+        Stage::Checkout => "checking out",
+        Stage::Submodules => "updating submodules",
+        Stage::Commit => "reading commit",
+        Stage::Review => "reviewing changes",
+        Stage::Build => "building",
+    };
+    crate::package_manager_ui::update_running(app, &job.name, step);
     match r {
         Ok(id) => {
             let deadline = if stage == Stage::Build {
@@ -1077,6 +1088,7 @@ fn log_install(job: &VcJob, version: &str, timer: Timer, status: Status, error: 
 }
 
 fn fail(app: &mut App, job: &VcJob, why: &str) {
+    crate::package_manager_ui::update_failed(app, &job.name, why);
     append(app, &format!("\n{why}\n"));
     if let Some(id) = app.editor.find_buffer(BUFFER) {
         crate::compile::display_buffer(app, id);
@@ -1377,6 +1389,7 @@ fn checkout_complete(app: &mut App, mut job: VcJob) {
             job.name,
             short(&job.commit)
         ));
+        crate::package_manager_ui::update_done(app, &job.name, "up to date");
         app.packages.vc.current = None;
         return next(app);
     }
@@ -1590,6 +1603,7 @@ pub fn reviewed_upgrade(app: &mut App) {
 
 pub fn upgrade_review_declined(app: &mut App) {
     if let Some(job) = app.packages.vc.reviewing.take() {
+        crate::package_manager_ui::update_skipped(app, &job.name, "declined");
         append(app, &format!("\nNot upgrading {} (declined).\n", job.name));
         app.msg(format!("Not upgrading {}", job.name));
         next(app);
@@ -1717,6 +1731,11 @@ pub fn capabilities_confirmed(app: &mut App, yes: bool) {
         app.msg(format!("Applying upgrade for {}", pending.job.name));
         install_ready_output(app, pending.job, pending.bytes);
     } else {
+        crate::package_manager_ui::update_skipped(
+            app,
+            &pending.job.name,
+            "capabilities not approved",
+        );
         append(
             app,
             &format!(
@@ -1736,6 +1755,7 @@ pub fn capabilities_confirmed(app: &mut App, yes: bool) {
 }
 
 fn install_output(app: &mut App, job: VcJob) {
+    crate::package_manager_ui::update_running(app, &job.name, "installing");
     app.packages.vc.current = None;
     let plan = job.plan.clone().expect("planned");
     let bytes = match std::fs::read(&plan.output) {
@@ -1830,6 +1850,7 @@ fn install_ready_output(app: &mut App, job: VcJob, bytes: Vec<u8>) {
             {
                 return fail(app, &job, &format!("finishing update: {error}"));
             }
+            crate::package_manager_ui::update_done(app, &job.name, &version);
             append(
                 app,
                 &format!(

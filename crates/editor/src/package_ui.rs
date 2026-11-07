@@ -91,6 +91,11 @@ pub struct Symbols {
     pub error: &'static str,
     pub info: &'static str,
     pub neutral: &'static str,
+    pub check: &'static str,
+    pub cross: &'static str,
+    pub progress_full: &'static str,
+    pub progress_empty: &'static str,
+    pub ascii: bool,
 }
 
 impl Symbols {
@@ -105,6 +110,11 @@ impl Symbols {
         error: "■",
         info: "◆",
         neutral: "○",
+        check: "✓",
+        cross: "✗",
+        progress_full: "█",
+        progress_empty: "░",
+        ascii: false,
     };
 
     pub const ASCII: Self = Self {
@@ -118,7 +128,28 @@ impl Symbols {
         error: "x",
         info: "i",
         neutral: "-",
+        check: "+",
+        cross: "x",
+        progress_full: "#",
+        progress_empty: "-",
+        ascii: true,
     };
+
+    const SPINNER: [&'static str; 4] = ["◐", "◓", "◑", "◒"];
+
+    /// A spinner frame. Terminals get a static `...` so a missing font
+    /// never turns progress into a box.
+    pub fn spinner(self, tick: usize) -> &'static str {
+        if self.ascii {
+            "..."
+        } else {
+            Self::SPINNER[tick % Self::SPINNER.len()]
+        }
+    }
+
+    pub fn spinner_width(self) -> usize {
+        if self.ascii { 3 } else { 1 }
+    }
 
     pub fn for_app(app: &App) -> Self {
         if app.graphical {
@@ -144,6 +175,7 @@ impl Symbols {
 pub struct Text {
     text: String,
     chars: usize,
+    lines: usize,
     decos: Vec<DecoSpec>,
 }
 
@@ -163,6 +195,21 @@ impl Text {
         if start < self.chars {
             self.decos
                 .push(DecoSpec::new(start, self.chars, DecoFace::Package(face)));
+        }
+    }
+
+    pub fn chars(&self) -> usize {
+        self.chars
+    }
+
+    pub fn line_count(&self) -> usize {
+        self.lines
+    }
+
+    /// Mark an already-written range as a clickable region.
+    pub fn push_region(&mut self, start: usize, end: usize, keymap: &str) {
+        if start < end {
+            self.decos.push(DecoSpec::region(start, end, keymap));
         }
     }
 
@@ -196,6 +243,7 @@ impl Text {
 
     pub fn newline(&mut self) {
         self.push("\n");
+        self.lines += 1;
     }
 
     pub fn text(&self) -> &str {

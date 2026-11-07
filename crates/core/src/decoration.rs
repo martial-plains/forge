@@ -366,10 +366,20 @@ pub enum PackageFace {
     Inactive,
     /// A separator or rule.
     Rule,
+    /// The filled title pill.
+    TitlePill,
+    /// The active tab's filled surface.
+    TabActive,
+    /// The one accent color: tab keys, progress fill and links.
+    Accent,
+    /// A warning badge with a quiet background.
+    BadgeWarning,
+    /// A frozen or inactive badge with a quiet background.
+    BadgeInactive,
 }
 
 impl PackageFace {
-    pub const ALL: [PackageFace; 12] = [
+    pub const ALL: [PackageFace; 17] = [
         Self::Title,
         Self::Heading,
         Self::Primary,
@@ -382,6 +392,11 @@ impl PackageFace {
         Self::Neutral,
         Self::Inactive,
         Self::Rule,
+        Self::TitlePill,
+        Self::TabActive,
+        Self::Accent,
+        Self::BadgeWarning,
+        Self::BadgeInactive,
     ];
 
     pub fn name(self) -> &'static str {
@@ -398,6 +413,11 @@ impl PackageFace {
             Self::Neutral => "package-neutral",
             Self::Inactive => "package-inactive",
             Self::Rule => "package-rule",
+            Self::TitlePill => "package-title-pill",
+            Self::TabActive => "package-tab-active",
+            Self::Accent => "package-accent",
+            Self::BadgeWarning => "package-badge-warning",
+            Self::BadgeInactive => "package-badge-inactive",
         }
     }
 

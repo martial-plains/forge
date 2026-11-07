@@ -12,6 +12,7 @@
 use crate::app::App;
 use crate::minibuffer::{Choice, Purpose};
 use forge_core::package::{self, Index, Installed, InstalledDb, Package};
+use forge_core::package_doctor::Finding;
 use forge_core::package_log::{Operation, Source, SourceKind, Status, Timer};
 use forge_core::package_source::{SourceAllowlist, SourceKind as PackageSourceKind};
 use forge_core::{CapabilityDiff, LockFile, Manifest};
@@ -249,10 +250,13 @@ pub(crate) fn update_is_batch(app: &App) -> bool {
 pub(crate) fn finish_update(app: &mut App) {
     if let Err(error) = commit_update(app) {
         abort_update(app, format!("Couldn't finish package update: {error}"));
+    } else {
+        crate::package_manager_ui::update_finish(app);
     }
 }
 
 pub(crate) fn abort_update_message(app: &mut App, error: String) -> String {
+    crate::package_manager_ui::update_fail_note(app, &error);
     let reload = app
         .packages
         .update
@@ -359,8 +363,16 @@ pub struct Packages {
     /// Where plugins are installed (None: the default plugins directory).
     pub plugin_dir: Option<PathBuf>,
     pub index: Option<Index>,
-    manager_filter: String,
-    manager_selected: Option<String>,
+    pub(crate) manager_filter: String,
+    pub(crate) manager_view: crate::package_manager_ui::View,
+    pub(crate) manager_previous_view: crate::package_manager_ui::View,
+    pub(crate) manager_selected_row: usize,
+    pub(crate) manager_expanded: BTreeSet<String>,
+    pub(crate) manager_tick: u64,
+    pub(crate) manager_update: Option<crate::package_manager_ui::UpdateSnapshot>,
+    pub(crate) manager_findings: Option<Vec<Finding>>,
+    pub(crate) manager_check: Option<Result<String, String>>,
+    pub(crate) manager_selected: Option<String>,
     /// Downloads under way: each on its own thread, answering here.
     downloads: Vec<(u64, Receiver<Result<(), String>>)>,
     next_download: u64,
@@ -400,7 +412,7 @@ impl Packages {
     }
 }
 
-fn db(app: &App) -> Option<InstalledDb> {
+pub(crate) fn db(app: &App) -> Option<InstalledDb> {
     app.packages.dir().map(|d| InstalledDb::load(&d))
 }
 
@@ -465,6 +477,22 @@ pub fn execute(app: &mut App, cmd: &str) -> bool {
         }
         "package-manager-next" => manager_move(app, 1),
         "package-manager-prev" => manager_move(app, -1),
+        "package-manager-toggle" => crate::package_manager_ui::toggle_selected(app),
+        "package-manager-back" => crate::package_manager_ui::back(app),
+        "package-manager-show-home" => crate::package_manager_ui::show_home(app),
+        "package-manager-show-install" => crate::package_manager_ui::show_install(app),
+        "package-manager-show-update" => crate::package_manager_ui::show_update(app),
+        "package-manager-show-check" => crate::package_manager_ui::show_check(app),
+        "package-manager-show-log" => crate::package_manager_ui::show_log(app),
+        "package-manager-show-restore" => crate::package_manager_ui::show_restore(app),
+        "package-manager-show-profile" => crate::package_manager_ui::show_profile(app),
+        "package-manager-show-doctor" => crate::package_manager_ui::show_doctor(app),
+        "package-manager-show-help" => crate::package_manager_ui::show_help(app),
+        "package-manager-upgrade-all" => {
+            app.packages.manager_previous_view = app.packages.manager_view;
+            app.packages.manager_view = crate::package_manager_ui::View::Update;
+            with_index(app, Then::UpgradeAll);
+        }
         "package-manager-filter" => app.prompt(
             "Filter packages: ",
             crate::minibuffer::Purpose::PackageFilter,
@@ -1129,6 +1157,8 @@ pub fn refresh(app: &mut App, then: Then) {
     if app.packages.refreshing.is_some() {
         return app.msg("Still reading the package indexes...");
     }
+    app.packages.manager_findings = None;
+    app.packages.manager_check = None;
     let locations = app.packages.indexes.clone();
     app.packages.refreshing = Some((Index::default(), Vec::new(), then));
     let mut remote = 0;
@@ -1331,7 +1361,7 @@ fn after_refresh(app: &mut App, then: Then) {
     }
 }
 
-fn upgrade_candidates(app: &App, index: &Index) -> Result<Vec<Package>, String> {
+pub(crate) fn upgrade_candidates(app: &App, index: &Index) -> Result<Vec<Package>, String> {
     let Some(installed) = db(app) else {
         return Ok(Vec::new());
     };
@@ -1360,7 +1390,7 @@ fn upgrade_candidates(app: &App, index: &Index) -> Result<Vec<Package>, String> 
         .map(|packages| packages.into_iter().cloned().collect())
 }
 
-fn dry_run(app: &App, index: &Index, include_git: bool) -> Result<String, String> {
+pub(crate) fn dry_run(app: &App, index: &Index, include_git: bool) -> Result<String, String> {
     let mut lines = vec![
         "Package upgrade plan (no files changed)".to_string(),
         String::new(),
@@ -1429,6 +1459,7 @@ fn start_upgrade_queue(app: &mut App, packages: Vec<Package>, batch: bool) {
     if let Err(error) = begin_update(app, if batch { "upgrade-all" } else { "upgrade" }, batch) {
         return app.error(format!("Can't start package update: {error}"));
     }
+    crate::package_manager_ui::update_start_index(app, &packages, batch);
     app.packages.upgrade_queue = packages.into();
     next_upgrade_prompt(app);
 }
@@ -1444,6 +1475,7 @@ fn next_upgrade_prompt(app: &mut App) {
         }
         return;
     };
+    crate::package_manager_ui::update_running(app, &package.name, "installing");
     if app.unattended {
         app.msg(format!("Applying upgrade for {}", package.name));
         if !install(app, package.clone(), false) && app.packages.pending_capability.is_none() {
@@ -1489,6 +1521,7 @@ pub fn package_upgrade_confirmed(app: &mut App, yes: bool) {
             next_upgrade_prompt(app);
         }
     } else {
+        crate::package_manager_ui::update_skipped(app, &package.name, "declined");
         app.msg(format!("Skipped upgrade for {}", package.name));
         next_upgrade_prompt(app);
     }
@@ -1503,6 +1536,11 @@ pub fn package_capabilities_confirmed(app: &mut App, yes: bool) {
         install_ready(app, pending.package, pending.bytes, true);
         next_upgrade_prompt(app);
     } else {
+        crate::package_manager_ui::update_skipped(
+            app,
+            &pending.package.name,
+            "capabilities not approved",
+        );
         app.msg(format!(
             "Skipped upgrade for {}: {} new capabilit{} not approved",
             pending.package.name,
@@ -1519,269 +1557,7 @@ pub fn package_capabilities_confirmed(app: &mut App, yes: bool) {
 
 /// Show declared, installed, and indexed packages without requiring an index.
 pub fn manager(app: &mut App) {
-    let installed = db(app).map(|d| d.packages).unwrap_or_default();
-    let declared: BTreeMap<String, forge_core::PluginUse> = app
-        .rhai
-        .as_ref()
-        .map(|r| {
-            r.plugin_uses()
-                .into_iter()
-                .map(|u| (u.name.clone(), u))
-                .collect()
-        })
-        .unwrap_or_default();
-    let loaded = crate::plugins::loaded_names(app);
-    let mut names: Vec<String> = installed
-        .keys()
-        .chain(declared.keys())
-        .chain(app.packages.index.iter().flat_map(|i| i.packages.keys()))
-        .cloned()
-        .collect();
-    names.sort();
-    names.dedup();
-    let filter = app.packages.manager_filter.to_lowercase();
-    names.retain(|name| {
-        manager_matches(
-            name,
-            &filter,
-            &installed,
-            &declared,
-            app.packages.index.as_ref(),
-        )
-    });
-    if !names
-        .iter()
-        .any(|n| Some(n) == app.packages.manager_selected.as_ref())
-    {
-        app.packages.manager_selected = names.first().cloned();
-    }
-    let selected = app.packages.manager_selected.clone();
-    let symbols = crate::package_ui::Symbols::for_app(app);
-
-    struct Row {
-        name: String,
-        status: String,
-        kind: crate::package_ui::Status,
-        version: String,
-        source: String,
-        frozen: bool,
-    }
-
-    let mut rows = Vec::with_capacity(names.len());
-    for name in &names {
-        let declaration = declared.get(name);
-        let package = installed.get(name);
-        let frozen = declaration.is_some_and(|u| u.frozen);
-        let task = crate::package_vc::status(app, name);
-        let status = match task {
-            Some(task) => task,
-            None if frozen => "frozen",
-            None if package.is_some() => {
-                if loaded.iter().any(|n| n == name) {
-                    "loaded"
-                } else if declaration.is_some_and(|u| u.lazy()) {
-                    "installed (lazy)"
-                } else if declaration.is_some_and(|u| u.no_require) {
-                    "installed (deferred)"
-                } else {
-                    "installed"
-                }
-            }
-            None if declaration.is_some() => "not installed",
-            None => "available",
-        };
-        let kind = if frozen {
-            crate::package_ui::Status::Neutral
-        } else {
-            crate::package_ui::Status::of(status)
-        };
-        let version = package
-            .map(|p| p.version.as_str())
-            .or_else(|| {
-                app.packages
-                    .index
-                    .as_ref()?
-                    .packages
-                    .get(name)
-                    .map(|p| p.version.as_str())
-            })
-            .unwrap_or("-")
-            .to_string();
-        let source = declaration
-            .and_then(|u| u.git.as_deref().or(u.url.as_deref()).or(u.index.as_deref()))
-            .or_else(|| {
-                package
-                    .and_then(|p| p.git.as_deref().or(Some(p.url.as_str())))
-                    .filter(|s| !s.is_empty())
-            })
-            .or_else(|| {
-                app.packages
-                    .index
-                    .as_ref()?
-                    .packages
-                    .get(name)
-                    .map(|p| p.git.as_deref().or(Some(p.url.as_str())).unwrap_or(""))
-            })
-            .unwrap_or("-")
-            .to_string();
-        rows.push(Row {
-            name: name.clone(),
-            status: status.to_string(),
-            kind,
-            version,
-            source,
-            frozen,
-        });
-    }
-
-    let width = app.win().width.max(40);
-    let name_w = rows
-        .iter()
-        .map(|r| crate::package_ui::display_width(&r.name))
-        .max()
-        .unwrap_or(4)
-        .clamp(4, 20);
-    let status_w = rows
-        .iter()
-        .map(|r| crate::package_ui::display_width(&r.status) + 2)
-        .max()
-        .unwrap_or(9)
-        .clamp(9, 20);
-    let version_w = rows
-        .iter()
-        .map(|r| crate::package_ui::display_width(&r.version))
-        .max()
-        .unwrap_or(7)
-        .clamp(7, 14);
-    let source_w = width
-        .saturating_sub(2 + name_w + 2 + status_w + 2 + version_w + 2)
-        .max(8);
-    let table_w = 2 + name_w + 2 + status_w + 2 + version_w + 2 + source_w;
-
-    let mut text = crate::package_ui::Text::new();
-    let title = "Forge Packages";
-    let updates = rows
-        .iter()
-        .filter(|r| r.kind == crate::package_ui::Status::Warning)
-        .count();
-    let counts = format!(
-        "{} package{} {} {} {}",
-        rows.len(),
-        if rows.len() == 1 { "" } else { "s" },
-        symbols.dot,
-        updates,
-        if updates == 1 { "update" } else { "updates" }
-    );
-    text.push_face(title, forge_core::decoration::PackageFace::Title);
-    let gap = width.saturating_sub(
-        crate::package_ui::display_width(title) + crate::package_ui::display_width(&counts),
-    );
-    if gap > 0 {
-        text.push_face(&" ".repeat(gap), forge_core::decoration::PackageFace::Title);
-    }
-    text.push_face(&counts, forge_core::decoration::PackageFace::Heading);
-    text.newline();
-
-    let filter = if app.packages.manager_filter.is_empty() {
-        "(none)"
-    } else {
-        &app.packages.manager_filter
-    };
-    text.push_face("Filter: ", forge_core::decoration::PackageFace::Heading);
-    text.push(filter);
-    let hint = "f filter";
-    let used =
-        crate::package_ui::display_width("Filter: ") + crate::package_ui::display_width(filter);
-    let gap = width.saturating_sub(used + crate::package_ui::display_width(hint));
-    if gap > 0 {
-        text.push(&" ".repeat(gap));
-    }
-    text.push_face(hint, forge_core::decoration::PackageFace::Heading);
-    text.newline();
-    text.newline();
-
-    let header = format!(
-        "  {}  {}  {}  {}",
-        crate::package_ui::pad("Name", name_w, symbols.ellipsis),
-        crate::package_ui::pad("Status", status_w, symbols.ellipsis),
-        crate::package_ui::pad("Version", version_w, symbols.ellipsis),
-        crate::package_ui::pad("Source", source_w, symbols.ellipsis),
-    );
-    text.push_face(&header, forge_core::decoration::PackageFace::Heading);
-    text.newline();
-    text.push_face(
-        &symbols.rule.repeat(table_w.min(width)),
-        forge_core::decoration::PackageFace::Rule,
-    );
-    text.newline();
-
-    let mut selected_line = None;
-    for (i, row) in rows.iter().enumerate() {
-        let is_selected = selected.as_deref() == Some(row.name.as_str());
-        if is_selected {
-            selected_line = Some(i + 5);
-        }
-        let base = if is_selected {
-            Some(forge_core::decoration::PackageFace::Selected)
-        } else if row.frozen {
-            Some(forge_core::decoration::PackageFace::Inactive)
-        } else {
-            None
-        };
-        let cell = |text: &mut crate::package_ui::Text, value: &str, width: usize| {
-            let value = crate::package_ui::pad(value, width, symbols.ellipsis);
-            match base {
-                Some(face) => text.push_face(&value, face),
-                None => text.push(&value),
-            }
-        };
-        let gap = |text: &mut crate::package_ui::Text, value: &str| match base {
-            Some(face) => text.push_face(value, face),
-            None => text.push(value),
-        };
-        if is_selected {
-            text.push_face(
-                symbols.selected,
-                forge_core::decoration::PackageFace::SelectedMarker,
-            );
-        } else {
-            gap(&mut text, " ");
-        }
-        gap(&mut text, " ");
-        cell(&mut text, &row.name, name_w);
-        gap(&mut text, "  ");
-        text.push_status(row.kind, &row.status, status_w, is_selected, symbols);
-        gap(&mut text, "  ");
-        cell(&mut text, &row.version, version_w);
-        gap(&mut text, "  ");
-        cell(&mut text, &row.source, source_w);
-        text.newline();
-    }
-
-    text.newline();
-    text.push_face("Details", forge_core::decoration::PackageFace::Heading);
-    text.newline();
-    text.push_face(
-        &symbols.rule.repeat(7),
-        forge_core::decoration::PackageFace::Rule,
-    );
-    text.newline();
-    if let Some(name) = selected.as_deref() {
-        text.push(&details(app, name));
-    } else {
-        text.push("No packages match this filter.\n");
-    }
-    text.newline();
-    text.push_face(
-        "RET install or upgrade  d delete  g refresh  q quit",
-        forge_core::decoration::PackageFace::Heading,
-    );
-    text.show(
-        app,
-        BUFFER,
-        "package-manager-mode",
-        Some(forge_core::Pos::new(selected_line.unwrap_or(3), 0)),
-    );
+    crate::package_manager_ui::show(app);
 }
 
 fn show_details(app: &mut App, name: &str) {
@@ -1792,7 +1568,7 @@ fn show_details(app: &mut App, name: &str) {
     app.show_special_buffer("*Package Details*", "special-mode", &text);
 }
 
-fn details(app: &App, name: &str) -> String {
+pub(crate) fn details(app: &App, name: &str) -> String {
     let declaration = app
         .rhai
         .as_ref()
@@ -1882,48 +1658,10 @@ fn manager_move(app: &mut App, delta: isize) {
     if app.buf_ref().major_mode() != "package-manager-mode" {
         return app.error("Not in the package manager");
     }
-    let installed = db(app).map(|d| d.packages).unwrap_or_default();
-    let declared: BTreeMap<String, forge_core::PluginUse> = app
-        .rhai
-        .as_ref()
-        .map(|r| {
-            r.plugin_uses()
-                .into_iter()
-                .map(|u| (u.name.clone(), u))
-                .collect()
-        })
-        .unwrap_or_default();
-    let filter = app.packages.manager_filter.to_lowercase();
-    let mut names: Vec<String> = installed
-        .keys()
-        .chain(declared.keys())
-        .chain(app.packages.index.iter().flat_map(|i| i.packages.keys()))
-        .filter(|n| {
-            manager_matches(
-                n,
-                &filter,
-                &installed,
-                &declared,
-                app.packages.index.as_ref(),
-            )
-        })
-        .cloned()
-        .collect();
-    names.sort();
-    names.dedup();
-    if names.is_empty() {
-        return app.msg("No packages match this filter");
-    }
-    let old = app.packages.manager_selected.as_ref();
-    let i = old
-        .and_then(|n| names.iter().position(|candidate| candidate == n))
-        .unwrap_or(0);
-    let next = (i as isize + delta).rem_euclid(names.len() as isize) as usize;
-    app.packages.manager_selected = Some(names[next].clone());
-    manager(app);
+    crate::package_manager_ui::navigate(app, delta);
 }
 
-fn manager_matches(
+pub(crate) fn manager_matches(
     name: &str,
     filter: &str,
     installed: &BTreeMap<String, forge_core::package::Installed>,
@@ -1953,9 +1691,42 @@ fn manager_matches(
 
 fn selected_name(app: &mut App) -> Option<String> {
     if app.buf_ref().major_mode() == "package-manager-mode" {
+        if !crate::package_manager_ui::selectable(app) {
+            app.error("No package selected in this view");
+            return None;
+        }
         return app.packages.manager_selected.clone();
     }
     name_on_line(app)
+}
+
+pub(crate) fn capability_additions(app: &App, name: &str) -> Vec<String> {
+    let Some(pending) = app.packages.pending_capability.as_ref() else {
+        return Vec::new();
+    };
+    if pending.package.name != name {
+        return Vec::new();
+    }
+    pending
+        .diff
+        .additions
+        .iter()
+        .map(short_capability)
+        .collect()
+}
+
+fn short_capability(change: &forge_core::CapabilityChange) -> String {
+    use forge_core::CapabilityChange;
+    match change {
+        CapabilityChange::Network => "network".into(),
+        CapabilityChange::Http => "http".into(),
+        CapabilityChange::Environment => "environment".into(),
+        CapabilityChange::Directory { path, write } => {
+            format!("files:{}{path}", if *write { "rw:" } else { "r:" })
+        }
+        CapabilityChange::Process(program) => format!("process:{program}"),
+        CapabilityChange::Memory { to, .. } => format!("memory:{to}mb"),
+    }
 }
 
 fn install_selected(app: &mut App, name: &str, force: bool) {
@@ -2283,6 +2054,7 @@ fn install(app: &mut App, p: Package, force: bool) -> bool {
     if let Err(error) = check_source(app, kind, source) {
         let message = format!("Can't install {}: {error}", p.name);
         if upgrading {
+            crate::package_manager_ui::update_failed(app, &p.name, &message);
             abort_update(app, message);
         } else {
             app.error(message);
@@ -2322,6 +2094,7 @@ fn install(app: &mut App, p: Package, force: bool) -> bool {
                     log_package_fetch(started, &p, &Err(error.clone()));
                     let message = format!("Can't install {}: {error}", p.name);
                     if upgrading {
+                        crate::package_manager_ui::update_failed(app, &p.name, &message);
                         abort_update(app, message);
                     } else {
                         app.error(message);
@@ -2505,10 +2278,14 @@ fn install_ready(app: &mut App, p: Package, bytes: Vec<u8>, upgrade: bool) {
     };
     if upgrade {
         if let Err(error) = smoke_test_component(app, &p.name, &bytes) {
-            return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
+            let message = format!("Can't upgrade {}: {error}", p.name);
+            crate::package_manager_ui::update_failed(app, &p.name, &message);
+            return abort_update(app, message);
         }
         if let Err(error) = prepare_update(app, &p.name) {
-            return abort_update(app, format!("Can't upgrade {}: {error}", p.name));
+            let message = format!("Can't upgrade {}: {error}", p.name);
+            crate::package_manager_ui::update_failed(app, &p.name, &message);
+            return abort_update(app, message);
         }
     }
     let started = Timer::start();
@@ -2531,6 +2308,7 @@ fn install_ready(app: &mut App, p: Package, bytes: Vec<u8>, upgrade: bool) {
             {
                 return abort_update(app, format!("Can't finish upgrading {}: {error}", p.name));
             }
+            crate::package_manager_ui::update_done(app, &p.name, &p.version);
             app.msg(format!("Installed {} {}", p.name, p.version));
             crate::plugins::load(app, &path);
             let manager_open = app.buf_ref().major_mode() == "package-manager-mode";
@@ -2553,6 +2331,7 @@ fn install_ready(app: &mut App, p: Package, bytes: Vec<u8>, upgrade: bool) {
             crate::package_log::record(event);
             let message = format!("Can't install {}: {e}", p.name);
             if upgrade {
+                crate::package_manager_ui::update_failed(app, &p.name, &message);
                 abort_update(app, message);
             } else {
                 app.error(message);

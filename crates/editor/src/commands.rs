@@ -967,6 +967,10 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
         "Browse declared, installed, and indexed plugins interactively.",
     ),
     forge_docs::CommandDoc::line(
+        "package-manager-back",
+        "In the package manager: return to the previous view.",
+    ),
+    forge_docs::CommandDoc::line(
         "package-manager-clear-filter",
         "In the package manager: clear the package-name/source filter.",
     ),
@@ -981,6 +985,50 @@ pub const COMMANDS: &[forge_docs::CommandDoc] = &[
     forge_docs::CommandDoc::line(
         "package-manager-prev",
         "In the package manager: select the previous package.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-check",
+        "In the package manager: show the upgrade plan without changing files.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-doctor",
+        "In the package manager: show package doctor findings.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-help",
+        "In the package manager: show its keys and update behavior.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-home",
+        "In the package manager: show updates, problems, and packages.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-install",
+        "In the package manager: show packages available to install.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-log",
+        "In the package manager: show recent package operations.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-profile",
+        "In the package manager: show plugin startup and call timings.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-restore",
+        "In the package manager: show package snapshots and restore commands.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-show-update",
+        "In the package manager: show update progress or available updates.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-toggle",
+        "In the package manager: expand or collapse the selected package.",
+    ),
+    forge_docs::CommandDoc::line(
+        "package-manager-upgrade-all",
+        "In the package manager: start updates and switch to the Update view.",
     ),
     forge_docs::CommandDoc::line(
         "package-menu-build-log",

@@ -65,6 +65,7 @@ pub mod org_rich;
 pub mod org_table_cmds;
 pub mod package_doctor;
 pub mod package_log;
+pub mod package_manager_ui;
 pub mod package_sync;
 pub mod package_ui;
 pub mod package_vc;

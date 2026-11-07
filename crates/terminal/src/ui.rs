@@ -175,6 +175,18 @@ fn package_style(f: PackageFace) -> Style {
         PackageFace::Neutral => Style::default().add_modifier(Modifier::REVERSED),
         PackageFace::Inactive => Style::default().add_modifier(Modifier::DIM),
         PackageFace::Rule => Style::default().fg(Color::DarkGray),
+        PackageFace::TitlePill | PackageFace::TabActive => Style::default()
+            .fg(Color::White)
+            .bg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::Accent => Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeWarning => Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        PackageFace::BadgeInactive => Style::default().add_modifier(Modifier::DIM),
     }
 }
 
@@ -981,6 +993,20 @@ mod tests {
         assert_eq!(package(PackageFace::SelectedMarker).fg, Some(Color::Blue));
         assert!(
             package(PackageFace::Inactive)
+                .add_modifier
+                .contains(Modifier::DIM)
+        );
+        for face in [PackageFace::TitlePill, PackageFace::TabActive] {
+            let style = package(face);
+            assert_eq!(style.fg, Some(Color::White), "{face:?}");
+            assert_eq!(style.bg, Some(Color::Blue), "{face:?}");
+            assert!(style.add_modifier.contains(Modifier::BOLD), "{face:?}");
+        }
+        assert_eq!(package(PackageFace::Accent).fg, Some(Color::Blue));
+        assert_eq!(package(PackageFace::BadgeWarning).fg, Some(Color::Black));
+        assert_eq!(package(PackageFace::BadgeWarning).bg, Some(Color::Yellow));
+        assert!(
+            package(PackageFace::BadgeInactive)
                 .add_modifier
                 .contains(Modifier::DIM)
         );

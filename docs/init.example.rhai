@@ -532,8 +532,13 @@ use_package("consult", #{
 // Package manager faces keep labels in the default text color and put the
 // semantic color on the status mark:
 // forge.theme.set("package-title", #{ bold: true });
+// forge.theme.set("package-title-pill", #{ fg: "#12151b", bg: "#7aa2f7", bold: true });
+// forge.theme.set("package-tab-active", #{ fg: "#12151b", bg: "#7aa2f7", bold: true });
+// forge.theme.set("package-accent", #{ fg: "#7aa2f7", bold: true });
 // forge.theme.set("package-selected", #{ bg: "#45475a", bold: true });
 // forge.theme.set("package-warning", #{ fg: "#1e1e2e", bg: "#f9e2af", bold: true });
+// forge.theme.set("package-badge-warning", #{ fg: "#e8c97a", bg: "#3a3222" });
+// forge.theme.set("package-badge-inactive", #{ fg: "#8a90a0", bg: "#2a2e37" });
 
 // ---- menus
 

@@ -252,6 +252,18 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
     let _ = screen(&mut app, 80, 24);
     press(&mut app, "M-x package-manager RET");
     assert_eq!(point(&app).line, 5, "the first package row is selected");
+    press(&mut app, "RET");
+    assert!(
+        text(&app).contains("Declaration:"),
+        "RET expands the selected row:\n{}",
+        text(&app)
+    );
+    press(&mut app, "RET");
+    assert!(
+        !text(&app).contains("Declaration:"),
+        "RET collapses the selected row:\n{}",
+        text(&app)
+    );
     let narrow = screen(&mut app, 80, 24);
     let _ = screen(&mut app, 200, 24);
     press(&mut app, "M-x package-manager RET");
@@ -261,8 +273,11 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
         assert!(shown.contains("Forge Packages"), "{label}:\n{shown}");
         assert!(shown.contains("demo"), "{label}:\n{shown}");
         assert!(shown.contains("declared-demo"), "{label}:\n{shown}");
-        assert!(shown.contains("loaded"), "{label}:\n{shown}");
-        assert!(shown.contains("not installed"), "{label}:\n{shown}");
+        assert!(
+            shown.contains("warning") || shown.contains("error"),
+            "{label}:\n{shown}"
+        );
+        assert!(shown.contains("Problems"), "{label}:\n{shown}");
         assert!(
             shown.contains("3 packages - 0 updates"),
             "counts keep the separator readable at {label} columns:\n{shown}"
@@ -272,7 +287,7 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
             "long names end in an ellipsis at {label} columns:\n{shown}"
         );
         assert!(
-            shown.contains("RET install or upgrade") && shown.contains("q quit"),
+            shown.contains("RET expand") && shown.contains("q quit"),
             "the footer is visible at {label} columns:\n{shown}"
         );
         for line in shown.lines() {
@@ -675,9 +690,9 @@ fn packages_from_version_control() {
     press(&mut app, "M-x package-manager RET");
     assert!(
         text(&app).contains("demo")
-            && text(&app).contains("loaded")
             && text(&app).contains("declared-demo")
-            && text(&app).contains("not installed"),
+            && text(&app).contains("Problems")
+            && (text(&app).contains("warning") || text(&app).contains("error")),
         "{}",
         text(&app)
     );
@@ -689,7 +704,7 @@ fn packages_from_version_control() {
     assert!(
         text(&app)
             .lines()
-            .any(|line| line.starts_with("| declared-demo") && line.contains("not installed")),
+            .any(|line| line.starts_with("| declared-demo") && line.contains("error")),
         "first plugin should be selected:\n{}",
         text(&app)
     );
@@ -706,10 +721,10 @@ fn packages_from_version_control() {
         app.buf_ref().decorations().iter().any(|d| {
             d.face
                 == forge_core::decoration::DecoFace::Package(
-                    forge_core::decoration::PackageFace::Neutral,
+                    forge_core::decoration::PackageFace::Warning,
                 )
         }),
-        "status labels use the neutral badge"
+        "problem labels use the warning badge"
     );
     assert!(
         app.buf_ref().decorations().iter().any(|d| {
@@ -731,7 +746,7 @@ fn packages_from_version_control() {
     assert!(
         text(&app)
             .lines()
-            .any(|line| line.starts_with("| demo") && line.contains("loaded")),
+            .any(|line| line.starts_with("| demo") && line.contains("warning")),
         "j should select the next plugin:\n{}",
         text(&app)
     );
@@ -1674,4 +1689,68 @@ fn smoke_test_uses_the_doctor_check_seam() {
     )
     .unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn package_manager_switches_views_and_has_clickable_tabs() {
+    let _env = package_env();
+    let mut app = app_with("");
+    press(&mut app, "M-x package-manager RET");
+    assert!(text(&app).contains("Forge Packages"));
+    assert!(text(&app).contains("Home"));
+
+    use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let ev = |kind, column, row| MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    let shown = screen(&mut app, 80, 24);
+    let lines: Vec<&str> = shown.lines().collect();
+    let row = lines
+        .iter()
+        .position(|line| line.contains(" Home ") && line.contains(" I "))
+        .expect("tab row");
+    let col = lines[row].find(" I ").expect("Install tab") as u16 + 1;
+    crate::mouse::handle(
+        &mut app,
+        ev(MouseEventKind::Down(MouseButton::Left), col, row as u16),
+    );
+    crate::mouse::handle(
+        &mut app,
+        ev(MouseEventKind::Up(MouseButton::Left), col, row as u16),
+    );
+    assert!(
+        text(&app).contains("Installable packages"),
+        "clicking the Install tab switches views:\n{}",
+        text(&app)
+    );
+    press(&mut app, "?");
+    assert!(
+        text(&app).contains("Package manager keys"),
+        "{}",
+        text(&app)
+    );
+    press(&mut app, "H");
+    assert!(
+        text(&app).contains("Forge Packages") && text(&app).contains("Filter: (none)"),
+        "{}",
+        text(&app)
+    );
+
+    let keymaps: std::collections::BTreeSet<String> = app
+        .buf_ref()
+        .decorations()
+        .iter()
+        .filter_map(|deco| deco.keymap.clone())
+        .collect();
+    for view in [
+        "home", "install", "update", "check", "log", "restore", "profile", "doctor", "help",
+    ] {
+        assert!(
+            keymaps.contains(&format!("package-manager-tab-{view}")),
+            "missing clickable tab {view}: {keymaps:?}"
+        );
+    }
 }

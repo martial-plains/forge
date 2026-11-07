@@ -370,7 +370,8 @@ pub const PACKAGE_MENU_BINDINGS: &[(&str, &str)] = &[
 ];
 
 pub const PACKAGE_MANAGER_BINDINGS: &[(&str, &str)] = &[
-    ("RET", "package-menu-install"),
+    ("RET", "package-manager-toggle"),
+    ("TAB", "package-manager-toggle"),
     ("i", "package-menu-install"),
     ("j", "package-manager-next"),
     ("k", "package-manager-prev"),
@@ -385,7 +386,15 @@ pub const PACKAGE_MANAGER_BINDINGS: &[(&str, &str)] = &[
     ("b", "package-menu-build-log"),
     ("d", "package-menu-delete"),
     ("g", "package-menu-refresh"),
-    ("U", "package-upgrade-all"),
+    ("U", "package-manager-upgrade-all"),
+    ("H", "package-manager-show-home"),
+    ("I", "package-manager-show-install"),
+    ("C", "package-manager-show-check"),
+    ("L", "package-manager-show-log"),
+    ("R", "package-manager-show-restore"),
+    ("P", "package-manager-show-profile"),
+    ("D", "package-manager-show-doctor"),
+    ("?", "package-manager-show-help"),
 ];
 
 /// What a click does in a listing: `<mouse-1>` visits the name under point,
@@ -947,6 +956,16 @@ pub fn install_defaults(keymaps: &mut Keymaps) {
         keymaps
             .bind(&manager, keys, cmd, Origin::Package)
             .expect("valid default binding");
+    }
+    for view in crate::package_manager_ui::View::ALL {
+        let region = Scope::Region(format!(
+            "{}{}",
+            crate::package_manager_ui::TAB_REGION_PREFIX,
+            view.slug()
+        ));
+        keymaps
+            .bind(&region, "<mouse-1>", view.command(), Origin::Package)
+            .expect("valid default region binding");
     }
     let agenda = Scope::Mode(crate::org_agenda_ui::MODE.into());
     for (keys, cmd) in crate::org_agenda_ui::AGENDA_BINDINGS {
