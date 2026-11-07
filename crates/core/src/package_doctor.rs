@@ -302,7 +302,10 @@ pub fn check_sharing_with(ctx: &DoctorContext, git: &dyn Git) -> Vec<Finding> {
             continue;
         }
         let relative = relative_to(&root, &path);
-        let mut line = relative.display().to_string();
+        // Report paths with forward slashes regardless of the host OS, so
+        // the suggested .gitignore lines are portable and stable in tests.
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let mut line = relative.clone();
         if directory {
             line.push('/');
         }
@@ -312,7 +315,7 @@ pub fn check_sharing_with(ctx: &DoctorContext, git: &dyn Git) -> Vec<Finding> {
             None,
             format!(
                 "{} is inside the Git work tree at {} but is not ignored",
-                relative.display(),
+                relative,
                 root.display()
             ),
             format!("Add this line to {}/.gitignore:\n{line}", root.display()),

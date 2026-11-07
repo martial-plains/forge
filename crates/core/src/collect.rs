@@ -285,10 +285,10 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let marker = dir.join("installed");
+        let marker_str = marker.display().to_string().replace('\\', "\\\\");
         let exe = format!("forge-missing-{}", std::process::id());
         let source = format!(
-            "use_package(\"a\", #{{ ensure_system_package: #{{ \"{exe}\": \"touch {}\" }} }});",
-            marker.display()
+            "use_package(\"a\", #{{ ensure_system_package: #{{ \"{exe}\": \"touch {marker_str}\" }} }});",
         );
         let out = collect_str("init.rhai", &source);
         assert!(out.errors.is_empty(), "{:?}", out.errors);
