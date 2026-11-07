@@ -737,7 +737,63 @@ fn show_package_text(app: &mut App, name: &str, text: &str) {
     if let Some(buffer) = app.editor.state.get_buffer_mut(id) {
         buffer.set_contents(text);
     }
+    decorate_package_text(app, id);
     crate::compile::display_buffer(app, id);
+}
+
+fn decorate_package_text(app: &mut App, id: forge_core::BufferId) {
+    use forge_core::decoration::{DecoFace, DecoSpec, PackageFace};
+
+    let Some(b) = app.editor.state.get_buffer_mut(id) else {
+        return;
+    };
+    let mut decos = Vec::new();
+    for line in 0..b.line_count() {
+        let text = b.line(line);
+        if text.is_empty() {
+            continue;
+        }
+        let trimmed = text.trim_start();
+        let start = b.pos_to_offset(forge_core::Pos::new(line, 0));
+        if line == 0
+            || trimmed.starts_with("Package upgrade plan")
+            || trimmed.starts_with("Package upgrade review")
+        {
+            decos.push(DecoSpec::new(
+                start,
+                start + text.chars().count(),
+                DecoFace::Package(PackageFace::Title),
+            ));
+            continue;
+        }
+        let mut marked = false;
+        for (word, face) in [
+            ("WARNING", PackageFace::Warning),
+            ("BREAKING", PackageFace::Error),
+        ] {
+            if let Some(byte) = text.find(word) {
+                let at = start + text[..byte].chars().count();
+                decos.push(DecoSpec::new(
+                    at,
+                    at + word.chars().count(),
+                    DecoFace::Package(face),
+                ));
+                marked = true;
+                break;
+            }
+        }
+        if marked {
+            continue;
+        }
+        if trimmed.ends_with(':') || trimmed.starts_with("These additions need") {
+            decos.push(DecoSpec::new(
+                start,
+                start + text.chars().count(),
+                DecoFace::Package(PackageFace::Heading),
+            ));
+        }
+    }
+    b.set_decorations("package-text", decos);
 }
 
 fn restore_snapshot(app: &mut App, name: &str) {
@@ -1715,6 +1771,11 @@ pub fn manager(app: &mut App) {
     } else {
         text.push("No packages match this filter.\n");
     }
+    text.newline();
+    text.push_face(
+        "RET install or upgrade  d delete  g refresh  q quit",
+        forge_core::decoration::PackageFace::Heading,
+    );
     text.show(
         app,
         BUFFER,
@@ -2139,6 +2200,11 @@ pub fn list(app: &mut App) {
     if rows.is_empty() {
         text.push("No packages in the index.\n");
     }
+    text.newline();
+    text.push_face(
+        "RET install or upgrade  d delete  g refresh  q quit",
+        forge_core::decoration::PackageFace::Heading,
+    );
     text.show(
         app,
         BUFFER,
@@ -2289,6 +2355,7 @@ fn append_package_text(app: &mut App, name: &str, text: &str) {
             id
         }
     };
+    decorate_package_text(app, id);
     crate::compile::display_buffer(app, id);
 }
 

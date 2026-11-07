@@ -49,6 +49,20 @@ impl Drop for EnvGuard {
     }
 }
 
+fn buffer_has_face(app: &App, name: &str, face: forge_core::decoration::PackageFace) -> bool {
+    let id = app
+        .editor
+        .find_buffer(name)
+        .unwrap_or_else(|| panic!("no buffer {name}"));
+    app.editor
+        .state
+        .get_buffer(id)
+        .unwrap()
+        .decorations()
+        .iter()
+        .any(|d| d.face == forge_core::decoration::DecoFace::Package(face))
+}
+
 #[test]
 fn compile_next_error_shell_commands_and_projects() {
     let dir = std::env::temp_dir().join(format!("forge-compile-{}", std::process::id()));
@@ -229,6 +243,9 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
         r#"use_package("declared-demo", #{
             git: "https://example.test/declared-demo.git",
             commands: ["demo-command"]
+        });
+        use_package("a-very-long-declared-package-name", #{
+            git: "https://example.test/long.git"
         });"#,
     )
     .unwrap();
@@ -238,6 +255,7 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
     // The package browser lays out at the width of the last redisplay.
     let _ = screen(&mut app, 80, 24);
     press(&mut app, "M-x package-manager RET");
+    assert_eq!(point(&app).line, 5, "the first package row is selected");
     let narrow = screen(&mut app, 80, 24);
     let _ = screen(&mut app, 200, 24);
     press(&mut app, "M-x package-manager RET");
@@ -250,8 +268,16 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
         assert!(shown.contains("loaded"), "{label}:\n{shown}");
         assert!(shown.contains("not installed"), "{label}:\n{shown}");
         assert!(
-            shown.contains("2 packages - 0 updates"),
+            shown.contains("3 packages - 0 updates"),
             "counts keep the separator readable at {label} columns:\n{shown}"
+        );
+        assert!(
+            shown.contains("...") || shown.contains('…'),
+            "long names end in an ellipsis at {label} columns:\n{shown}"
+        );
+        assert!(
+            shown.contains("RET install or upgrade") && shown.contains("q quit"),
+            "the footer is visible at {label} columns:\n{shown}"
         );
         for line in shown.lines() {
             assert!(
@@ -270,6 +296,31 @@ fn package_screens_fit_eighty_and_two_hundred_columns() {
             .any(|line| line.contains("Forge Packages") && line.contains("demo.wasm")),
         "narrow layout keeps the source column quiet:\n{narrow}"
     );
+
+    let _ = screen(&mut app, 80, 24);
+    press(&mut app, "M-x list-packages RET");
+    assert_eq!(point(&app).line, 4, "the first package-list row has point");
+    let list_narrow = screen(&mut app, 80, 24);
+    let _ = screen(&mut app, 200, 24);
+    press(&mut app, "M-x list-packages RET");
+    let list_wide = screen(&mut app, 200, 24);
+    for (label, shown, width) in [
+        ("80", list_narrow.as_str(), 80),
+        ("200", list_wide.as_str(), 200),
+    ] {
+        assert!(shown.contains("Packages"), "{label}:\n{shown}");
+        assert!(shown.contains("demo"), "{label}:\n{shown}");
+        assert!(
+            shown.contains("q quit"),
+            "the list footer is visible at {label} columns:\n{shown}"
+        );
+        for line in shown.lines() {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(line.trim_end()) <= width,
+                "{label}-column list line is wider than the screen: {line:?}"
+            );
+        }
+    }
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -616,6 +667,10 @@ fn packages_from_version_control() {
         r#"use_package("declared-demo", #{
             git: "https://example.test/declared-demo.git",
             commands: ["demo-command"]
+        });
+        use_package("frozen-demo", #{
+            git: "https://example.test/frozen-demo.git",
+            freeze: true
         });"#,
     )
     .unwrap();
@@ -627,6 +682,11 @@ fn packages_from_version_control() {
             && text(&app).contains("loaded")
             && text(&app).contains("declared-demo")
             && text(&app).contains("not installed"),
+        "{}",
+        text(&app)
+    );
+    assert!(
+        text(&app).contains("3 packages - 0 updates"),
         "{}",
         text(&app)
     );
@@ -655,6 +715,22 @@ fn packages_from_version_control() {
         }),
         "status labels use the neutral badge"
     );
+    assert!(
+        app.buf_ref().decorations().iter().any(|d| {
+            d.face
+                == forge_core::decoration::DecoFace::Package(
+                    forge_core::decoration::PackageFace::Inactive,
+                )
+        }),
+        "frozen rows use the inactive surface"
+    );
+    assert!(
+        text(&app)
+            .lines()
+            .any(|line| line.contains("frozen-demo") && line.contains("frozen")),
+        "frozen state stays labeled:\n{}",
+        text(&app)
+    );
     press(&mut app, "j");
     assert!(
         text(&app)
@@ -668,12 +744,18 @@ fn packages_from_version_control() {
     answer(&mut app, "declared-");
     assert!(
         text(&app).contains("Filter: declared-")
+            && text(&app).contains("1 package - 0 updates")
             && !text(&app).lines().any(|line| line.starts_with("demo ")),
-        "filter should limit the browser:\n{}",
+        "filter should limit the browser and update its counts:\n{}",
         text(&app)
     );
     press(&mut app, "F");
     assert!(text(&app).contains("demo"), "{}", text(&app));
+    assert!(
+        text(&app).contains("3 packages - 0 updates"),
+        "{}",
+        text(&app)
+    );
     press(&mut app, "v");
     assert!(
         text(&app).contains("declared-demo.git")
@@ -804,6 +886,33 @@ fn packages_from_version_control() {
 
     press(&mut app, "M-x package-delete RET demo RET");
     assert!(!dir.join("data with spaces/vc/demo").exists());
+
+    press(&mut app, "M-x package-log RET");
+    let log = buffer_text(&app, crate::package_log::BUFFER);
+    assert!(
+        log.contains("Package Operations")
+            && log.contains("install")
+            && log.contains("ok")
+            && log.contains("ms"),
+        "{log}"
+    );
+    assert!(
+        buffer_has_face(
+            &app,
+            crate::package_log::BUFFER,
+            forge_core::decoration::PackageFace::Title,
+        ) && buffer_has_face(
+            &app,
+            crate::package_log::BUFFER,
+            forge_core::decoration::PackageFace::Heading,
+        ) && buffer_has_face(
+            &app,
+            crate::package_log::BUFFER,
+            forge_core::decoration::PackageFace::Ok,
+        ),
+        "the log has a title, column headings, and status badges"
+    );
+
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -890,6 +999,18 @@ fn vc_upgrades_warn_about_history_rewrites_and_moved_tags() {
             && plan.contains("tag v1 now points"),
         "{plan}"
     );
+    assert!(
+        buffer_has_face(
+            &app,
+            "*Package Upgrade Plan*",
+            forge_core::decoration::PackageFace::Title,
+        ) && buffer_has_face(
+            &app,
+            "*Package Upgrade Plan*",
+            forge_core::decoration::PackageFace::Warning,
+        ),
+        "the dry-run plan has a title and warning badge"
+    );
     assert_eq!(
         git(&["rev-parse", "HEAD"]),
         rewritten,
@@ -916,6 +1037,18 @@ fn vc_upgrades_warn_about_history_rewrites_and_moved_tags() {
     assert!(
         review.contains("not a descendant") && review.contains("tag v1 now points"),
         "{review}"
+    );
+    assert!(
+        buffer_has_face(
+            &app,
+            crate::package_vc::BUFFER,
+            forge_core::decoration::PackageFace::Heading,
+        ) && buffer_has_face(
+            &app,
+            crate::package_vc::BUFFER,
+            forge_core::decoration::PackageFace::Warning,
+        ),
+        "the upgrade review headings and warnings are styled"
     );
     press(&mut app, "n");
     assert_eq!(app.message.as_deref(), Some("Not upgrading demo"));
@@ -1085,6 +1218,18 @@ fn package_upgrade_with_new_capabilities_asks_and_blocks_unattended() {
             && review.contains("read and write")
             && review.contains("New capabilities"),
         "{review}"
+    );
+    assert!(
+        buffer_has_face(
+            &app,
+            "*Package Upgrade Review*",
+            forge_core::decoration::PackageFace::Title,
+        ) && buffer_has_face(
+            &app,
+            "*Package Upgrade Review*",
+            forge_core::decoration::PackageFace::Heading,
+        ),
+        "the capability review has styled title and headings"
     );
     press(&mut app, "n");
     assert_eq!(std::fs::read(plugins.join("demo.wasm")).unwrap(), old);
@@ -1453,6 +1598,50 @@ fn package_upgrade_all_rolls_back_the_whole_batch() {
     );
     assert_eq!(app.editor.commands.plugin_for("demo-great"), None);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn package_doctor_uses_accessible_badges() {
+    let _env_lock = package_env();
+    let dir = std::env::temp_dir().join(format!("forge-doctor-ui-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    let _env = EnvGuard::set(&dir.join("data"), &dir.join("config"));
+    let mut app = app_with("");
+    app.init_errors.push("synthetic init problem".into());
+
+    press(&mut app, "M-x package-doctor RET");
+    let doctor = buffer_text(&app, crate::package_doctor::BUFFER);
+    assert!(
+        doctor.contains("Package Doctor")
+            && doctor.contains("error")
+            && doctor.contains("synthetic init problem"),
+        "{doctor}"
+    );
+    assert!(
+        buffer_has_face(
+            &app,
+            crate::package_doctor::BUFFER,
+            forge_core::decoration::PackageFace::Title,
+        ) && buffer_has_face(
+            &app,
+            crate::package_doctor::BUFFER,
+            forge_core::decoration::PackageFace::Error,
+        ) && buffer_has_face(
+            &app,
+            crate::package_doctor::BUFFER,
+            forge_core::decoration::PackageFace::Heading,
+        ),
+        "the doctor has a title and severity badge"
+    );
+    for line in screen(&mut app, 80, 24).lines() {
+        assert!(
+            unicode_width::UnicodeWidthStr::width(line.trim_end()) <= 80,
+            "80-column doctor line is too wide: {line:?}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -1898,6 +1898,12 @@ fn decorate_build(app: &mut App, id: forge_core::BufferId) {
             Some(PackageFace::Primary)
         } else if text.starts_with("Installed ") {
             Some(PackageFace::Ok)
+        } else if text.starts_with("Changes in this upgrade")
+            || text.starts_with("New capabilities in")
+            || text.starts_with("Capabilities it no longer asks for")
+            || text.starts_with("These additions need")
+        {
+            Some(PackageFace::Heading)
         } else {
             None
         };
@@ -1907,6 +1913,24 @@ fn decorate_build(app: &mut App, id: forge_core::BufferId) {
                 start + text.chars().count(),
                 DecoFace::Package(face),
             ));
+            continue;
+        }
+        let mut marked = false;
+        for (word, face) in [
+            ("WARNING", PackageFace::Warning),
+            ("BREAKING", PackageFace::Error),
+        ] {
+            if let Some(byte) = text.find(word) {
+                let at = start + text[..byte].chars().count();
+                decos.push(DecoSpec::new(
+                    at,
+                    at + word.chars().count(),
+                    DecoFace::Package(face),
+                ));
+                marked = true;
+            }
+        }
+        if marked {
             continue;
         }
         for word in ["error", "failed", "couldn't"] {

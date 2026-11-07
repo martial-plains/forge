@@ -1077,4 +1077,55 @@ mod tests {
             Some(Color::Magenta)
         );
     }
+
+    #[test]
+    fn package_faces_use_palette_colors_and_theme_overrides() {
+        use forge_core::theme::{FaceStyle, Rgb, Theme};
+        let caps = TermCaps {
+            underline_color: true,
+            graphics: GraphicsProto::Off,
+        };
+        for face in PackageFace::ALL {
+            let styled = style(
+                Face::Decoration(DecoFace::Package(face), None),
+                caps,
+                &Theme::new(),
+            );
+            for color in [styled.fg, styled.bg].into_iter().flatten() {
+                assert!(
+                    !matches!(color, Color::Rgb(..)),
+                    "{face:?} should use a terminal palette color, not {color:?}"
+                );
+            }
+        }
+
+        let mut theme = Theme::new();
+        theme
+            .set(
+                "package-error",
+                FaceStyle {
+                    fg: Some(Rgb(1, 2, 3)),
+                    bg: Some(Rgb(4, 5, 6)),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let styled = style(
+            Face::Decoration(DecoFace::Package(PackageFace::Error), None),
+            caps,
+            &theme,
+        );
+        assert_eq!(styled.fg, Some(Color::Rgb(1, 2, 3)));
+        assert_eq!(styled.bg, Some(Color::Rgb(4, 5, 6)));
+        assert_eq!(
+            style(
+                Face::Decoration(DecoFace::Package(PackageFace::Warning), None),
+                caps,
+                &theme,
+            )
+            .fg,
+            Some(Color::Yellow),
+            "other package faces keep their palette colors"
+        );
+    }
 }
