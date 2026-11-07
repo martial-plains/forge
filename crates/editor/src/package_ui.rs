@@ -27,11 +27,6 @@ impl Status {
             .any(|word| text.contains(word))
         {
             Self::Error
-        } else if ["upgrade", "update", "review", "warning"]
-            .iter()
-            .any(|word| text.contains(word))
-        {
-            Self::Warning
         } else if [
             "fetching",
             "checking",
@@ -49,6 +44,11 @@ impl Status {
         .any(|word| text.contains(word))
         {
             Self::Info
+        } else if ["upgrade", "update", "review", "warning"]
+            .iter()
+            .any(|word| text.contains(word))
+        {
+            Self::Warning
         } else if [
             "loaded",
             "installed",
@@ -256,6 +256,8 @@ mod tests {
     fn statuses_are_classified_by_words() {
         assert_eq!(Status::of("loaded"), Status::Ok);
         assert_eq!(Status::of("upgrade from 1.0"), Status::Warning);
+        assert_eq!(Status::of("review needed"), Status::Warning);
+        assert_eq!(Status::of("reviewing changes"), Status::Info);
         assert_eq!(Status::of("fetching Git"), Status::Info);
         assert_eq!(Status::of("needs newer Forge"), Status::Error);
         assert_eq!(Status::of("available"), Status::Neutral);

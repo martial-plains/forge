@@ -346,7 +346,7 @@ impl ModernFace {
 pub enum PackageFace {
     Title,
     Heading,
-    /// Primary actions such as RET install or u upgrade.
+    /// A primary label such as a package name or command.
     Primary,
     /// The selected row's surface.
     Selected,
@@ -360,7 +360,7 @@ pub enum PackageFace {
     Error,
     /// Work in progress: fetching, building, queued.
     Info,
-    /// A status label, version, source or other quiet metadata.
+    /// A status label or other quiet metadata.
     Neutral,
     /// A frozen, declined or queued row's surface.
     Inactive,
