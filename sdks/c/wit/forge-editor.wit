@@ -1746,11 +1746,8 @@ interface handler {
     on-answer: func(request: request, answer: option<string>);
 }
 
-/// A plugin: a component Forge loads and initializes.
-///
-/// No function here is `async`, so components built with WASI 0.2
-/// toolchains (most non-Rust languages today) can target this world.
-world plugin {
+/// A plugin that only uses the interfaces every plugin can use.
+world plugin-basic {
     import log;
     import buffers;
     import commands;
@@ -1760,11 +1757,9 @@ world plugin {
     import minibuffer;
     import modes;
     import decorations;
-    import processes;
     import completion;
     import files;
     import config;
-    import environment;
     import kill-ring;
     import session;
     import registers;
@@ -1775,7 +1770,6 @@ world plugin {
     import org;
     import images;
     import canvas;
-    import http;
 
     export handler;
 
@@ -1784,9 +1778,27 @@ world plugin {
     export init: func() -> result<_, string>;
 }
 
+/// A plugin: a component Forge loads and initializes.
+///
+/// No function here is `async`, so components built with WASI 0.2
+/// toolchains (most non-Rust languages today) can target this world.
+world plugin {
+    include plugin-basic;
+    import processes;
+    import environment;
+    import http;
+}
+
 /// A plugin that runs processes and wants their output (since 0.1.2).
 world plugin-with-processes {
     include plugin;
+    export process-handler;
+}
+
+/// A plugin that runs processes without importing environment or HTTP.
+world plugin-with-processes-basic {
+    include plugin-basic;
+    import processes;
     export process-handler;
 }
 

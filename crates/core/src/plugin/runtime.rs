@@ -30,6 +30,7 @@ use crate::keymap::{Condition, Lookup, Origin, Scope, parse_keys};
 use crate::permissions::{Grants, expand_home};
 use crate::process::{ProcessEvent, ProcessId, Processes, Program};
 use anyhow::{Context, Result, anyhow, bail};
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -3740,6 +3741,28 @@ fn start_ticker(engine: EngineWeak) {
         .expect("spawn the plugin ticker");
 }
 
+/// Interfaces whose functions the component's core modules import. This
+/// filters out interfaces that only appear in the component's type, such
+/// as the unreferenced process/http imports a Rust SDK component declares.
+fn used_imports(bytes: &[u8]) -> Vec<String> {
+    let mut imports = BTreeSet::new();
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        let Ok(wasmparser::Payload::ImportSection(section)) = payload else {
+            continue;
+        };
+        for import in section.into_imports() {
+            let Ok(import) = import else {
+                continue;
+            };
+            let module = import.module;
+            if module.starts_with("forge:") || module.starts_with("wasi:") {
+                imports.insert(module.to_string());
+            }
+        }
+    }
+    imports.into_iter().collect()
+}
+
 pub struct PluginRuntime {
     engine: Engine,
     linker: Linker<PluginState>,
@@ -3756,6 +3779,10 @@ pub struct Inspection {
     component: Component,
     /// Everything the component imports ("wasi:cli/stderr@0.2.3", ...).
     pub imports: Vec<String>,
+    /// The imports its core module actually references. A component type
+    /// can mention an interface without using it; this is what the
+    /// permission-mismatch check looks at.
+    pub used_imports: Vec<String>,
     /// Imports Forge doesn't provide: calling them traps.
     pub unsupported: Vec<String>,
     pub wasi: WasiVersion,
@@ -4330,6 +4357,7 @@ impl PluginRuntime {
         } else {
             WasiVersion::None
         };
+        let used_imports = used_imports(bytes);
         let unsupported = imports
             .iter()
             .filter(|i| !is_supported_import(i))
@@ -4339,6 +4367,7 @@ impl PluginRuntime {
             name: name.to_string(),
             component,
             imports,
+            used_imports,
             unsupported,
             wasi,
         })
@@ -4409,6 +4438,7 @@ impl PluginRuntime {
             imports,
             unsupported,
             wasi,
+            ..
         } = inspection;
         // Everything the plugin can use must link. Imports Forge doesn't
         // provide at all (wasi:http, ...) become traps, except that a

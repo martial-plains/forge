@@ -2018,13 +2018,13 @@ fn component_compatibility(app: &App, name: &str, bytes: &[u8]) -> Option<String
     runtime.compatibility_problem(&inspection)
 }
 
-/// The interfaces a component imports, without running it.
+/// The interfaces a component's code actually imports, without running it.
 pub(crate) fn component_imports(name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
     let runtime = forge_core::PluginRuntime::new()
         .map_err(|error| format!("starting component inspection: {error:#}"))?;
     runtime
         .inspect(name, bytes)
-        .map(|inspection| inspection.imports)
+        .map(|inspection| inspection.used_imports)
         .map_err(|error| format!("inspecting component imports: {error:#}"))
 }
 

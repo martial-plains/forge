@@ -595,8 +595,10 @@ impl PluginHost {
         let mut out = Outcome::default();
         let name = request.inspection.name.clone();
         if let Some(manifest) = &request.manifest {
-            let mismatches =
-                crate::permissions::uncovered_imports(Some(manifest), &request.inspection.imports);
+            let mismatches = crate::permissions::uncovered_imports(
+                Some(manifest),
+                &request.inspection.used_imports,
+            );
             if !mismatches.is_empty() {
                 let details = mismatches
                     .iter()

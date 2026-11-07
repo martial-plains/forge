@@ -3,7 +3,7 @@
 //
 //   "forge": { "permissions": { "processes": ["pyright-langserver"] } }
 //
-// forge-plugin build then targets the plugin-with-processes world and
+// forge-plugin build then targets a world with the process handler and
 // exports the handler below. Output arrives when the editor is idle.
 //
 //   import { spawn } from '@forge-editor/plugin/process';

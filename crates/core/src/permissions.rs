@@ -328,14 +328,17 @@ impl ImportMismatch {
 }
 
 /// The permission an import needs, if any.
+///
+/// Toolchains import baseline WASI environment and filesystem interfaces
+/// even when the plugin doesn't use them (Rust's standard library imports
+/// the former; ComponentizeJS imports both). Those interfaces get an empty
+/// environment and no preopened directories unless the user grants them, so
+/// they don't require a manifest declaration. Network imports do need one:
+/// a plugin that can open sockets must say so, even before it is granted.
 pub fn import_permission(import: &str) -> Option<PermissionKind> {
     if import.starts_with("wasi:sockets/") {
         Some(PermissionKind::Network)
-    } else if import.starts_with("wasi:filesystem/") {
-        Some(PermissionKind::Directories)
-    } else if import.starts_with("wasi:cli/environment")
-        || import.starts_with("forge:editor/environment")
-    {
+    } else if import.starts_with("forge:editor/environment") {
         Some(PermissionKind::Environment)
     } else if import.starts_with("forge:editor/processes") {
         Some(PermissionKind::Processes)
@@ -1482,10 +1485,11 @@ mod tests {
             "forge:editor/buffers@0.1.0".to_string(),
         ];
         assert!(uncovered_imports(Some(&manifest), &imports).is_empty());
-        assert_eq!(
-            import_permission("wasi:cli/environment@0.2.0").map(PermissionKind::key),
-            Some("environment")
-        );
+        // Baseline WASI environment/filesystem imports don't need a
+        // declaration: the runtime gives them an empty environment and no
+        // preopens. Toolchains import them even when plugins don't use them.
+        assert_eq!(import_permission("wasi:cli/environment@0.2.0"), None);
+        assert_eq!(import_permission("wasi:filesystem/types@0.2.0"), None);
         assert_eq!(
             import_permission("forge:editor/http@0.1.0"),
             Some(PermissionKind::Http)
@@ -1498,24 +1502,15 @@ mod tests {
                 "wasi:cli/environment@0.2.0".to_string(),
             ],
         );
-        assert_eq!(uncovered.len(), 2);
+        assert_eq!(uncovered.len(), 1);
         assert!(uncovered[0].describe().contains("forge:editor/http@0.1.0"));
-        assert!(
-            uncovered[1]
-                .describe()
-                .contains("wasi:cli/environment@0.2.0")
-        );
 
         // A missing manifest declares nothing, so permission imports are
         // mismatches. (The host still loads manifest-less components that
         // only use forge:editor imports.)
         let uncovered = uncovered_imports(None, &imports);
-        assert_eq!(uncovered.len(), 2);
-        assert!(
-            uncovered
-                .iter()
-                .all(|m| m.import != "forge:editor/buffers@0.1.0")
-        );
+        assert_eq!(uncovered.len(), 1);
+        assert_eq!(uncovered[0].import, "wasi:sockets/ip-name-lookup@0.2.0");
     }
 
     #[test]

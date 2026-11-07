@@ -328,7 +328,7 @@ pub fn load(app: &mut App, path: &Path) {
         return app.error(e);
     }
     let mismatches =
-        forge_core::uncovered_imports(request.manifest.as_ref(), &request.inspection.imports);
+        forge_core::uncovered_imports(request.manifest.as_ref(), &request.inspection.used_imports);
     if !mismatches.is_empty() {
         show_import_mismatch(app, &request, &mismatches);
         let details = mismatches
