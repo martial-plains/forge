@@ -20,6 +20,12 @@ Builds, new capabilities and plugin permissions need =--allow-build=,
 =forge.opt["package_allow_build"]=, =package_allow_capabilities= and
 =package_allow_grants=); otherwise sync stops with exit status 3. Success is
 0, other failures are 1, and bad usage is 2.
+** Package checks run in CI
+=docs/command-line.md= has a GitHub Actions example that builds Forge,
+stages the offline fixture in =tests/fixtures/ci-packages=, runs
+=forge package doctor --json= and =forge --profile-startup --json=, and
+fails when the startup budget is exceeded. The repository CI runs the same
+job, with every action pinned to a commit SHA.
 ** Package sources can be allowlisted
 Set =forge.opt["package_allowed_sources"]= to restrict package indexes,
 downloads and Git repositories to exact hosts, =*.example.org= suffixes,
